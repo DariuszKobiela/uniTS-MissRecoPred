@@ -1,0 +1,130 @@
+# Time Series Reconstruction Framework - Configuration File
+
+# ============================================================================
+# DATA DIRECTORIES
+# ============================================================================
+data:
+  raw_source_dir: "data/0_source_data"       # Directory with raw datasets (input)
+  cleaned_dir: "data/1_cleaned_data"         # Directory with cleaned datasets
+  source_dir: "data/1_cleaned_data"          # Directory with source datasets for degradation
+  missing_dir: "data/2_missing_data"         # Directory for degraded datasets
+  fixed_dir: "data/3_fixed_data"             # Directory for reconstructed datasets
+  results_dir: "experiments_results"          # Directory for experiment results
+
+# ============================================================================
+# DATASETS
+# ============================================================================
+datasets:
+  # Leave empty to auto-discover all CSV files in source_dir
+  # Or specify exact files to use
+  selected: []  # Empty = use all datasets from source_dir
+  
+  # CSV format settings
+  format:
+    default:
+      separator: ","
+      decimal: "."
+      index_col: 0
+    
+    # Special formats for specific file patterns
+    water_level:
+      pattern: "water_level_sensors"
+      separator: ";"
+      decimal: ","
+      index_col: 0
+
+# ============================================================================
+# RECONSTRUCTION MODELS
+# ============================================================================
+reconstruction_models:
+  # Leave empty to use all available models from reconstruction_models/
+  # Or specify models to use:
+  # selected:
+  #   - "impute_mean"
+  #   - "interpolate_linear"
+  #   - "interpolate_cubic"
+  #   - "knn"
+  
+  selected: []  # Empty = use all available models
+  
+  # You can also exclude specific models:
+  excluded:
+    # - "stable_diffusion_2_gaf"  # Uncomment to exclude (requires GPU)
+    # - "stable_diffusion_2_mtf"
+    # - "stable_diffusion_2_rp"
+    # - "stable_diffusion_2_spec"
+
+# ============================================================================
+# MISSINGNESS TECHNIQUES
+# ============================================================================
+missingness_techniques:
+  # Leave empty to use all available techniques from missingness_techniques/
+  # Or specify techniques to use:
+  # selected:
+  #   - "MCAR"
+  #   - "MAR"
+  
+  selected: ["MCAR"]  # Empty = use all available techniques
+  
+  # Available techniques (auto-discovered from missingness_techniques/):
+  # - MCAR (Missing Completely At Random)
+  # - MAR (Missing At Random)
+  # - MNAR (Missing Not At Random)
+
+# ============================================================================
+# MISSINGNESS RATES
+# ============================================================================
+missingness_rates:
+  # Fractions of data to remove (0.0 to 1.0)
+  rates:
+    - 0.10   # 10%
+  
+  # Number of iterations (different random patterns per configuration)
+  iterations: 2
+  
+  # Random seed for reproducibility
+  seed: 42
+
+# ============================================================================
+# VISUALIZATION SETTINGS
+# ============================================================================
+visualization:
+  # Default settings for Streamlit dashboard
+  default_metric: "mad"
+  show_top_n: 10
+  
+  # Plot settings
+  plots:
+    dpi: 300
+    format: "png"
+    color_scheme: "viridis"
+
+# ============================================================================
+# COMPUTATION SETTINGS
+# ============================================================================
+computation:
+  # File overwriting behavior
+  overwrite_existing: false  # Set to true to overwrite existing files, false to skip
+  
+  # Parallel processing (future feature)
+  n_jobs: 1
+  
+  # Memory management
+  batch_size: 100
+  
+  # Stable Diffusion settings (if using SD models)
+  stable_diffusion:
+    num_inference_steps: 2
+    guidance_scale: 7.5
+    device: "cuda"  # "cuda" or "cpu"
+
+# ============================================================================
+# EXAMPLES OF PRESET CONFIGURATIONS
+# ============================================================================
+# You can create multiple config files for different experiments:
+#
+# config_quick.yaml - Quick test with 1 dataset, 2 models, 1 technique
+# config_full.yaml - Full experiment with all datasets, all models
+# config_gpu.yaml - Only GPU-based models (Stable Diffusion)
+# config_traditional.yaml - Only traditional methods (no deep learning)
+

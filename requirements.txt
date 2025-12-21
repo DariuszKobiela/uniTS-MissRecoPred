@@ -1,0 +1,23 @@
+# Core dependencies
+pandas==2.3.3
+PyYAML==6.0.3
+
+# Machine Learning
+scikit-learn==1.8.0
+statsmodels==0.14.6
+
+# Deep Learning (for Stable Diffusion 2)
+torch==2.9.1
+diffusers==0.36.0
+transformers==4.57.3
+accelerate==1.12.0
+
+# Image processing
+
+
+# Visualization
+streamlit==1.52.2
+plotly==6.5.0
+
+# Utilities
+
