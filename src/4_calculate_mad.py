@@ -7,16 +7,78 @@ Uses config.yaml for configuration.
 """
 
 import os
+import sys
 import csv
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 import argparse
-import sys
+
+# Add src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Import config loader
-from config_loader import load_config
+from utils.config_loader import load_config
+
+
+def load_performance_metrics(results_dir: str) -> dict:
+    """
+    Load performance metrics from the most recent CSV file.
+    Returns dict with key: (dataset_name, technique, rate, iter, model) -> metrics
+    """
+    perf_metrics_dir = os.path.join(results_dir, "performance_metrics")
+    
+    if not os.path.exists(perf_metrics_dir):
+        print("⚠️  No performance metrics directory found")
+        print(f"   Expected: {perf_metrics_dir}")
+        print("   Run 3_reconstruct_datasets.py first to collect metrics")
+        return {}
+    
+    # Find all performance metrics files
+    perf_files = sorted(Path(perf_metrics_dir).glob("performance_metrics_*.csv"), reverse=True)
+    
+    if not perf_files:
+        print("⚠️  No performance metrics files found")
+        print(f"   Directory: {perf_metrics_dir}")
+        print("   Run 3_reconstruct_datasets.py first to collect metrics")
+        return {}
+    
+    # Use the most recent file
+    latest_file = perf_files[0]
+    
+    try:
+        df = pd.read_csv(latest_file)
+        
+        # Convert to dictionary with composite key
+        metrics_dict = {}
+        for _, row in df.iterrows():
+            key = str((
+                row['dataset_name'],
+                row['technique'],
+                row['rate_percent'],
+                row['iteration'],
+                row['model']
+            ))
+            
+            metrics_dict[key] = {
+                'dataset_name': row['dataset_name'],
+                'technique': row['technique'],
+                'rate_percent': row['rate_percent'],
+                'iteration': row['iteration'],
+                'model': row['model'],
+                'time_seconds': row.get('time_seconds', None),
+                'cpu_percent': row.get('cpu_percent', None),
+                'memory_mb': row.get('memory_mb', None),
+                'gpu_percent': row.get('gpu_percent', None),
+                'gpu_memory_mb': row.get('gpu_memory_mb', None)
+            }
+        
+        print(f"✅ Loaded {len(metrics_dict)} performance metric records from: {latest_file.name}")
+        return metrics_dict
+    except Exception as e:
+        print(f"⚠️  Error loading performance metrics: {e}")
+        return {}
 
 
 def parse_filename(filename):
@@ -232,6 +294,10 @@ Examples:
         print(f"❌ No reconstructed datasets found in {fixed_dir}")
         return
     
+    # Load performance metrics from reconstruction step
+    print("\n📊 Loading performance metrics from reconstruction step...")
+    performance_metrics = load_performance_metrics(output_dir)
+    
     print("="*70)
     print("CALCULATE RECONSTRUCTION DIFFERENCES (MAD)")
     print("="*70)
@@ -294,7 +360,7 @@ Examples:
             # Calculate metrics (comparing ONLY missing values)
             metrics = calculate_mad(source_file_path, degraded_file_path, str(reconstructed_file), config)
             
-            # Add result
+            # Add result with MAD metrics
             result = {
                 'dataset_name': metadata['dataset_name'],
                 'technique': metadata['technique'],
@@ -308,6 +374,31 @@ Examples:
                 'n_missing': metrics['n_missing'],
                 'n_total': metrics['n_total']
             }
+            
+            # Add performance metrics if available
+            perf_key = str((
+                metadata['dataset_name'],
+                metadata['technique'],
+                metadata['rate_percent'],
+                metadata['iteration'],
+                metadata['model']
+            ))
+            
+            if perf_key in performance_metrics:
+                perf = performance_metrics[perf_key]
+                result['time_seconds'] = perf.get('time_seconds', None)
+                result['cpu_percent'] = perf.get('cpu_percent', None)
+                result['memory_mb'] = perf.get('memory_mb', None)
+                result['gpu_percent'] = perf.get('gpu_percent', None)
+                result['gpu_memory_mb'] = perf.get('gpu_memory_mb', None)
+            else:
+                # No performance data available (e.g., file was skipped in reconstruction)
+                result['time_seconds'] = None
+                result['cpu_percent'] = None
+                result['memory_mb'] = None
+                result['gpu_percent'] = None
+                result['gpu_memory_mb'] = None
+            
             results.append(result)
             
             processed_count += 1
@@ -330,11 +421,22 @@ Examples:
         print(f"❌ Errors: {error_count}")
         print(f"📁 Results saved to: {output_file}")
         print("="*70)
-        print("\nSummary Statistics (MAD - Mean Absolute Difference):")
-        print(f"  Mean MAD: {df_results['mad'].mean():.4f}")
-        print(f"  Median MAD: {df_results['mad'].median():.4f}")
-        print(f"  Min MAD: {df_results['mad'].min():.4f}")
-        print(f"  Max MAD: {df_results['mad'].max():.4f}")
+        print("\nSummary Statistics:")
+        print("  MAD (Mean Absolute Difference):")
+        print(f"    Mean: {df_results['mad'].mean():.4f}")
+        print(f"    Median: {df_results['mad'].median():.4f}")
+        print(f"    Min: {df_results['mad'].min():.4f}")
+        print(f"    Max: {df_results['mad'].max():.4f}")
+        
+        # Show performance metrics summary if available
+        if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():
+            print("\n  Performance Metrics:")
+            print(f"    Total Time: {df_results['time_seconds'].sum():.2f}s")
+            print(f"    Avg Time: {df_results['time_seconds'].mean():.2f}s")
+            print(f"    Avg CPU: {df_results['cpu_percent'].mean():.1f}%")
+            print(f"    Avg Memory: {df_results['memory_mb'].mean():.1f} MB")
+            if df_results['gpu_percent'].notna().any():
+                print(f"    Avg GPU: {df_results['gpu_percent'].mean():.1f}%")
         print("="*70)
     else:
         print("\n❌ No results to save.")

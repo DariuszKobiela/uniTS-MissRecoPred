@@ -45,10 +45,10 @@ Write-Host "  deactivate" -ForegroundColor White
 Write-Host ""
 Write-Host "Quick start:" -ForegroundColor Yellow
 Write-Host "  1. Edit config.yaml to configure your experiment" -ForegroundColor White
-Write-Host "  1. python 1_clean_datasets.py" -ForegroundColor White
-Write-Host "  2. python 2_degrade_datasets.py" -ForegroundColor White
-Write-Host "  3. python 3_reconstruct_datasets.py" -ForegroundColor White
-Write-Host "  4. python 4_calculate_mad.py" -ForegroundColor White
-Write-Host "  5. streamlit run 5_visualize_mad_comparison.py" -ForegroundColor White
+Write-Host "  2. python src/1_clean_datasets.py" -ForegroundColor White
+Write-Host "  3. python src/2_degrade_datasets.py" -ForegroundColor White
+Write-Host "  4. python src/3_reconstruct_datasets.py" -ForegroundColor White
+Write-Host "  5. python src/4_calculate_mad.py" -ForegroundColor White
+Write-Host "  6. streamlit run src/5_visualize_mad_comparison.py" -ForegroundColor White
 Write-Host ""
 

@@ -7,20 +7,23 @@ Collects performance metrics (time, CPU, RAM, GPU usage).
 """
 
 import os
+import sys
 import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
-import sys
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+# Add src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import reconstruction models and config loader
 from reconstruction_models import RECONSTRUCTION_MODELS
-from config_loader import load_config
-from performance_metrics import PerformanceMonitor, format_metrics
+from utils.config_loader import load_config
+from utils.performance_metrics import PerformanceMonitor, format_metrics
 
 
 def load_degraded_dataset(file_path: str) -> pd.DataFrame:
@@ -425,13 +428,14 @@ Examples:
         if len(error_results) > 10:
             print(f"  ... and {len(error_results) - 10} more errors")
     
-    # Save performance metrics to CSV
+    # Save performance metrics to CSV (permanent archive + for merging with MAD)
     print("\n💾 Saving performance metrics...")
     results_dir = config.get_results_dir()
-    os.makedirs(results_dir, exist_ok=True)
+    perf_metrics_dir = os.path.join(results_dir, "performance_metrics")
+    os.makedirs(perf_metrics_dir, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    metrics_file = os.path.join(results_dir, f"performance_metrics_{timestamp}.csv")
+    metrics_file = os.path.join(perf_metrics_dir, f"performance_metrics_{timestamp}.csv")
     
     # Collect metrics from all successful reconstructions
     metrics_data = []
@@ -441,7 +445,7 @@ Examples:
             metrics = result['metrics']
             
             metrics_data.append({
-                'dataset': metadata.get('dataset', 'unknown'),
+                'dataset_name': metadata.get('dataset', 'unknown'),
                 'technique': metadata.get('technique', 'unknown'),
                 'rate_percent': metadata.get('rate_percent', 0),
                 'iteration': metadata.get('iteration', 0),
@@ -470,6 +474,7 @@ Examples:
     print(f"📁 Output directory: {output_dir}")
     if metrics_data:
         print(f"📊 Performance metrics: {metrics_file}")
+        print(f"   (will be merged with MAD in step 4)")
     print("="*70)
 
 

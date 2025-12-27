@@ -33,61 +33,72 @@ A modular framework for evaluating time series reconstruction methods on univari
 ```
 univariate-time-series-reconstruction-framework/
 │
-├── 📁 reconstruction_models/              # Reconstruction models (20 models)
-│   ├── __init__.py                        # Registry of models
+├── 📁 src/                                 # Source code directory
 │   │
-│   ├── impute_mean.py                     # Mean imputation
-│   ├── impute_median.py                   # Median imputation
-│   ├── impute_mode.py                     # Mode imputation
-│   ├── impute_ffill.py                    # Forward fill
-│   ├── impute_bfill.py                    # Backward fill
+│   ├── 🐍 1_clean_datasets.py              # [MAIN] Clean and validate raw data
+│   ├── 🐍 2_degrade_datasets.py            # [MAIN] Introduce missing data
+│   ├── 🐍 3_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
+│   ├── 🐍 4_calculate_mad.py               # [MAIN] Calculate MAD metric
+│   ├── 🐍 5_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
 │   │
-│   ├── interpolate_nearest.py             # Nearest neighbor interpolation
-│   ├── interpolate_linear.py              # Linear interpolation
-│   ├── interpolate_index.py               # Index-based interpolation
-│   ├── interpolate_quadratic.py           # Quadratic interpolation
-│   ├── interpolate_cubic.py               # Cubic interpolation
-│   ├── interpolate_polynomial.py          # Polynomial interpolation
-│   ├── interpolate_pchip.py               # PCHIP interpolation
-│   ├── interpolate_akima.py               # Akima interpolation
-│   ├── interpolate_spline.py              # Spline interpolation
+│   ├── 📁 utils/                           # Utility modules
+│   │   ├── __init__.py
+│   │   ├── config_loader.py                # Configuration manager
+│   │   └── performance_metrics.py          # Performance monitoring
 │   │
-│   ├── knn.py                             # K-Nearest Neighbors
-│   ├── sarimax.py                         # SARIMA with Kalman smoothing
+│   ├── 📁 optimization/                    # Optimization scripts
+│   │   ├── __init__.py
+│   │   └── optimize_sd_hyperparams.py      # SD hyperparameter tuning
 │   │
-│   ├── stable_diffusion_2_gaf.py          # Stable Diffusion 2 + GAF
-│   ├── stable_diffusion_2_mtf.py          # Stable Diffusion 2 + MTF
-│   ├── stable_diffusion_2_rp.py           # Stable Diffusion 2 + RP
-│   └── stable_diffusion_2_spec.py         # Stable Diffusion 2 + Spectrogram
-│
-├── 📁 missingness_techniques/             # Missingness patterns
-│   ├── __init__.py                        # Registry of techniques
-│   ├── mcar.py                            # Missing Completely At Random
-│   ├── mar.py                             # Missing At Random
-│   └── mnar.py                            # Missing Not At Random
+│   ├── 📁 reconstruction_models/           # Reconstruction models (20 models)
+│   │   ├── __init__.py                     # Registry of models
+│   │   │
+│   │   ├── impute_mean.py                  # Mean imputation
+│   │   ├── impute_median.py                # Median imputation
+│   │   ├── impute_mode.py                  # Mode imputation
+│   │   ├── impute_ffill.py                 # Forward fill
+│   │   ├── impute_bfill.py                 # Backward fill
+│   │   │
+│   │   ├── interpolate_nearest.py          # Nearest neighbor interpolation
+│   │   ├── interpolate_linear.py           # Linear interpolation
+│   │   ├── interpolate_index.py            # Index-based interpolation
+│   │   ├── interpolate_quadratic.py        # Quadratic interpolation
+│   │   ├── interpolate_cubic.py            # Cubic interpolation
+│   │   ├── interpolate_polynomial.py       # Polynomial interpolation
+│   │   ├── interpolate_pchip.py            # PCHIP interpolation
+│   │   ├── interpolate_akima.py            # Akima interpolation
+│   │   ├── interpolate_spline.py           # Spline interpolation
+│   │   │
+│   │   ├── knn.py                          # K-Nearest Neighbors
+│   │   ├── sarimax.py                      # SARIMA with Kalman smoothing
+│   │   │
+│   │   ├── stable_diffusion_2_gaf.py       # Stable Diffusion 2 + GAF
+│   │   ├── stable_diffusion_2_mtf.py       # Stable Diffusion 2 + MTF
+│   │   ├── stable_diffusion_2_rp.py        # Stable Diffusion 2 + RP
+│   │   └── stable_diffusion_2_spec.py      # Stable Diffusion 2 + Spectrogram
+│   │
+│   └── 📁 missingness_techniques/          # Missingness patterns
+│       ├── __init__.py                     # Registry of techniques
+│       ├── mcar.py                         # Missing Completely At Random
+│       ├── mar.py                          # Missing At Random
+│       └── mnar.py                         # Missing Not At Random
 │
 ├── 📁 data/
-│   ├── 📁 0_source_data/                  # Original datasets (auto-discovered)
-│   ├── 📁 2_missing_data/                 # Degraded datasets (generated)
-│   └── 📁 3_fixed_data/                   # Reconstructed datasets (generated)
+│   ├── 📁 0_source_data/                   # Original datasets (auto-discovered)
+│   ├── 📁 1_cleaned_data/                  # Cleaned datasets (generated)
+│   ├── 📁 2_missing_data/                  # Degraded datasets (generated)
+│   └── 📁 3_fixed_data/                    # Reconstructed datasets (generated)
 │
-├── 📁 experiments_results/                # Results with timestamps
+├── 📁 experiments_results/                 # MAD results + performance metrics
 │
-├── 🐍 1_clean_datasets.py                 # [MAIN] Clean and validate raw data
-├── 🐍 2_degrade_datasets.py               # [MAIN] Introduce missing data
-├── 🐍 3_reconstruct_datasets.py           # [MAIN] Reconstruct missing data
-├── 🐍 4_calculate_mad.py                  # [MAIN] Calculate MAD metric
-├── 🐍 5_visualize_mad_comparison.py       # [MAIN] Streamlit dashboard
+├── ⚙️ config.yaml                          # Main configuration file
 │
-├── 🐍 config_loader.py                    # Configuration manager
-├── 🐍 example_usage.py                    # Usage examples
-│
-├── ⚙️ config.yaml                         # Main configuration file
-├── ⚙️ Makefile                            # Automation (Linux/Mac)
-│
-├── 📝 requirements.txt                    # Python dependencies
-├── 📝 .gitignore                          # Git ignore rules
-└── 📝 README.md                           # This file
+├── 📝 requirements.txt                     # Python dependencies
+├── 📝 setup_venv.sh                        # Setup script (Linux/Mac)
+├── 📝 setup_venv.ps1                       # Setup script (Windows)
+├── 📝 PERFORMANCE_METRICS.md               # Performance monitoring guide
+├── 📝 .gitignore                           # Git ignore rules
+└── 📝 README.md                            # This file
 ```
 
 ## 🚀 Quick Start
@@ -192,16 +203,16 @@ Edit `config.yaml` to set:
 make pipeline
 
 # Option 2: Run step by step
-python 1_clean_datasets.py        # Clean and validate raw data
-python 2_degrade_datasets.py      # Create degraded datasets
+python src/1_clean_datasets.py        # Clean and validate raw data
+python src/2_degrade_datasets.py      # Create degraded datasets
 
 # OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
-python optimize_sd_hyperparams.py  # Find optimal num_inference_steps and guidance_scale
+python src/optimization/optimize_sd_hyperparams.py  # Find optimal num_inference_steps and guidance_scale
 # Then update config.yaml with recommended values
 
-python 3_reconstruct_datasets.py   # Reconstruct missing values
-python 4_calculate_mad.py          # Calculate MAD metric
-streamlit run 5_visualize_mad_comparison.py  # Visualize results
+python src/3_reconstruct_datasets.py   # Reconstruct missing values
+python src/4_calculate_mad.py          # Calculate MAD metric
+streamlit run src/5_visualize_mad_comparison.py  # Visualize results
 ```
 
 ## ⚙️ Configuration
@@ -300,9 +311,9 @@ The framework supports **parallel processing** for faster experiments:
    ├─ Apply: 20 reconstruction models (from config.yaml)
    ├─ Monitor: Time, CPU, RAM, GPU usage per reconstruction
    ├─ Save: data/3_fixed_data/{dataset}_{technique}_{rate}p_{iter}_{model}.csv
-   └─ Save metrics: experiments_results/performance_metrics_YYYYMMDD_HHMMSS.csv
+   └─ Save metrics: experiments_results/performance_metrics/performance_metrics_YYYYMMDD_HHMMSS.csv
    
-   📊 Example: 72 × 20 = 1,440 files + performance metrics
+   📊 Example: 72 × 20 = 1,440 files + performance_metrics CSV
 
                               ↓
 
@@ -310,9 +321,10 @@ The framework supports **parallel processing** for faster experiments:
    ├─ Load: data/3_fixed_data/*.csv
    ├─ Compare ONLY missing values with: data/1_cleaned_data/*.csv
    ├─ Calculate: MAD (Mean Absolute Difference)
+   ├─ Merge: Performance metrics from step 2
    └─ Save: experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv
    
-   📊 Output: Single CSV with 1,440 rows
+   📊 Output: Single CSV with 1,440 rows (MAD + performance metrics)
    
    ⚠️  IMPORTANT: MAD is calculated ONLY for values that were missing!
 
@@ -376,23 +388,28 @@ The framework supports **parallel processing** for faster experiments:
 - `n_missing` - Number of missing values reconstructed
 - `n_total` - Total number of values in dataset
 
-### Performance Metrics Files
-**Format**: `performance_metrics_YYYYMMDD_HHMMSS.csv`
+### Performance Metrics (Included in Results)
 
-**Purpose**: Track computational complexity and resource usage for each reconstruction
+**Performance metrics are now included directly in `reconstruction_results_*.csv` files!**
 
-**Columns**:
-- `dataset` - Dataset name
-- `technique` - Missingness technique
-- `rate_percent` - Missing rate (%)
-- `iteration` - Iteration number
-- `model` - Reconstruction model name
+**Additional Columns** (added to reconstruction results):
 - `time_seconds` - **Execution time in seconds**
 - `cpu_percent` - **Average CPU usage (%)**
 - `memory_mb` - **Peak RAM usage (MB)**
 - `gpu_percent` - GPU utilization (%) - *null if GPU not available*
 - `gpu_memory_mb` - GPU memory usage (MB) - *null if GPU not available*
-- `timestamp` - When reconstruction was performed
+
+**Complete File Structure**:
+```csv
+dataset_name,technique,rate_percent,iteration,model,mad,max_diff,min_diff,std_diff,n_missing,n_total,time_seconds,cpu_percent,memory_mb,gpu_percent,gpu_memory_mb
+vibration_sensor_S1,MCAR,10,1,interpolate_linear,5.23,12.45,0.12,3.21,21,210,0.15,12.5,45.2,,
+vibration_sensor_S1,MCAR,10,1,stable_diffusion_2_gaf,4.87,11.23,0.09,2.98,21,210,45.8,85.3,1024.5,75.2,2048.0
+```
+
+**Benefits**:
+- **Single file** - All metrics in one place
+- **Easy analysis** - Compare quality (MAD) vs. efficiency (time/resources) directly
+- **Streamlit dashboard** - Automatically shows performance tabs when data is available
 
 **Use Cases**:
 - Compare computational efficiency of models
@@ -406,19 +423,19 @@ The framework supports **parallel processing** for faster experiments:
 
 ```bash
 # Degrade specific datasets
-python 2_degrade_datasets.py --dataset-files data/0_source_data/boiler.csv
+python src/2_degrade_datasets.py --dataset-files data/0_source_data/boiler.csv
 
 # Use custom config
-python 2_degrade_datasets.py --config my_config.yaml
+python src/2_degrade_datasets.py --config my_config.yaml
 
 # Override config parameters
-python 2_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
+python src/2_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
 
 # Reconstruct with specific models
-python 3_reconstruct_datasets.py --models interpolate_linear knn
+python src/3_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
-python 4_calculate_mad.py --config my_config.yaml
+python src/4_calculate_mad.py --config my_config.yaml
 ```
 
 ### Optimizing Stable Diffusion Hyperparameters
@@ -427,15 +444,15 @@ The framework includes a dedicated script to find **globally optimal** `num_infe
 
 ```bash
 # Full optimization (tests on ALL degraded datasets, all 4 SD models)
-python optimize_sd_hyperparams.py
+python src/optimization/optimize_sd_hyperparams.py
 
 # Custom parameter ranges
-python optimize_sd_hyperparams.py \
+python src/optimization/optimize_sd_hyperparams.py \
   --steps 5 10 20 30 50 \
   --guidance 3.5 5.0 7.5 10.0
 
 # Quick test (limit to first 5 files)
-python optimize_sd_hyperparams.py \
+python src/optimization/optimize_sd_hyperparams.py \
   --steps 10 20 \
   --guidance 5.0 7.5 \
   --max-files 5
@@ -692,7 +709,7 @@ RECONSTRUCTION_MODELS = {
 3. **Use it**:
 
 ```bash
-python 3_reconstruct_datasets.py --models my_model
+python src/3_reconstruct_datasets.py --models my_model
 ```
 
 ### Add a Missingness Technique
@@ -740,7 +757,7 @@ MISSINGNESS_TECHNIQUES = {
 3. **Use it**:
 
 ```bash
-python 2_degrade_datasets.py --techniques MY_TECHNIQUE
+python src/2_degrade_datasets.py --techniques MY_TECHNIQUE
 ```
 
 ## 🎨 Visualization
@@ -761,12 +778,13 @@ The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides:
 ### Launch Dashboard
 
 ```bash
-streamlit run 5_visualize_mad_comparison.py
+streamlit run src/5_visualize_mad_comparison.py
 # Open browser at http://localhost:8501
 ```
 
 ## 📚 Additional Documentation
 
+- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - Project structure update guide (old vs new structure)
 - **[PERFORMANCE_METRICS.md](PERFORMANCE_METRICS.md)** - Detailed guide on computational performance tracking, resource monitoring, and efficiency analysis
 - **[PARALLEL_PROCESSING.md](PARALLEL_PROCESSING.md)** - Guide on parallel processing implementation and performance optimization
 

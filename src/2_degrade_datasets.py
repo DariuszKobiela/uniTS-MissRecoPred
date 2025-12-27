@@ -6,19 +6,22 @@ Uses config.yaml for configuration.
 """
 
 import os
+import sys
 import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any
-import sys
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+# Add src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import missingness techniques and config loader
 from missingness_techniques import MISSINGNESS_TECHNIQUES
-from config_loader import load_config
+from utils.config_loader import load_config
 
 
 def load_source_dataset(file_path: str, config) -> pd.DataFrame:

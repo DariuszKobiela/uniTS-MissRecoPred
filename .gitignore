@@ -47,6 +47,7 @@ data/2_missing_data/*.csv
 data/3_fixed_data/*.csv
 data/4_inpainting_conversions/*.csv
 experiments_results/*.csv
+experiments_results/performance_metrics/*.csv
 hyperparameter_optimization/*.csv
 
 # Keep directory structure but ignore CSV files

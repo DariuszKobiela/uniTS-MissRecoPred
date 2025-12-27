@@ -4,14 +4,17 @@ Streamlit Visualization App for Reconstruction Results
 Interactive dashboard for comparing reconstruction models, techniques, and missing rates.
 """
 
+import sys
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from pathlib import Path
-import sys
+
+# Add src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 
 def load_results(file_path: str) -> pd.DataFrame:
@@ -33,23 +36,8 @@ def get_available_results() -> list:
     return sorted(results_dir.glob("*.csv"), reverse=True)
 
 
-def get_performance_metrics_files() -> list:
-    """Get list of available performance metrics files"""
-    results_dir = Path("experiments_results")
-    if not results_dir.exists():
-        return []
-    
-    return sorted(results_dir.glob("performance_metrics_*.csv"), reverse=True)
-
-
-def load_performance_metrics(file_path: str) -> pd.DataFrame:
-    """Load performance metrics from CSV file"""
-    try:
-        df = pd.read_csv(file_path)
-        return df
-    except Exception as e:
-        st.error(f"Error loading performance metrics: {e}")
-        return pd.DataFrame()
+# Note: Performance metrics are now included in reconstruction_results_*.csv files
+# No need for separate performance_metrics_*.csv files
 
 
 def plot_mad_by_model(df: pd.DataFrame, technique: str = None, rate: int = None):
@@ -534,26 +522,17 @@ def main():
         st.header("⏱️ Computation Time Analysis")
         st.caption("📍 Computational complexity metrics - execution time")
         
-        # Try to load performance metrics
-        perf_files = get_performance_metrics_files()
-        
-        if not perf_files:
-            st.warning("⚠️ No performance metrics files found. Run `3_reconstruct_datasets.py` to collect metrics.")
+        # Check if performance metrics are available in the data
+        if 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
+            st.warning("⚠️ No performance metrics available in this results file.")
+            st.info("Run `3_reconstruct_datasets.py` again to collect performance metrics, then `4_calculate_mad.py` to merge them.")
         else:
-            # Let user select performance metrics file
-            perf_file = st.selectbox(
-                "Select performance metrics file",
-                perf_files,
-                format_func=lambda x: x.name,
-                key="perf_time_file"
-            )
-            
-            df_perf = load_performance_metrics(str(perf_file))
+            df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
             
             if df_perf.empty:
-                st.error("❌ No data found in selected file")
+                st.warning("❌ No performance data after filtering")
             else:
-                st.success(f"✅ Loaded {len(df_perf)} performance records")
+                st.success(f"✅ Showing {len(df_perf)} records with performance metrics")
                 
                 # Summary statistics
                 st.subheader("⏱️ Execution Time Summary")
@@ -640,26 +619,17 @@ def main():
         st.header("💻 Resource Usage Analysis")
         st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
         
-        # Try to load performance metrics
-        perf_files = get_performance_metrics_files()
-        
-        if not perf_files:
-            st.warning("⚠️ No performance metrics files found. Run `3_reconstruct_datasets.py` to collect metrics.")
+        # Check if performance metrics are available in the data
+        if 'cpu_percent' not in df_filtered.columns or df_filtered['cpu_percent'].isna().all():
+            st.warning("⚠️ No performance metrics available in this results file.")
+            st.info("Run `3_reconstruct_datasets.py` again to collect performance metrics, then `4_calculate_mad.py` to merge them.")
         else:
-            # Let user select performance metrics file
-            perf_file = st.selectbox(
-                "Select performance metrics file",
-                perf_files,
-                format_func=lambda x: x.name,
-                key="perf_resource_file"
-            )
-            
-            df_perf = load_performance_metrics(str(perf_file))
+            df_perf = df_filtered[df_filtered['cpu_percent'].notna()].copy()
             
             if df_perf.empty:
-                st.error("❌ No data found in selected file")
+                st.warning("❌ No performance data after filtering")
             else:
-                st.success(f"✅ Loaded {len(df_perf)} performance records")
+                st.success(f"✅ Showing {len(df_perf)} records with performance metrics")
                 
                 # Summary statistics
                 st.subheader("💻 Resource Usage Summary")

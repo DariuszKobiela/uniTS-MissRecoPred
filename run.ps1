@@ -18,15 +18,17 @@ function Show-Help {
     Write-Host "=====================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Available commands:" -ForegroundColor Yellow
+    Write-Host "  .\run.ps1 clean-data       - Clean raw source datasets"
     Write-Host "  .\run.ps1 degrade          - Degrade source datasets"
     Write-Host "  .\run.ps1 reconstruct      - Reconstruct degraded datasets"
-    Write-Host "  .\run.ps1 calculate        - Calculate reconstruction errors"
+    Write-Host "  .\run.ps1 calculate        - Calculate reconstruction errors (MAD)"
     Write-Host "  .\run.ps1 visualize        - Launch visualization dashboard"
     Write-Host "  .\run.ps1 pipeline         - Run complete pipeline"
     Write-Host "  .\run.ps1 clean            - Clean generated data"
     Write-Host "  .\run.ps1 install          - Install required packages"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Yellow
+    Write-Host "  .\run.ps1 clean-data"
     Write-Host "  .\run.ps1 degrade -Techniques MCAR,MAR -Rates 0.05,0.10 -Iterations 3"
     Write-Host "  .\run.ps1 reconstruct -Models interpolate_linear,knn"
     Write-Host "  .\run.ps1 pipeline"
@@ -41,6 +43,12 @@ function Install-Dependencies {
     Write-Host "✓ Installation complete" -ForegroundColor Green
 }
 
+function Invoke-Clean-Data {
+    Write-Host "Cleaning raw datasets..." -ForegroundColor Cyan
+    python src/1_clean_datasets.py
+    Write-Host "✓ Cleaning complete" -ForegroundColor Green
+}
+
 function Invoke-Degrade {
     Write-Host "Degrading datasets..." -ForegroundColor Cyan
     
@@ -48,7 +56,7 @@ function Invoke-Degrade {
     $techniquesStr = $Techniques -join " "
     $ratesStr = $Rates -join " "
     
-    python degrade_datasets.py `
+    python src/2_degrade_datasets.py `
         --datasets $datasetsStr `
         --techniques $techniquesStr `
         --rates $ratesStr `
@@ -63,15 +71,15 @@ function Invoke-Reconstruct {
     
     $modelsStr = $Models -join " "
     
-    python reconstruct_datasets.py --models $modelsStr
+    python src/3_reconstruct_datasets.py --models $modelsStr
     
     Write-Host "✓ Reconstruction complete" -ForegroundColor Green
 }
 
 function Invoke-Calculate {
-    Write-Host "Calculating reconstruction errors..." -ForegroundColor Cyan
+    Write-Host "Calculating reconstruction errors (MAD)..." -ForegroundColor Cyan
     
-    python calculate_differences.py
+    python src/4_calculate_mad.py
     
     Write-Host "✓ Calculation complete" -ForegroundColor Green
 }
@@ -80,10 +88,11 @@ function Invoke-Visualize {
     Write-Host "Launching visualization dashboard..." -ForegroundColor Cyan
     Write-Host "Open your browser at http://localhost:8501" -ForegroundColor Yellow
     
-    streamlit run visualization.py
+    streamlit run src/5_visualize_mad_comparison.py
 }
 
 function Invoke-Pipeline {
+    Invoke-Clean-Data
     Invoke-Degrade
     Invoke-Reconstruct
     Invoke-Calculate
@@ -98,6 +107,9 @@ function Invoke-Pipeline {
 function Invoke-Clean {
     Write-Host "Cleaning generated data..." -ForegroundColor Cyan
     
+    if (Test-Path "data\1_cleaned_data") {
+        Remove-Item "data\1_cleaned_data\*.csv" -Force -ErrorAction SilentlyContinue
+    }
     if (Test-Path "data\2_missing_data") {
         Remove-Item "data\2_missing_data\*.csv" -Force -ErrorAction SilentlyContinue
     }
@@ -124,6 +136,7 @@ function Invoke-CleanAll {
 switch ($Command.ToLower()) {
     "help" { Show-Help }
     "install" { Install-Dependencies }
+    "clean-data" { Invoke-Clean-Data }
     "degrade" { Invoke-Degrade }
     "reconstruct" { Invoke-Reconstruct }
     "calculate" { Invoke-Calculate }

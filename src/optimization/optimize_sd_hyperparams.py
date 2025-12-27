@@ -27,8 +27,11 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
+# Add parent directory (src) to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 # Import framework modules
-from config_loader import load_config
+from utils.config_loader import load_config
 from reconstruction_models import RECONSTRUCTION_MODELS
 
 

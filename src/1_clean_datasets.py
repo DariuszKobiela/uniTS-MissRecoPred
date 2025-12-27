@@ -27,12 +27,17 @@ Examples:
 """
 
 import os
+import sys
 import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from config_loader import load_config
+
+# Add src directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from utils.config_loader import load_config
 
 
 def detect_csv_format(file_path: str) -> dict:
