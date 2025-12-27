@@ -1,0 +1,821 @@
+#!/usr/bin/env python3
+"""
+Streamlit Visualization App for Reconstruction Results
+Interactive dashboard for comparing reconstruction models, techniques, and missing rates.
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+from pathlib import Path
+import sys
+
+
+def load_results(file_path: str) -> pd.DataFrame:
+    """Load results from CSV file"""
+    try:
+        df = pd.read_csv(file_path)
+        return df
+    except Exception as e:
+        st.error(f"Error loading results: {e}")
+        return pd.DataFrame()
+
+
+def get_available_results() -> list:
+    """Get list of available result files"""
+    results_dir = Path("experiments_results")
+    if not results_dir.exists():
+        return []
+    
+    return sorted(results_dir.glob("*.csv"), reverse=True)
+
+
+def get_performance_metrics_files() -> list:
+    """Get list of available performance metrics files"""
+    results_dir = Path("experiments_results")
+    if not results_dir.exists():
+        return []
+    
+    return sorted(results_dir.glob("performance_metrics_*.csv"), reverse=True)
+
+
+def load_performance_metrics(file_path: str) -> pd.DataFrame:
+    """Load performance metrics from CSV file"""
+    try:
+        df = pd.read_csv(file_path)
+        return df
+    except Exception as e:
+        st.error(f"Error loading performance metrics: {e}")
+        return pd.DataFrame()
+
+
+def plot_mad_by_model(df: pd.DataFrame, technique: str = None, rate: int = None):
+    """Plot MAD comparison by reconstruction model"""
+    df_filtered = df.copy()
+    
+    # Apply filters
+    if technique:
+        df_filtered = df_filtered[df_filtered['technique'] == technique]
+    if rate:
+        df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
+    
+    if df_filtered.empty:
+        st.warning("No data available for selected filters")
+        return
+    
+    # Group by model and calculate statistics
+    df_stats = df_filtered.groupby('model')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
+    df_stats = df_stats.sort_values('mean')
+    
+    # Create bar plot
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=df_stats['model'],
+        y=df_stats['mean'],
+        error_y=dict(type='data', array=df_stats['std']),
+        marker_color='lightblue',
+        name='Mean MAD'
+    ))
+    
+    fig.update_layout(
+        title='Mean Absolute Difference by Reconstruction Model',
+        xaxis_title='Reconstruction Model',
+        yaxis_title='MAD',
+        xaxis_tickangle=-45,
+        height=500
+    )
+    
+    st.plotly_chart(fig, width='stretch')
+    
+    # Show statistics table
+    st.subheader("Statistics")
+    st.dataframe(df_stats.style.format({
+        'mean': '{:.4f}',
+        'std': '{:.4f}',
+        'min': '{:.4f}',
+        'max': '{:.4f}'
+    }), width='stretch')
+
+
+def plot_mad_by_technique(df: pd.DataFrame, model: str = None, rate: int = None):
+    """Plot MAD comparison by missingness technique"""
+    df_filtered = df.copy()
+    
+    # Apply filters
+    if model:
+        df_filtered = df_filtered[df_filtered['model'] == model]
+    if rate:
+        df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
+    
+    if df_filtered.empty:
+        st.warning("No data available for selected filters")
+        return
+    
+    # Group by technique and calculate statistics
+    df_stats = df_filtered.groupby('technique')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
+    df_stats = df_stats.sort_values('mean')
+    
+    # Create bar plot
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=df_stats['technique'],
+        y=df_stats['mean'],
+        error_y=dict(type='data', array=df_stats['std']),
+        marker_color='lightgreen',
+        name='Mean MAD'
+    ))
+    
+    fig.update_layout(
+        title='Mean Absolute Difference by Missingness Technique',
+        xaxis_title='Missingness Technique',
+        yaxis_title='MAD',
+        height=500
+    )
+    
+    st.plotly_chart(fig, width='stretch')
+    
+    # Show statistics table
+    st.subheader("Statistics")
+    st.dataframe(df_stats.style.format({
+        'mean': '{:.4f}',
+        'std': '{:.4f}',
+        'min': '{:.4f}',
+        'max': '{:.4f}'
+    }), width='stretch')
+
+
+def plot_mad_by_rate(df: pd.DataFrame, model: str = None, technique: str = None):
+    """Plot MAD comparison by missing rate"""
+    df_filtered = df.copy()
+    
+    # Apply filters
+    if model:
+        df_filtered = df_filtered[df_filtered['model'] == model]
+    if technique:
+        df_filtered = df_filtered[df_filtered['technique'] == technique]
+    
+    if df_filtered.empty:
+        st.warning("No data available for selected filters")
+        return
+    
+    # Group by rate and calculate statistics
+    df_stats = df_filtered.groupby('rate_percent')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
+    df_stats = df_stats.sort_values('rate_percent')
+    
+    # Create line plot
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=df_stats['rate_percent'],
+        y=df_stats['mean'],
+        mode='lines+markers',
+        error_y=dict(type='data', array=df_stats['std']),
+        marker=dict(size=10, color='coral'),
+        line=dict(width=2),
+        name='Mean MAD'
+    ))
+    
+    fig.update_layout(
+        title='Mean Absolute Difference by Missing Rate',
+        xaxis_title='Missing Rate (%)',
+        yaxis_title='MAD',
+        height=500
+    )
+    
+    st.plotly_chart(fig, width='stretch')
+        
+    # Show statistics table
+    st.subheader("Statistics")
+    df_stats_display = df_stats.copy()
+    df_stats_display['rate_percent'] = df_stats_display['rate_percent'].astype(str) + '%'
+    st.dataframe(df_stats_display.style.format({
+        'mean': '{:.4f}',
+        'std': '{:.4f}',
+        'min': '{:.4f}',
+        'max': '{:.4f}'
+    }), width='stretch')
+
+
+def plot_heatmap(df: pd.DataFrame, metric: str = 'mad', sort_by_technique: str = None):
+    """Plot heatmap of MAD for model vs technique
+    
+    Args:
+        df: DataFrame with results
+        metric: Metric to display
+        sort_by_technique: Technique name to sort models by, or None for alphabetical
+    """
+    # Calculate mean MAD for each model-technique combination
+    pivot_data = df.pivot_table(
+        values=metric,
+        index='model',
+        columns='technique',
+        aggfunc='mean'
+    )
+    
+    # Sort models by selected technique or alphabetically
+    if sort_by_technique and sort_by_technique in pivot_data.columns:
+        pivot_data = pivot_data.sort_values(by=sort_by_technique, ascending=True)
+        sort_info = f" (sorted by {sort_by_technique})"
+    else:
+        pivot_data = pivot_data.sort_index()
+        sort_info = " (alphabetical)"
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_data.values,
+        x=pivot_data.columns,
+        y=pivot_data.index,
+        colorscale='RdYlGn_r',
+        text=np.round(pivot_data.values, 4),
+        texttemplate='%{text}',
+        textfont={"size": 10},
+        colorbar=dict(title=metric.upper())
+    ))
+    
+    fig.update_layout(
+        title=f'Heatmap: {metric.upper()} by Model and Technique{sort_info}',
+        xaxis_title='Missingness Technique',
+        yaxis_title='Reconstruction Model',
+        height=max(500, len(pivot_data.index) * 30)
+    )
+    
+    st.plotly_chart(fig, width='stretch')
+
+
+def plot_dataset_comparison(df: pd.DataFrame):
+    """Compare MAD across different datasets"""
+    df_stats = df.groupby('dataset_name')['mad'].agg(['mean', 'std']).reset_index()
+    df_stats = df_stats.sort_values('mean')
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=df_stats['dataset_name'],
+        y=df_stats['mean'],
+        error_y=dict(type='data', array=df_stats['std']),
+        marker_color='mediumpurple',
+        name='Mean MAD'
+    ))
+    
+    fig.update_layout(
+        title='Mean Absolute Difference by Dataset',
+        xaxis_title='Dataset',
+        yaxis_title='MAD',
+        height=500
+    )
+    
+    st.plotly_chart(fig, width='stretch')
+
+
+def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
+    """Show best and worst performing models"""
+    df_stats = df.groupby('model')['mad'].mean().reset_index()
+    df_stats = df_stats.sort_values('mad')
+    
+    # Best models (lowest MAD) - reverse order for display (best on top)
+    best_models = df_stats.head(top_n).iloc[::-1]
+    
+    # Worst models (highest MAD) - reverse order for display (worst on top)
+    worst_models = df_stats.tail(top_n)
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(f'Top {top_n} Best Models (Lowest MAD)', 
+                       f'Top {top_n} Worst Models (Highest MAD)')
+    )
+    
+    # Best models
+    fig.add_trace(
+        go.Bar(x=best_models['mad'], y=best_models['model'], 
+               orientation='h', marker_color='green', name='Best'),
+        row=1, col=1
+    )
+    
+    # Worst models
+    fig.add_trace(
+        go.Bar(x=worst_models['mad'], y=worst_models['model'], 
+               orientation='h', marker_color='red', name='Worst'),
+        row=1, col=2
+    )
+    
+    fig.update_layout(height=max(500, top_n * 40), showlegend=False)
+    fig.update_xaxes(title_text="MAD", row=1, col=1)
+    fig.update_xaxes(title_text="MAD", row=1, col=2)
+    
+    st.plotly_chart(fig, width='stretch')
+
+
+def main():
+    st.set_page_config(
+        page_title="Time Series Reconstruction Visualization",
+        page_icon="📊",
+        layout="wide"
+    )
+    
+    st.title("📊 Time Series Reconstruction Results Visualization")
+    st.markdown("---")
+    
+    # Sidebar for file selection
+    st.sidebar.header("Settings")
+    
+    # Get available result files
+    available_files = get_available_results()
+    
+    if not available_files:
+        st.error("No result files found in `experiments_results/` directory.")
+        st.info("Run `python calculate_differences.py` first to generate results.")
+        return
+    
+    # File selection
+    file_names = [f.name for f in available_files]
+    selected_file_name = st.sidebar.selectbox(
+        "Select Results File",
+        file_names,
+        help="Choose a results file to visualize"
+    )
+    
+    selected_file = next(f for f in available_files if f.name == selected_file_name)
+    
+    # Load data
+    df = load_results(selected_file)
+    
+    if df.empty:
+        st.error("Failed to load data or file is empty")
+        return
+    
+    # Display file info
+    st.sidebar.success(f"✓ Loaded {len(df)} records")
+    st.sidebar.info(f"File: {selected_file_name}")
+    
+    # Main filters
+    st.sidebar.header("Filters")
+    st.sidebar.info("🌍 **Global filters** - apply to all tabs")
+    
+    # Get unique values
+    all_datasets = ['All'] + sorted(df['dataset_name'].unique().tolist())
+    all_models = ['All'] + sorted(df['model'].unique().tolist())
+    all_techniques = ['All'] + sorted(df['technique'].unique().tolist())
+    all_rates = ['All'] + sorted(df['rate_percent'].unique().tolist())
+    
+    selected_dataset = st.sidebar.selectbox("Dataset", all_datasets)
+    selected_model = st.sidebar.selectbox("Model", all_models)
+    selected_technique = st.sidebar.selectbox("Technique", all_techniques)
+    selected_rate = st.sidebar.selectbox("Missing Rate (%)", all_rates)
+    
+    # Apply filters to dataframe
+    df_filtered = df.copy()
+    if selected_dataset != 'All':
+        df_filtered = df_filtered[df_filtered['dataset_name'] == selected_dataset]
+    if selected_model != 'All':
+        df_filtered = df_filtered[df_filtered['model'] == selected_model]
+    if selected_technique != 'All':
+        df_filtered = df_filtered[df_filtered['technique'] == selected_technique]
+    if selected_rate != 'All':
+        df_filtered = df_filtered[df_filtered['rate_percent'] == selected_rate]
+    
+    # Display overview metrics
+    st.header("📈 Overview")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Total Records", len(df_filtered))
+    with col2:
+        st.metric("Mean MAD", f"{df_filtered['mad'].mean():.4f}")
+    with col3:
+        st.metric("Median MAD", f"{df_filtered['mad'].median():.4f}")
+    with col4:
+        st.metric("Best MAD", f"{df_filtered['mad'].min():.4f}")
+    with col5:
+        st.metric("Worst MAD", f"{df_filtered['mad'].max():.4f}")
+    
+    st.markdown("---")
+    
+    # Visualization tabs
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "📊 By Model", 
+        "🎯 By Technique", 
+        "📉 By Missing Rate",
+        "📁 By Dataset",
+        "🔥 Heatmap",
+        "🏆 Best/Worst",
+        "⏱️ Computation Time",
+        "💻 Resource Usage",
+        "📋 Raw Data"
+    ])
+    
+    with tab1:
+        st.header("Comparison by Reconstruction Model")
+        st.caption("📍 Local filters - apply only to this tab")
+        
+        # Sub-filters
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_technique = st.selectbox(
+                "Filter by Technique",
+                ['All'] + sorted(df['technique'].unique().tolist()),
+                key='tab1_technique'
+            )
+        with col2:
+            filter_rate = st.selectbox(
+                "Filter by Missing Rate (%)",
+                ['All'] + sorted(df['rate_percent'].unique().tolist()),
+                key='tab1_rate'
+            )
+        
+        plot_mad_by_model(
+            df_filtered,
+            technique=None if filter_technique == 'All' else filter_technique,
+            rate=None if filter_rate == 'All' else filter_rate
+        )
+    
+    with tab2:
+        st.header("Comparison by Missingness Technique")
+        st.caption("📍 Local filters - apply only to this tab")
+        
+        # Sub-filters
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_model = st.selectbox(
+                "Filter by Model",
+                ['All'] + sorted(df['model'].unique().tolist()),
+                key='tab2_model'
+            )
+        with col2:
+            filter_rate = st.selectbox(
+                "Filter by Missing Rate (%)",
+                ['All'] + sorted(df['rate_percent'].unique().tolist()),
+                key='tab2_rate'
+            )
+        
+        plot_mad_by_technique(
+            df_filtered,
+            model=None if filter_model == 'All' else filter_model,
+            rate=None if filter_rate == 'All' else filter_rate
+        )
+    
+    with tab3:
+        st.header("Comparison by Missing Rate")
+        st.caption("📍 Local filters - apply only to this tab")
+        
+        # Sub-filters
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_model = st.selectbox(
+                "Filter by Model",
+                ['All'] + sorted(df['model'].unique().tolist()),
+                key='tab3_model'
+            )
+        with col2:
+            filter_technique = st.selectbox(
+                "Filter by Technique",
+                ['All'] + sorted(df['technique'].unique().tolist()),
+                key='tab3_technique'
+            )
+        
+        plot_mad_by_rate(
+            df_filtered,
+            model=None if filter_model == 'All' else filter_model,
+            technique=None if filter_technique == 'All' else filter_technique
+        )
+    
+    with tab4:
+        st.header("Comparison by Dataset")
+        
+        if len(df_filtered) > 0:
+            plot_dataset_comparison(df_filtered)
+        else:
+            st.warning("No data available with current filters")
+    
+    with tab5:
+        st.header("Heatmap: Model vs Technique")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            metric_choice = st.selectbox(
+                "Metric",
+                ['mad', 'max_diff', 'std_diff'],
+                format_func=lambda x: x.upper().replace('_', ' ')
+            )
+        with col2:
+            # Get available techniques for sorting
+            if len(df_filtered) > 0:
+                techniques = ['Alphabetical'] + sorted(df_filtered['technique'].unique().tolist())
+            else:
+                techniques = ['Alphabetical']
+            
+            sort_choice = st.selectbox(
+                "Sort models by",
+                techniques,
+                help="Sort models by performance on selected technique"
+            )
+        
+        if len(df_filtered) > 0:
+            sort_by = None if sort_choice == 'Alphabetical' else sort_choice
+            plot_heatmap(df_filtered, metric=metric_choice, sort_by_technique=sort_by)
+        else:
+            st.warning("No data available for heatmap with current filters")
+    
+    with tab6:
+        st.header("Best and Worst Performing Models")
+        
+        top_n = st.slider("Number of models to show", 5, 20, 10)
+        
+        if len(df_filtered) > 0:
+            plot_best_worst_models(df_filtered, top_n=top_n)
+        else:
+            st.warning("No data available with current filters")
+    
+    with tab7:
+        st.header("⏱️ Computation Time Analysis")
+        st.caption("📍 Computational complexity metrics - execution time")
+        
+        # Try to load performance metrics
+        perf_files = get_performance_metrics_files()
+        
+        if not perf_files:
+            st.warning("⚠️ No performance metrics files found. Run `3_reconstruct_datasets.py` to collect metrics.")
+        else:
+            # Let user select performance metrics file
+            perf_file = st.selectbox(
+                "Select performance metrics file",
+                perf_files,
+                format_func=lambda x: x.name,
+                key="perf_time_file"
+            )
+            
+            df_perf = load_performance_metrics(str(perf_file))
+            
+            if df_perf.empty:
+                st.error("❌ No data found in selected file")
+            else:
+                st.success(f"✅ Loaded {len(df_perf)} performance records")
+                
+                # Summary statistics
+                st.subheader("⏱️ Execution Time Summary")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Time", f"{df_perf['time_seconds'].sum():.1f}s")
+                with col2:
+                    st.metric("Average Time", f"{df_perf['time_seconds'].mean():.2f}s")
+                with col3:
+                    st.metric("Fastest", f"{df_perf['time_seconds'].min():.2f}s")
+                with col4:
+                    st.metric("Slowest", f"{df_perf['time_seconds'].max():.2f}s")
+                
+                st.markdown("---")
+                
+                # Time by model
+                st.subheader("Execution Time by Model")
+                model_time = df_perf.groupby('model')['time_seconds'].agg(['mean', 'std', 'min', 'max', 'count']).reset_index()
+                model_time = model_time.sort_values('mean', ascending=False)
+                
+                fig = px.bar(
+                    model_time,
+                    x='mean',
+                    y='model',
+                    orientation='h',
+                    error_x='std',
+                    title="Average Execution Time by Model (with std dev)",
+                    labels={'mean': 'Average Time (seconds)', 'model': 'Model'},
+                    color='mean',
+                    color_continuous_scale='Reds'
+                )
+                fig.update_layout(height=max(400, len(model_time) * 30), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Time comparison: boxplot
+                st.subheader("Time Distribution by Model")
+                fig = px.box(
+                    df_perf,
+                    x='model',
+                    y='time_seconds',
+                    title="Execution Time Distribution",
+                    labels={'time_seconds': 'Time (seconds)', 'model': 'Model'},
+                    color='model'
+                )
+                fig.update_xaxes(tickangle=45)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Time by technique and dataset
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("Average Time by Technique")
+                    tech_time = df_perf.groupby('technique')['time_seconds'].mean().reset_index()
+                    fig = px.bar(
+                        tech_time,
+                        x='technique',
+                        y='time_seconds',
+                        title="Average Time by Missingness Technique",
+                        labels={'time_seconds': 'Avg Time (seconds)', 'technique': 'Technique'},
+                        color='time_seconds',
+                        color_continuous_scale='Blues'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    st.subheader("Average Time by Missing Rate")
+                    rate_time = df_perf.groupby('rate_percent')['time_seconds'].mean().reset_index()
+                    fig = px.bar(
+                        rate_time,
+                        x='rate_percent',
+                        y='time_seconds',
+                        title="Average Time by Missing Rate",
+                        labels={'time_seconds': 'Avg Time (seconds)', 'rate_percent': 'Missing Rate (%)'},
+                        color='time_seconds',
+                        color_continuous_scale='Greens'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Detailed table
+                st.subheader("Detailed Statistics")
+                st.dataframe(model_time, width='stretch')
+    
+    with tab8:
+        st.header("💻 Resource Usage Analysis")
+        st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
+        
+        # Try to load performance metrics
+        perf_files = get_performance_metrics_files()
+        
+        if not perf_files:
+            st.warning("⚠️ No performance metrics files found. Run `3_reconstruct_datasets.py` to collect metrics.")
+        else:
+            # Let user select performance metrics file
+            perf_file = st.selectbox(
+                "Select performance metrics file",
+                perf_files,
+                format_func=lambda x: x.name,
+                key="perf_resource_file"
+            )
+            
+            df_perf = load_performance_metrics(str(perf_file))
+            
+            if df_perf.empty:
+                st.error("❌ No data found in selected file")
+            else:
+                st.success(f"✅ Loaded {len(df_perf)} performance records")
+                
+                # Summary statistics
+                st.subheader("💻 Resource Usage Summary")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Avg CPU Usage", f"{df_perf['cpu_percent'].mean():.1f}%")
+                with col2:
+                    st.metric("Avg RAM Usage", f"{df_perf['memory_mb'].mean():.1f} MB")
+                with col3:
+                    if df_perf['gpu_percent'].notna().any():
+                        st.metric("Avg GPU Usage", f"{df_perf['gpu_percent'].mean():.1f}%")
+                    else:
+                        st.metric("GPU Usage", "N/A")
+                
+                st.markdown("---")
+                
+                # CPU usage by model
+                st.subheader("CPU Usage by Model")
+                model_cpu = df_perf.groupby('model')['cpu_percent'].agg(['mean', 'std', 'max']).reset_index()
+                model_cpu = model_cpu.sort_values('mean', ascending=False)
+                
+                fig = px.bar(
+                    model_cpu,
+                    x='mean',
+                    y='model',
+                    orientation='h',
+                    title="Average CPU Usage by Model",
+                    labels={'mean': 'Avg CPU Usage (%)', 'model': 'Model'},
+                    color='mean',
+                    color_continuous_scale='Oranges'
+                )
+                fig.update_layout(height=max(400, len(model_cpu) * 30), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # RAM usage by model
+                st.subheader("Memory (RAM) Usage by Model")
+                model_mem = df_perf.groupby('model')['memory_mb'].agg(['mean', 'std', 'max']).reset_index()
+                model_mem = model_mem.sort_values('mean', ascending=False)
+                
+                fig = px.bar(
+                    model_mem,
+                    x='mean',
+                    y='model',
+                    orientation='h',
+                    title="Average Memory Usage by Model",
+                    labels={'mean': 'Avg Memory (MB)', 'model': 'Model'},
+                    color='mean',
+                    color_continuous_scale='Purples'
+                )
+                fig.update_layout(height=max(400, len(model_mem) * 30), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # GPU usage (if available)
+                if df_perf['gpu_percent'].notna().any():
+                    st.subheader("GPU Usage by Model")
+                    df_gpu = df_perf[df_perf['gpu_percent'].notna()]
+                    model_gpu = df_gpu.groupby('model')['gpu_percent'].agg(['mean', 'std', 'max']).reset_index()
+                    model_gpu = model_gpu.sort_values('mean', ascending=False)
+                    
+                    fig = px.bar(
+                        model_gpu,
+                        x='mean',
+                        y='model',
+                        orientation='h',
+                        title="Average GPU Usage by Model",
+                        labels={'mean': 'Avg GPU Usage (%)', 'model': 'Model'},
+                        color='mean',
+                        color_continuous_scale='Greens'
+                    )
+                    fig.update_layout(height=max(400, len(model_gpu) * 30), showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Resource efficiency: Time vs Resources
+                st.subheader("Resource Efficiency Analysis")
+                st.caption("Lower values = more efficient (less time and resources)")
+                
+                # Create efficiency score: normalize time, CPU, and memory
+                df_perf_copy = df_perf.copy()
+                df_perf_copy['time_norm'] = (df_perf_copy['time_seconds'] - df_perf_copy['time_seconds'].min()) / (df_perf_copy['time_seconds'].max() - df_perf_copy['time_seconds'].min() + 0.001)
+                df_perf_copy['cpu_norm'] = df_perf_copy['cpu_percent'] / 100
+                df_perf_copy['mem_norm'] = (df_perf_copy['memory_mb'] - df_perf_copy['memory_mb'].min()) / (df_perf_copy['memory_mb'].max() - df_perf_copy['memory_mb'].min() + 0.001)
+                df_perf_copy['efficiency_score'] = df_perf_copy['time_norm'] + df_perf_copy['cpu_norm'] + df_perf_copy['mem_norm']
+                
+                efficiency = df_perf_copy.groupby('model')['efficiency_score'].mean().reset_index()
+                efficiency = efficiency.sort_values('efficiency_score')
+                
+                fig = px.bar(
+                    efficiency,
+                    x='efficiency_score',
+                    y='model',
+                    orientation='h',
+                    title="Overall Efficiency Score by Model (lower = better)",
+                    labels={'efficiency_score': 'Efficiency Score', 'model': 'Model'},
+                    color='efficiency_score',
+                    color_continuous_scale='RdYlGn_r'
+                )
+                fig.update_layout(height=max(400, len(efficiency) * 30), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Combined scatter plot
+                st.subheader("Time vs Memory Usage")
+                model_summary = df_perf.groupby('model').agg({
+                    'time_seconds': 'mean',
+                    'memory_mb': 'mean',
+                    'cpu_percent': 'mean'
+                }).reset_index()
+                
+                fig = px.scatter(
+                    model_summary,
+                    x='time_seconds',
+                    y='memory_mb',
+                    size='cpu_percent',
+                    text='model',
+                    title="Time vs Memory (bubble size = CPU usage)",
+                    labels={'time_seconds': 'Avg Time (seconds)', 'memory_mb': 'Avg Memory (MB)'},
+                    color='cpu_percent',
+                    color_continuous_scale='Viridis'
+                )
+                fig.update_traces(textposition='top center')
+                st.plotly_chart(fig, use_container_width=True)
+    
+    with tab9:
+        st.header("Raw Data")
+        
+        # Search functionality
+        search_term = st.text_input("Search in data", "")
+        
+        if search_term:
+            mask = df_filtered.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+            df_display = df_filtered[mask]
+        else:
+            df_display = df_filtered
+        
+        # Display options
+        col1, col2 = st.columns(2)
+        with col1:
+            sort_column = st.selectbox("Sort by", df_display.columns.tolist())
+        with col2:
+            sort_order = st.radio("Order", ['Ascending', 'Descending'])
+        
+        df_display = df_display.sort_values(
+            sort_column,
+            ascending=(sort_order == 'Ascending')
+        )
+        
+        st.dataframe(df_display, width='stretch')
+        
+        # Download button
+        csv = df_display.to_csv(index=False)
+        st.download_button(
+            label="📥 Download filtered data as CSV",
+            data=csv,
+            file_name=f"filtered_{selected_file_name}",
+            mime="text/csv"
+        )
+
+
+if __name__ == "__main__":
+    main()

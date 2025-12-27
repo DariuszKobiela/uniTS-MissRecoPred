@@ -188,6 +188,10 @@ class Config:
         """Get overwrite existing files flag"""
         return self.config['computation'].get('overwrite_existing', False)
     
+    def get_n_jobs(self) -> int:
+        """Get number of parallel jobs"""
+        return self.config['computation'].get('n_jobs', 1)
+    
     def print_config_summary(self):
         """Print a summary of the current configuration"""
         print("="*70)

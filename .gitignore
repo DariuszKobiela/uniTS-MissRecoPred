@@ -47,6 +47,7 @@ data/2_missing_data/*.csv
 data/3_fixed_data/*.csv
 data/4_inpainting_conversions/*.csv
 experiments_results/*.csv
+hyperparameter_optimization/*.csv
 
 # Keep directory structure but ignore CSV files
 !data/0_source_data/*.csv
@@ -55,6 +56,7 @@ experiments_results/*.csv
 !data/3_fixed_data/.gitkeep
 !data/4_inpainting_conversions/.gitkeep
 !experiments_results/.gitkeep
+!hyperparameter_optimization/.gitkeep
 
 # Model cache
 .cache/

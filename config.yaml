@@ -64,7 +64,7 @@ missingness_techniques:
   #   - "MCAR"
   #   - "MAR"
   
-  selected: ["MCAR"]  # Empty = use all available techniques
+  selected: ['MAR']  # Empty = use all available techniques
   
   # Available techniques (auto-discovered from missingness_techniques/):
   # - MCAR (Missing Completely At Random)
@@ -106,8 +106,12 @@ computation:
   # File overwriting behavior
   overwrite_existing: false  # Set to true to overwrite existing files, false to skip
   
-  # Parallel processing (future feature)
-  n_jobs: 1
+  # Parallel processing
+  # n_jobs: -1 uses all CPU cores
+  # n_jobs: 1 disables parallelization (sequential)
+  # n_jobs: N uses N cores
+  # WARNING: Set n_jobs=1 when using GPU models (Stable Diffusion)
+  n_jobs: 4
   
   # Memory management
   batch_size: 100

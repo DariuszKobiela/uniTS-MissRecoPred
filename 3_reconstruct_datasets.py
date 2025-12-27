@@ -3,6 +3,7 @@
 Dataset Reconstruction Script
 Repairs degraded univariate time series datasets using various reconstruction models.
 Uses config.yaml for configuration.
+Collects performance metrics (time, CPU, RAM, GPU usage).
 """
 
 import os
@@ -11,12 +12,15 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any, Tuple
 import sys
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 # Import reconstruction models and config loader
 from reconstruction_models import RECONSTRUCTION_MODELS
 from config_loader import load_config
+from performance_metrics import PerformanceMonitor, format_metrics
 
 
 def load_degraded_dataset(file_path: str) -> pd.DataFrame:
@@ -49,18 +53,83 @@ def load_degraded_dataset(file_path: str) -> pd.DataFrame:
     return df
 
 
+def is_gpu_model(model_name: str) -> bool:
+    """
+    Check if a model requires GPU (Stable Diffusion models).
+    
+    Args:
+        model_name: Name of the reconstruction model
+        
+    Returns:
+        True if model requires GPU, False otherwise
+    """
+    return model_name.startswith('stable_diffusion_2')
+
+
+def process_single_reconstruction(task: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Worker function to process a single reconstruction task.
+    
+    Args:
+        task: Dictionary with keys: degraded_file, output_file, model_name, config, force, metadata
+        
+    Returns:
+        Dictionary with keys: status, message, output_file, model, metrics, metadata
+    """
+    try:
+        # Check if file already exists
+        if Path(task['output_file']).exists() and not task['force']:
+            return {
+                'status': 'skipped',
+                'message': f"Already exists",
+                'output_file': task['output_file'],
+                'model': task['model_name'],
+                'metadata': task.get('metadata', {}),
+                'metrics': None
+            }
+        
+        # Perform reconstruction and collect metrics
+        metrics = reconstruct_dataset(
+            degraded_file=task['degraded_file'],
+            output_file=task['output_file'],
+            reconstruction_model=task['model_name'],
+            config=task['config']
+        )
+        
+        return {
+            'status': 'success',
+            'message': 'Completed',
+            'output_file': task['output_file'],
+            'model': task['model_name'],
+            'metadata': task.get('metadata', {}),
+            'metrics': metrics
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e),
+            'output_file': task['output_file'],
+            'model': task['model_name'],
+            'metadata': task.get('metadata', {}),
+            'metrics': None
+        }
+
+
 def reconstruct_dataset(degraded_file: str,
                        output_file: str,
                        reconstruction_model: str,
-                       config = None) -> None:
+                       config = None) -> Dict[str, float]:
     """
-    Reconstruct a single degraded dataset.
+    Reconstruct a single degraded dataset and collect performance metrics.
     
     Args:
         degraded_file: Path to degraded CSV file
         output_file: Path to output reconstructed CSV file
         reconstruction_model: Name of reconstruction model to use
         config: Configuration object (for SD model settings)
+    
+    Returns:
+        Dictionary with performance metrics (time_seconds, cpu_percent, memory_mb, etc.)
     """
     # Load degraded dataset
     df = load_degraded_dataset(degraded_file)
@@ -71,6 +140,10 @@ def reconstruct_dataset(degraded_file: str,
         raise ValueError(f"Unknown reconstruction model: {reconstruction_model}")
     
     model_func = RECONSTRUCTION_MODELS[reconstruction_model]
+    
+    # Start performance monitoring
+    monitor = PerformanceMonitor()
+    monitor.start()
     
     # Apply reconstruction
     # Check if this is a Stable Diffusion model and pass config parameters
@@ -86,6 +159,9 @@ def reconstruct_dataset(degraded_file: str,
         print(f"    Applying {reconstruction_model}...")
         reconstructed_series = model_func(series)
     
+    # Stop monitoring and collect metrics
+    metrics = monitor.stop()
+    
     # Create output DataFrame with original timestamps
     output_df = df.copy()
     output_df.iloc[:, 0] = reconstructed_series.values
@@ -93,6 +169,9 @@ def reconstruct_dataset(degraded_file: str,
     # Save reconstructed dataset
     output_df.to_csv(output_file)
     print(f"    ✓ Saved to: {output_file}")
+    print(f"    📊 {format_metrics(metrics)}")
+    
+    return metrics
 
 
 def parse_degraded_filename(filename: str) -> dict:
@@ -274,22 +353,14 @@ Examples:
         print(f"Filtered iterations: {args.filter_iteration}")
     print("="*70)
     
-    # Track progress
-    completed = 0
-    skipped = 0
+    # Build list of all reconstruction tasks
+    print("\n📋 Building task list...")
+    tasks = []
+    overwrite = args.force if args.force else config.get_overwrite_existing()
     
-    # Process each combination
     for degraded_file in filtered_files:
         try:
             metadata = parse_degraded_filename(degraded_file.name)
-            
-            print(f"\n{'='*70}")
-            print(f"Processing: {degraded_file.name}")
-            print(f"  Dataset: {metadata['dataset']}")
-            print(f"  Technique: {metadata['technique']}")
-            print(f"  Rate: {metadata['rate_percent']}%")
-            print(f"  Iteration: {metadata['iteration']}")
-            print(f"{'='*70}")
             
             for model_name in models:
                 # Generate output filename
@@ -298,44 +369,107 @@ Examples:
                 output_filename = f"{base_name}_{model_name}.csv"
                 output_file = os.path.join(output_dir, output_filename)
                 
-                # Check if file already exists
-                # CLI --force flag overrides config setting
-                overwrite = args.force if args.force else config.get_overwrite_existing()
-                if Path(output_file).exists() and not overwrite:
-                    print(f"  ⏭️  Skipping {model_name} (already exists, use --force to overwrite)")
-                    skipped += 1
-                    completed += 1
-                    continue
-                
-                # Reconstruct dataset
-                try:
-                    reconstruct_dataset(
-                        degraded_file=str(degraded_file),
-                        output_file=output_file,
-                        reconstruction_model=model_name,
-                        config=config
-                    )
-                    completed += 1
-                except Exception as e:
-                    print(f"  ❌ Error with {model_name}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
-                
-                # Print progress
-                progress = (completed / total_operations) * 100
-                print(f"  Progress: {completed}/{total_operations} ({progress:.1f}%)")
+                tasks.append({
+                    'degraded_file': str(degraded_file),
+                    'output_file': output_file,
+                    'model_name': model_name,
+                    'config': config,
+                    'force': overwrite,
+                    'metadata': metadata  # Include metadata for performance tracking
+                })
                 
         except Exception as e:
-            print(f"❌ Error processing {degraded_file.name}: {e}")
+            print(f"❌ Error parsing {degraded_file.name}: {e}")
             continue
+    
+    # Separate GPU and CPU tasks for smart scheduling
+    gpu_tasks = [t for t in tasks if is_gpu_model(t['model_name'])]
+    cpu_tasks = [t for t in tasks if not is_gpu_model(t['model_name'])]
+    
+    n_jobs = config.get_n_jobs()
+    print(f"🚀 Processing {len(tasks)} tasks total:")
+    print(f"   - {len(cpu_tasks)} CPU model tasks (parallel with {n_jobs} jobs)")
+    print(f"   - {len(gpu_tasks)} GPU model tasks (sequential)\n")
+    
+    all_results = []
+    
+    # Process CPU models in parallel
+    if cpu_tasks:
+        print(f"⚡ Processing CPU models in parallel...")
+        cpu_results = Parallel(n_jobs=n_jobs, backend='loky')(
+            delayed(process_single_reconstruction)(task) 
+            for task in tqdm(cpu_tasks, desc="⏳ CPU models", unit="task", ncols=80)
+        )
+        all_results.extend(cpu_results)
+    
+    # Process GPU models sequentially (n_jobs=1)
+    if gpu_tasks:
+        print(f"\n🎨 Processing GPU models sequentially...")
+        gpu_results = Parallel(n_jobs=1, backend='loky')(
+            delayed(process_single_reconstruction)(task) 
+            for task in tqdm(gpu_tasks, desc="⏳ GPU models", unit="task", ncols=80)
+        )
+        all_results.extend(gpu_results)
+    
+    # Count results
+    completed = sum(1 for r in all_results if r['status'] == 'success')
+    skipped = sum(1 for r in all_results if r['status'] == 'skipped')
+    errors = sum(1 for r in all_results if r['status'] == 'error')
+    
+    # Print errors if any
+    if errors > 0:
+        print("\n❌ Errors occurred:")
+        error_results = [r for r in all_results if r['status'] == 'error']
+        for r in error_results[:10]:  # Show first 10 errors
+            print(f"  - {r['model']}: {r['message']}")
+        if len(error_results) > 10:
+            print(f"  ... and {len(error_results) - 10} more errors")
+    
+    # Save performance metrics to CSV
+    print("\n💾 Saving performance metrics...")
+    results_dir = config.get_results_dir()
+    os.makedirs(results_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    metrics_file = os.path.join(results_dir, f"performance_metrics_{timestamp}.csv")
+    
+    # Collect metrics from all successful reconstructions
+    metrics_data = []
+    for result in all_results:
+        if result['status'] == 'success' and result.get('metrics'):
+            metadata = result.get('metadata', {})
+            metrics = result['metrics']
+            
+            metrics_data.append({
+                'dataset': metadata.get('dataset', 'unknown'),
+                'technique': metadata.get('technique', 'unknown'),
+                'rate_percent': metadata.get('rate_percent', 0),
+                'iteration': metadata.get('iteration', 0),
+                'model': result['model'],
+                'time_seconds': metrics.get('time_seconds', 0),
+                'cpu_percent': metrics.get('cpu_percent', 0),
+                'memory_mb': metrics.get('memory_mb', 0),
+                'gpu_percent': metrics.get('gpu_percent', None),
+                'gpu_memory_mb': metrics.get('gpu_memory_mb', None),
+                'timestamp': timestamp
+            })
+    
+    if metrics_data:
+        metrics_df = pd.DataFrame(metrics_data)
+        metrics_df.to_csv(metrics_file, index=False)
+        print(f"   ✓ Saved {len(metrics_data)} performance records to: {metrics_file}")
+    else:
+        print("   ⚠️  No performance metrics collected (all files were skipped or failed)")
     
     print("\n" + "="*70)
     print("RECONSTRUCTION COMPLETE")
     print("="*70)
-    print(f"✓ Completed: {completed - skipped}/{total_operations}")
+    print(f"✅ Completed: {completed}/{len(tasks)}")
     print(f"⏭️  Skipped (existing): {skipped}")
+    print(f"❌ Errors: {errors}")
     print(f"📁 Output directory: {output_dir}")
+    if metrics_data:
+        print(f"📊 Performance metrics: {metrics_file}")
     print("="*70)
 
 

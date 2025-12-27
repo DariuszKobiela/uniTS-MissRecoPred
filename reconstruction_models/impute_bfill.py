@@ -16,5 +16,5 @@ def impute_bfill(data: pd.Series) -> pd.Series:
     Returns:
         Pandas Series with missing values backward filled
     """
-    return data.fillna(method='bfill')
+    return data.bfill()
 

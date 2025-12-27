@@ -16,5 +16,5 @@ def impute_ffill(data: pd.Series) -> pd.Series:
     Returns:
         Pandas Series with missing values forward filled
     """
-    return data.fillna(method='ffill')
+    return data.ffill()
 

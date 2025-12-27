@@ -7,6 +7,7 @@ Model: https://huggingface.co/Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-sp
 import pandas as pd
 import numpy as np
 import torch
+import warnings
 from diffusers import StableDiffusionInpaintPipeline
 from PIL import Image
 
@@ -26,11 +27,14 @@ def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-s
         
         print(f"Using device: {device}")
         
-        pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-            safety_checker=None
-        ).to(device)
+        # Note: safety_checker=None is OK for scientific research on time series data
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='.*safety_checker.*')
+            pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+                model_id,
+                torch_dtype=dtype,
+                safety_checker=None
+            ).to(device)
         
         if device == "cuda":
             pipeline.enable_attention_slicing()

@@ -6,6 +6,7 @@ Uses Kalman smoothing to estimate missing values.
 
 import pandas as pd
 import numpy as np
+import warnings
 
 
 def sarimax_impute(data: pd.Series) -> pd.Series:
@@ -34,9 +35,13 @@ def sarimax_impute(data: pd.Series) -> pd.Series:
     # SARIMAX can handle missing values in the endogenous variable
     data_with_nan = data.copy()
     
-    # Fit SARIMAX model - it will use Kalman filter to handle missing values
-    model = SARIMAX(data_with_nan, order=(1, 1, 1))
-    fitted = model.fit(disp=False)
+    # Suppress frequency warning (not needed for imputation, only for forecasting)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=Warning, message='.*frequency.*')
+        
+        # Fit SARIMAX model - it will use Kalman filter to handle missing values
+        model = SARIMAX(data_with_nan, order=(1, 1, 1), enforce_stationarity=False, enforce_invertibility=False)
+        fitted = model.fit(disp=False)
     
     # Use smoothed states to get estimates for missing values
     # The smoothed states provide optimal estimates given all data

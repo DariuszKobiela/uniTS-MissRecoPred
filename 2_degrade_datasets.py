@@ -11,8 +11,10 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
 import sys
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 # Import missingness techniques and config loader
 from missingness_techniques import MISSINGNESS_TECHNIQUES
@@ -39,6 +41,48 @@ def load_source_dataset(file_path: str, config) -> pd.DataFrame:
     )
     
     return df
+
+
+def process_single_degradation(task: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Worker function to process a single degradation task.
+    
+    Args:
+        task: Dictionary with keys: source_file, output_file, technique, rate, seed, config, force
+        
+    Returns:
+        Dictionary with keys: status, message, output_file
+    """
+    try:
+        # Check if file already exists
+        if Path(task['output_file']).exists() and not task['force']:
+            return {
+                'status': 'skipped',
+                'message': f"Already exists",
+                'output_file': task['output_file']
+            }
+        
+        # Perform degradation
+        degrade_dataset(
+            source_file=task['source_file'],
+            output_file=task['output_file'],
+            missingness_technique=task['technique'],
+            missing_rate=task['rate'],
+            seed=task['seed'],
+            config=task['config']
+        )
+        
+        return {
+            'status': 'success',
+            'message': 'Completed',
+            'output_file': task['output_file']
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e),
+            'output_file': task['output_file']
+        }
 
 
 def degrade_dataset(source_file: str,
@@ -207,24 +251,17 @@ Examples:
     print(f"Output directory: {output_dir}")
     print("="*70)
     
-    # Track progress
-    completed = 0
-    skipped = 0
-    
-    # Process each combination
+    # Build list of all degradation tasks
+    print("\n📋 Building task list...")
+    tasks = []
     for source_file in dataset_files:
         # Check if source file exists
         if not Path(source_file).exists():
-            print(f"\n❌ Source file not found: {source_file}")
+            print(f"❌ Source file not found: {source_file}")
             continue
         
         # Extract dataset name from filename (without extension)
         dataset_name = Path(source_file).stem
-        
-        print(f"\n{'='*70}")
-        print(f"Processing dataset: {dataset_name}")
-        print(f"Source: {source_file}")
-        print(f"{'='*70}")
         
         for technique in techniques:
             for rate in rates:
@@ -235,40 +272,47 @@ Examples:
                     output_filename = f"{dataset_name}_{technique}_{rate_percent}p_{iteration}.csv"
                     output_file = os.path.join(output_dir, output_filename)
                     
-                    # Check if file already exists
-                    if Path(output_file).exists() and not args.force:
-                        print(f"  ⏭️  Skipping {output_filename} (already exists)")
-                        skipped += 1
-                        completed += 1
-                        continue
-                    
                     # Generate unique seed for this combination
                     unique_seed = seed + iteration * 1000 + dataset_files.index(source_file) * 100 + len(technique) * 10 + rate_percent
                     
-                    # Degrade dataset
-                    try:
-                        degrade_dataset(
-                            source_file=source_file,
-                            output_file=output_file,
-                            missingness_technique=technique,
-                            missing_rate=rate,
-                            seed=unique_seed,
-                            config=config
-                        )
-                        completed += 1
-                    except Exception as e:
-                        print(f"  ❌ Error: {e}")
-                        continue
-                    
-                    # Print progress
-                    progress = (completed / total_operations) * 100
-                    print(f"  Progress: {completed}/{total_operations} ({progress:.1f}%)")
+                    tasks.append({
+                        'source_file': source_file,
+                        'output_file': output_file,
+                        'technique': technique,
+                        'rate': rate,
+                        'seed': unique_seed,
+                        'config': config,
+                        'force': args.force
+                    })
+    
+    # Get number of parallel jobs
+    n_jobs = config.get_n_jobs()
+    print(f"🚀 Processing {len(tasks)} tasks with {n_jobs} parallel job(s)...\n")
+    
+    # Process tasks in parallel with progress bar
+    results = Parallel(n_jobs=n_jobs, backend='loky')(
+        delayed(process_single_degradation)(task) 
+        for task in tqdm(tasks, desc="⏳ Degrading datasets", unit="task", ncols=80)
+    )
+    
+    # Count results
+    completed = sum(1 for r in results if r['status'] == 'success')
+    skipped = sum(1 for r in results if r['status'] == 'skipped')
+    errors = sum(1 for r in results if r['status'] == 'error')
+    
+    # Print errors if any
+    if errors > 0:
+        print("\n❌ Errors occurred:")
+        for r in results:
+            if r['status'] == 'error':
+                print(f"  - {os.path.basename(r['output_file'])}: {r['message']}")
     
     print("\n" + "="*70)
     print("DEGRADATION COMPLETE")
     print("="*70)
-    print(f"✓ Completed: {completed - skipped}/{total_operations}")
+    print(f"✅ Completed: {completed}/{len(tasks)}")
     print(f"⏭️  Skipped (existing): {skipped}")
+    print(f"❌ Errors: {errors}")
     print(f"📁 Output directory: {output_dir}")
     print("="*70)
 
