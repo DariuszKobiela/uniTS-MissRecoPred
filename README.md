@@ -852,13 +852,39 @@ Dataset-specific performance analysis:
 - Dataset difficulty assessment
 - Cross-dataset patterns
 
+### 5. ⚡ By Efficiency
+Overall computational efficiency ranking:
+- **Efficiency Score**: Combined normalized metric (time + CPU + RAM + GPU)
+- **Ascending sort**: Lower score = more efficient (best models at top)
+- **Time vs Memory scatter**: Visual efficiency comparison with CPU usage as bubble size
+
+**How Efficiency Score is calculated**:
+```
+Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
+```
+- **Time_norm**: Normalized execution time (0 to 1)
+- **CPU_norm**: CPU cores used / total cores available
+- **Memory_norm**: Normalized RAM usage (0 to 1)
+- **GPU_norm**: GPU memory used / total GPU memory (0 for CPU-only models)
+
+**Score interpretation**:
+- **0-1**: Highly efficient (minimal resources)
+- **1-2**: Moderately efficient
+- **2-4**: Less efficient (resource-intensive, typically GPU-based models)
+
+**Use cases**:
+- Select models for edge devices and embedded systems
+- Balance reconstruction quality (MAD) vs. computational cost
+- Optimize for deployment scenarios (cloud costs, energy efficiency)
+- Quick identification of most efficient models
+
 ### 6. 🔥 Heatmap
 Matrix visualization showing:
 - Model × Technique performance
 - Model × Dataset performance
 - Sortable by technique or dataset
 
-### 7. 📊 Statistical Tests *(NEW)*
+### 7. 📊 Statistical Tests
 Pairwise statistical significance testing:
 - **Significance matrix**: n×n matrix showing which model differences are statistically significant
 - **Color-coded results**:
@@ -885,7 +911,7 @@ Quick overview of top and bottom performers:
 - Worst 5 models (highest MAD)
 - Model comparison bar charts
 
-### 9. ⏱️ Computation Time *(NEW)*
+### 9. ⏱️ Computation Time
 Analyze execution time and computational complexity:
 - **Time summary**: Total, average, min, max execution time
 - **Time by model**: Average execution time with standard deviation
@@ -898,7 +924,7 @@ Analyze execution time and computational complexity:
 - Compare time-quality trade-offs
 - Plan computational budgets
 
-### 10. 💻 Resource Usage *(NEW)*
+### 10. 💻 Resource Usage
 Monitor hardware resource consumption:
 - **CPU usage**: Average and peak CPU utilization per model
 - **RAM usage**: Memory consumption per model
@@ -917,32 +943,6 @@ Monitor hardware resource consumption:
 - Compare CPU-only vs GPU-accelerated models
 - Optimize for limited hardware
 - Plan cloud computing costs
-
-### 5. ⚡ By Efficiency *(NEW)*
-Overall computational efficiency ranking:
-- **Efficiency Score**: Combined normalized metric (time + CPU + RAM + GPU)
-- **Ascending sort**: Lower score = more efficient (best models at top)
-- **Time vs Memory scatter**: Visual efficiency comparison with CPU usage as bubble size
-
-**How Efficiency Score is calculated**:
-```
-Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
-```
-- **Time_norm**: Normalized execution time (0 to 1)
-- **CPU_norm**: CPU cores used / total cores available
-- **Memory_norm**: Normalized RAM usage (0 to 1)
-- **GPU_norm**: GPU memory used / total GPU memory (0 for CPU-only models)
-
-**Score interpretation**:
-- **0-1**: Highly efficient (minimal resources)
-- **1-2**: Moderately efficient
-- **2-4**: Less efficient (resource-intensive, typically GPU-based models)
-
-**Use cases**:
-- Select models for edge devices and embedded systems
-- Balance reconstruction quality (MAD) vs. computational cost
-- Optimize for deployment scenarios (cloud costs, energy efficiency)
-- Quick identification of most efficient models
 
 ### 11. 📋 Raw Data
 Direct access to results:
@@ -1159,7 +1159,7 @@ If you use this framework in your research, please cite:
 
 ```bibtex
 @misc{ts_reconstruction_framework_2025,
-  title={Time Series Reconstruction Framework},
+  title={Univariate Time Series Reconstruction Framework},
   author={Dariusz Kobiela, Jarosław Kobiela, Adam Kurowski, Agnieszka Landowska},
   year={2025},
   howpublished={GitHub repository},
@@ -1186,5 +1186,4 @@ For issues, questions, or contributions:
 ---
 
 **Version**: 1.0  
-**Last Updated**: December 2025  
-**Status**: Production Ready ✅
+**Last Updated**: December 2025 
