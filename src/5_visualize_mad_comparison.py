@@ -781,7 +781,7 @@ def main():
                 st.markdown("---")
                 
                 # CPU cores usage by model
-                st.subheader("CPU Cores Utilized by Model")
+                st.subheader("CPU+GPU Cores Utilized by Model")
                 model_cpu = df_perf.groupby('model')['cpu_cores_used'].agg(['mean', 'std', 'max']).reset_index()
                 model_cpu = model_cpu.sort_values('mean', ascending=False)
                 
@@ -790,8 +790,8 @@ def main():
                     x='mean',
                     y='model',
                     orientation='h',
-                    title="Average CPU Cores Utilized by Model",
-                    labels={'mean': 'Avg CPU Cores', 'model': 'Model'},
+                    title="Average CPU+GPU Cores Utilized by Model",
+                    labels={'mean': 'Avg CPU+GPU Cores', 'model': 'Model'},
                     color='mean',
                     color_continuous_scale='Oranges'
                 )
@@ -1000,7 +1000,7 @@ def main():
                 
                 # Determine if model uses GPU for coloring
                 model_summary['compute_type'] = model_summary['gpu_normalized'].apply(
-                    lambda x: 'GPU-accelerated' if x > 0 else 'CPU-only'
+                    lambda x: 'CPU+GPU' if x > 0 else 'CPU only'
                 )
                 
                 fig = px.scatter(
@@ -1012,7 +1012,7 @@ def main():
                     title="Time vs Memory (bubble size = CPU + GPU utilization)",
                     labels={'time_seconds': 'Avg Time (seconds)', 'memory_mb': 'Avg Memory (MB)'},
                     color='compute_type',
-                    color_discrete_map={'CPU-only': '#3498db', 'GPU-accelerated': '#e74c3c'}
+                    color_discrete_map={'CPU only': '#3498db', 'CPU+GPU': '#e74c3c'}
                 )
                 fig.update_traces(textposition='top center')
                 st.plotly_chart(fig, width='stretch')

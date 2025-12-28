@@ -7,16 +7,28 @@ A modular framework for evaluating time series reconstruction methods on univari
 
 ## 📋 Table of Contents
 
-- [Features](#-features)
-- [Project Structure](#-project-structure)
-- [Quick Start](#-quick-start)
-- [Configuration](#-configuration)
-- [Workflow](#-workflow)
-- [Output Files](#-output-files)
-- [Advanced Usage](#-advanced-usage)
-- [Adding New Models](#-adding-new-models)
-- [Visualization](#-visualization)
-- [Citation](#-citation)
+- [✨ Features](#-features)
+- [📁 Project Structure](#-project-structure)
+- [🚀 Quick Start](#-quick-start)
+  - [Setup Virtual Environment](#1-setup-virtual-environment-recommended)
+  - [Installation](#2-installation)
+  - [Configuration](#3-configure-experiment)
+  - [Run Pipeline](#4-run-pipeline)
+  - [Common Commands](#5-common-commands)
+- [⚙️ Configuration](#-configuration)
+- [🔄 Workflow](#-workflow)
+- [📊 Output Files](#-output-files)
+- [📈 Visualization](#-visualization)
+- [🎯 Advanced Usage](#-advanced-usage)
+  - [Running with tmux](#running-long-experiments-with-tmux)
+  - [Custom Parameters](#custom-parameters-via-cli)
+  - [Hyperparameter Optimization](#optimizing-stable-diffusion-hyperparameters)
+  - [Available Models](#available-models)
+- [📝 Adding New Models](#-adding-new-models)
+- [🧹 Cleanup](#-cleanup)
+- [📈 Performance Estimates](#-performance-estimates)
+- [⚠️ Important Notes](#-important-notes)
+- [🤝 Citation](#-citation)
 
 ## ✨ Features
 
@@ -34,7 +46,6 @@ A modular framework for evaluating time series reconstruction methods on univari
 univariate-time-series-reconstruction-framework/
 │
 ├── 📁 src/                                 # Source code directory
-│   │
 │   ├── 🐍 1_clean_datasets.py              # [MAIN] Clean and validate raw data
 │   ├── 🐍 2_degrade_datasets.py            # [MAIN] Introduce missing data
 │   ├── 🐍 3_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
@@ -42,46 +53,24 @@ univariate-time-series-reconstruction-framework/
 │   ├── 🐍 5_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
 │   │
 │   ├── 📁 utils/                           # Utility modules
-│   │   ├── __init__.py
-│   │   ├── config_loader.py                # Configuration manager
-│   │   └── performance_metrics.py          # Performance monitoring
+│   │   ├── 🐍 config_loader.py                # Configuration manager
+│   │   ├── 🐍 performance_metrics.py          # Performance monitoring
+│   │   └── 🐍 statistical_tests.py            # Statistical significance tests
 │   │
-│   ├── 📁 optimization/                    # Optimization scripts
-│   │   ├── __init__.py
-│   │   └── optimize_sd_hyperparams.py      # SD hyperparameter tuning
+│   ├── 📁 optimization/                    # Hyperparameter optimization
+│   │   └── 🐍 optimize_sd_hyperparams.py      # SD hyperparameter tuning
 │   │
-│   ├── 📁 reconstruction_models/           # Reconstruction models (20 models)
-│   │   ├── __init__.py                     # Registry of models
-│   │   │
-│   │   ├── impute_mean.py                  # Mean imputation
-│   │   ├── impute_median.py                # Median imputation
-│   │   ├── impute_mode.py                  # Mode imputation
-│   │   ├── impute_ffill.py                 # Forward fill
-│   │   ├── impute_bfill.py                 # Backward fill
-│   │   │
-│   │   ├── interpolate_nearest.py          # Nearest neighbor interpolation
-│   │   ├── interpolate_linear.py           # Linear interpolation
-│   │   ├── interpolate_index.py            # Index-based interpolation
-│   │   ├── interpolate_quadratic.py        # Quadratic interpolation
-│   │   ├── interpolate_cubic.py            # Cubic interpolation
-│   │   ├── interpolate_polynomial.py       # Polynomial interpolation
-│   │   ├── interpolate_pchip.py            # PCHIP interpolation
-│   │   ├── interpolate_akima.py            # Akima interpolation
-│   │   ├── interpolate_spline.py           # Spline interpolation
-│   │   │
-│   │   ├── knn.py                          # K-Nearest Neighbors
-│   │   ├── sarimax.py                      # SARIMA with Kalman smoothing
-│   │   │
-│   │   ├── stable_diffusion_2_gaf.py       # Stable Diffusion 2 + GAF
-│   │   ├── stable_diffusion_2_mtf.py       # Stable Diffusion 2 + MTF
-│   │   ├── stable_diffusion_2_rp.py        # Stable Diffusion 2 + RP
-│   │   └── stable_diffusion_2_spec.py      # Stable Diffusion 2 + Spectrogram
+│   ├── 📁 reconstruction_models/           # 20 reconstruction models
+│   │   ├── 🐍 impute_*.py                     # Simple imputation (mean, median, mode, ffill, bfill)
+│   │   ├── 🐍 interpolate_*.py                # Interpolation (linear, cubic, spline, etc.)
+│   │   ├── 🐍 knn.py                          # K-Nearest Neighbors
+│   │   ├── 🐍 sarimax.py                      # SARIMA with Kalman smoothing
+│   │   └── 🐍 stable_diffusion_2_*.py         # Stable Diffusion 2 (GAF, MTF, RP, Spectrogram)
 │   │
 │   └── 📁 missingness_techniques/          # Missingness patterns
-│       ├── __init__.py                     # Registry of techniques
-│       ├── mcar.py                         # Missing Completely At Random
-│       ├── mar.py                          # Missing At Random
-│       └── mnar.py                         # Missing Not At Random
+│       ├── 🐍 mcar.py                         # Missing Completely At Random
+│       ├── 🐍 mar.py                          # Missing At Random
+│       └── 🐍 mnar.py                         # Missing Not At Random
 │
 ├── 📁 data/
 │   ├── 📁 0_source_data/                   # Original datasets (auto-discovered)
@@ -94,13 +83,15 @@ univariate-time-series-reconstruction-framework/
 │   └── 📁 performance_metrics/             # Performance metrics archive
 │       └── performance_metrics_*.csv       # Individual performance logs
 │
-├── ⚙️ config.yaml                          # Main configuration file
+├── 📁 .streamlit/                          # Streamlit configuration
+│   └── config.toml                         # Streamlit settings (file watching disabled)
 │
+├── ⚙️ config.yaml                          # Main configuration file
+├── 📝 Makefile                             # Make commands for easy pipeline execution
 ├── 📝 requirements.txt                     # Python dependencies
 ├── 📝 setup_venv.sh                        # Setup script (Linux/Mac)
 ├── 📝 setup_venv.ps1                       # Setup script (Windows)
-├── 📝 PERFORMANCE_METRICS.md               # Performance monitoring guide
-├── 📝 .gitignore                           # Git ignore rules
+├── 📝 LICENSE                              # Apache 2.0 License
 └── 📝 README.md                            # This file
 ```
 
@@ -202,22 +193,77 @@ Edit `config.yaml` to set:
 
 ### 4. Run Pipeline
 
+**Using Makefile (Recommended):**
+
 ```bash
+# See all available commands
+make help
+
 # Option 1: Run complete pipeline
 make pipeline
 
 # Option 2: Run step by step
+make clean-datasets    # Step 1: Clean and validate raw data
+make degrade           # Step 2: Create degraded datasets
+# OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
+make optimize          # Find optimal num_inference_steps and guidance_scale
+# Then update config.yaml with recommended values
+make reconstruct       # Step 3: Reconstruct missing values
+make calculate         # Step 4: Calculate MAD metric
+make visualize         # Step 5: Launch Streamlit dashboard
+
+
+```
+
+**Manual execution (alternative):**
+
+```bash
 python src/1_clean_datasets.py        # Clean and validate raw data
 python src/2_degrade_datasets.py      # Create degraded datasets
-
-# OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
-python src/optimization/optimize_sd_hyperparams.py  # Find optimal num_inference_steps and guidance_scale
-# Then update config.yaml with recommended values
-
+python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable Diffusion hyperparameters
 python src/3_reconstruct_datasets.py   # Reconstruct missing values
 python src/4_calculate_mad.py          # Calculate MAD metric
 streamlit run src/5_visualize_mad_comparison.py  # Visualize results
 ```
+
+**💡 Tip**: For long-running experiments, use `tmux` to keep processes running in background:
+```bash
+# Start tmux session
+tmux new -s experiments
+
+# Run reconstruction (may take hours with Stable Diffusion)
+python src/3_reconstruct_datasets.py
+
+# Detach: Ctrl+B then D
+# Reattach later: tmux attach -t experiments
+```
+See [Running Long Experiments with tmux](#running-long-experiments-with-tmux) for details.
+
+### 5. Common Commands
+
+**Using Makefile (Linux/Mac):**
+
+```bash
+# View all available commands
+make help
+
+# Quick test (limited data, fast)
+make test
+
+# Setup from scratch
+make setup          # Create virtual environment
+make install        # Install dependencies
+
+# Full workflow
+make pipeline       # Run steps 1-4 automatically
+make visualize      # View results
+
+# Cleanup
+make clean          # Remove generated data
+make clean-all      # Remove everything including results
+```
+
+**Note**: Windows users can use the manual commands or setup WSL (Windows Subsystem for Linux) to use Makefile.
 
 ## ⚙️ Configuration
 
@@ -524,13 +570,85 @@ df['cost_per_run'] = df.apply(
 - Monitor GPU memory for deep learning models
 
 **Troubleshooting**:
-- *GPU metrics show None*: Install `GPUtil` (`pip install GPUtil`) or no GPU available
+- *GPU metrics show None*: Install `GPUtil` (`pip install GPUtil==1.4.0`) or no GPU available
 - *High memory usage*: Large datasets, close other applications
 - *Inconsistent timings*: System load, background processes interfering
+- *Streamlit "inotify watch limit reached"*: Create `.streamlit/config.toml` with:
+  ```toml
+  [server]
+  fileWatcherType = "none"
+  ```
+  Or increase system limit: `sudo sysctl fs.inotify.max_user_watches=524288`
+
+**Advanced: Custom Performance Monitoring**
+
+You can use the `PerformanceMonitor` class in your own code:
+
+```python
+from utils.performance_metrics import monitor_performance, is_gpu_model
+
+# Monitor your own code
+with monitor_performance() as monitor:
+    # Your heavy computation here
+    result = heavy_computation()
+
+metrics = monitor.stop()
+print(f"Time: {metrics['time_seconds']:.2f}s")
+print(f"CPU: {metrics['cpu_cores_used']:.2f}/{metrics['cpu_cores_total']} cores")
+print(f"RAM: {metrics['memory_mb']:.1f}/{metrics['memory_total_mb']:.0f} MB")
+
+# Check if model uses GPU
+if is_gpu_model('stable_diffusion_2_gaf'):
+    print("This model will use GPU if available")
+```
+
+**Dependencies**:
+- `psutil` - Required for CPU and RAM monitoring (included in requirements.txt)
+- `GPUtil==1.4.0` - Optional for GPU monitoring (included in requirements.txt)
 
 ## 🎯 Advanced Usage
 
+### Running Long Experiments with tmux
+
+For long-running experiments (especially with Stable Diffusion models), use `tmux` to keep the process running even after disconnecting:
+
+```bash
+# Start a new tmux session
+tmux new -s experiments
+
+# Inside tmux, activate virtual environment and run experiments
+source experiment/bin/activate
+python src/3_reconstruct_datasets.py
+
+# Detach from tmux session (keeps it running in background)
+# Press: Ctrl+B, then D
+
+# Reattach to the session later
+tmux attach -t experiments
+
+# List all tmux sessions
+tmux ls
+
+# Kill a session when done
+tmux kill-session -t experiments
+```
+
+**Useful tmux commands**:
+- `Ctrl+B` then `D` - Detach from session (process keeps running)
+- `Ctrl+B` then `C` - Create new window
+- `Ctrl+B` then `N` - Next window
+- `Ctrl+B` then `P` - Previous window
+- `Ctrl+B` then `[` - Scroll mode (use arrows, `Q` to exit)
+
+**Why use tmux?**:
+- Experiments continue running even if SSH disconnects
+- Run multiple experiments in parallel windows
+- Monitor progress in one window, logs in another
+- Return to check progress anytime without interrupting
+
 ### Custom Parameters via CLI
+
+For custom parameters, use the scripts directly instead of Makefile:
 
 ```bash
 # Degrade specific datasets
@@ -547,6 +665,13 @@ python src/3_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
 python src/4_calculate_mad.py --config my_config.yaml
+```
+
+**Quick test with Makefile** (limited data for fast testing):
+
+```bash
+# Runs: MCAR 10% 1 iteration with only 2 models
+make test
 ```
 
 ### Optimizing Stable Diffusion Hyperparameters
@@ -699,9 +824,9 @@ computation:
 - **MAR** (Missing At Random): Probability depends on deviation from median
 - **MNAR** (Missing Not At Random): Probability increases over time (sensor degradation)
 
-## 📈 Visualization Features
+## 📈 Visualization
 
-The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides comprehensive analysis across **10 interactive tabs**:
+The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides comprehensive analysis across **11 interactive tabs**:
 
 ### 1. 📊 By Model
 Compare reconstruction quality (MAD) across all models with:
@@ -830,6 +955,15 @@ Direct access to results:
 - **Global filters** (sidebar): Apply to ALL tabs
 - **Local filters** (within tabs): Tab-specific refinement
 
+### Launch Dashboard
+
+```bash
+streamlit run src/5_visualize_mad_comparison.py
+# Open browser at http://localhost:8501
+```
+
+**Note**: If you encounter "inotify watch limit reached" error on Linux, the project includes `.streamlit/config.toml` with `fileWatcherType = "none"` to disable file watching. This prevents the error while keeping all functionality (you'll need to manually refresh on code changes).
+
 ## 📝 Adding New Models
 
 ### Add a Reconstruction Model
@@ -918,43 +1052,21 @@ MISSINGNESS_TECHNIQUES = {
 python src/2_degrade_datasets.py --techniques MY_TECHNIQUE
 ```
 
-## 🎨 Visualization
-
-The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides:
-
-### Features
-- **File Selection**: Choose results file from `experiments_results/`
-- **Interactive Filters**: Dataset, Model, Technique, Missing Rate
-- **Multiple Views**:
-  - 📊 By Model - Compare reconstruction models
-  - 🎯 By Technique - Compare missingness patterns
-  - 📉 By Missing Rate - Analyze rate impact
-  - 🔥 Heatmap - Model vs Technique matrix
-  - 🏆 Best/Worst - Top and bottom performers
-  - 📁 Raw Data - Filterable table with download
-
-### Launch Dashboard
-
-```bash
-streamlit run src/5_visualize_mad_comparison.py
-# Open browser at http://localhost:8501
-```
-
-## 📚 Additional Documentation
-
-- **[PERFORMANCE_METRICS.md](PERFORMANCE_METRICS.md)** - Technical details on performance monitoring, custom monitoring code, and advanced troubleshooting
-
 ## 🧹 Cleanup
 
 ### Clean Generated Files
 
 ```bash
-# Remove generated files (keep source data)
+# Remove generated datasets (keep results and source data)
 make clean
 
 # Remove everything including results
 make clean-all
 ```
+
+**What gets cleaned:**
+- `make clean`: Removes `data/1_cleaned_data/`, `data/2_missing_data/`, `data/3_fixed_data/`
+- `make clean-all`: Removes all of the above + `experiments_results/*.csv`
 
 ### Remove Virtual Environment
 
