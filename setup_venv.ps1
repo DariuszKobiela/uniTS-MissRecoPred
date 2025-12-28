@@ -4,25 +4,25 @@ Write-Host "🔧 Setting up Time Series Reconstruction Framework" -ForegroundCol
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check if venv exists
-if (Test-Path "venv") {
+# Check if experiment exists
+if (Test-Path "experiment") {
     Write-Host "⚠️  Virtual environment already exists." -ForegroundColor Yellow
     $response = Read-Host "Do you want to recreate it? (y/n)"
     if ($response -ne "y") {
         Write-Host "❌ Aborted." -ForegroundColor Red
         exit 1
     }
-    Write-Host "🗑️  Removing old venv..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force venv
+    Write-Host "🗑️  Removing old experiment..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force experiment
 }
 
-# Create venv
+# Create experiment
 Write-Host "📦 Creating virtual environment..." -ForegroundColor Cyan
-python -m venv venv
+python -m venv experiment
 
-# Activate venv
+# Activate experiment
 Write-Host "✅ Activating virtual environment..." -ForegroundColor Green
-& .\venv\Scripts\Activate.ps1
+& .\experiment\Scripts\Activate.ps1
 
 # Upgrade pip
 Write-Host "⬆️  Upgrading pip..." -ForegroundColor Cyan
@@ -38,7 +38,7 @@ Write-Host "✅ Setup complete!" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "To activate the virtual environment in the future, run:" -ForegroundColor Yellow
-Write-Host "  .\venv\Scripts\Activate.ps1" -ForegroundColor White
+Write-Host "  .\experiment\Scripts\Activate.ps1" -ForegroundColor White
 Write-Host ""
 Write-Host "To deactivate when done:" -ForegroundColor Yellow
 Write-Host "  deactivate" -ForegroundColor White

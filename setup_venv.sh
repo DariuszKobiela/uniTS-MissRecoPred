@@ -4,27 +4,27 @@
 echo "🔧 Setting up Time Series Reconstruction Framework"
 echo "=================================================="
 
-# Check if venv exists
-if [ -d "venv" ]; then
+# Check if experiment exists
+if [ -d "experiment" ]; then
     echo "⚠️  Virtual environment already exists."
     read -p "Do you want to recreate it? (y/n): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "🗑️  Removing old venv..."
-        rm -rf venv
+        echo "🗑️  Removing old experiment..."
+        rm -rf experiment
     else
         echo "❌ Aborted."
         exit 1
     fi
 fi
 
-# Create venv
+# Create experiment
 echo "📦 Creating virtual environment..."
-python3 -m venv venv
+python3 -m venv experiment
 
-# Activate venv
+# Activate experiment
 echo "✅ Activating virtual environment..."
-source venv/bin/activate
+source experiment/bin/activate
 
 # Upgrade pip
 echo "⬆️  Upgrading pip..."
@@ -40,7 +40,7 @@ echo "✅ Setup complete!"
 echo "=================================================="
 echo ""
 echo "To activate the virtual environment in the future, run:"
-echo "  source venv/bin/activate"
+echo "  source experiment/bin/activate"
 echo ""
 echo "To deactivate when done:"
 echo "  deactivate"

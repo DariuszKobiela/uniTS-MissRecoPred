@@ -391,13 +391,14 @@ def main():
     st.markdown("---")
     
     # Visualization tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "📊 By Model", 
         "🎯 By Technique", 
         "📉 By Missing Rate",
         "📁 By Dataset",
         "⚡ By Efficiency",
         "🔥 Heatmap",
+        "📊 Statistical Tests",
         "🏆 Best/Worst",
         "⏱️ Computation Time",
         "💻 Resource Usage",
@@ -509,6 +510,132 @@ def main():
             st.warning("No data available for heatmap with current filters")
     
     with tab7:
+        st.header("📊 Statistical Significance Tests")
+        st.caption("Pairwise t-tests between models - which differences are statistically significant?")
+        
+        if len(df_filtered) == 0:
+            st.warning("No data available with current filters")
+        else:
+            # Import statistical test functions
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from utils.statistical_tests import (
+                perform_pairwise_ttests, 
+                get_pairwise_pvalues,
+                get_model_statistics,
+                get_significance_summary
+            )
+            
+            # Info box explaining the analysis
+            with st.expander("ℹ️ How to interpret this analysis", expanded=False):
+                st.markdown("""
+                **Statistical Significance Testing**:
+                
+                This tab performs **pairwise t-tests** between all models to determine if performance differences are statistically significant or just due to random chance.
+                
+                **Legend**:
+                - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model (highly significant)
+                - **🟢 +1 (p<0.05)**: Row model is **significantly better** than column model (significant)
+                - **⬜ 0**: No significant difference
+                - **🔴 -1 (p<0.05)**: Row model is **significantly worse** than column model (significant)
+                - **🟥 -2 (p<0.01)**: Row model is **significantly worse** than column model (highly significant)
+                
+                **How to use**:
+                1. Find your model in the row
+                2. Look across the columns to see how it compares to other models
+                3. Positive values (green) = your model is better
+                4. Negative values (red) = your model is worse
+                5. Absolute value shows strength: |2| = very strong (p<0.01), |1| = strong (p<0.05)
+                
+                **Example**: If "interpolate_linear" row shows "+2" in "knn" column, it means interpolate_linear is significantly better than knn (p<0.01).
+                
+                **Note**: Lower MAD = better performance. Tests use independent samples t-test on multiple iterations.
+                """)
+            
+            st.divider()
+            
+            # Calculate statistics
+            st.subheader("Model Performance Statistics")
+            model_stats = get_model_statistics(df_filtered, metric='mad')
+            
+            # Display statistics table
+            st.dataframe(
+                model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
+                width='stretch'
+            )
+            
+            st.divider()
+            
+            # Perform pairwise t-tests
+            st.subheader("Pairwise Statistical Significance Matrix")
+            st.caption("Each cell shows if row model is significantly different from column model")
+            
+            # Calculate significance matrix
+            significance_matrix = perform_pairwise_ttests(df_filtered, metric='mad', alpha_01=0.01, alpha_05=0.05)
+            
+            # Create color mapping for heatmap
+            # +2: dark green, +1: light green, 0: white, -1: red, -2: dark red
+            def color_significance(val):
+                if val == 2:
+                    return 'background-color: #006400; color: white'  # Dark green (+2)
+                elif val == 1:
+                    return 'background-color: #90EE90; color: black'  # Light green (+1)
+                elif val == 0:
+                    return 'background-color: #FFFFFF; color: black'  # White (0)
+                elif val == -1:
+                    return 'background-color: #FF6B6B; color: black'  # Red (-1)
+                elif val == -2:
+                    return 'background-color: #8B0000; color: white'  # Dark red (-2)
+                else:
+                    return 'background-color: #CCCCCC; color: black'  # Gray
+            
+            # Apply styling
+            styled_matrix = significance_matrix.style.map(color_significance)
+            
+            # Display matrix
+            st.dataframe(styled_matrix, width='stretch', height=600)
+            
+            st.caption("""
+            **Legend**: 🟩 +2 (p<0.01 better) | 🟢 +1 (p<0.05 better) | ⬜ 0 (no diff) | 🔴 -1 (p<0.05 worse) | 🟥 -2 (p<0.01 worse)
+            """)
+            
+            st.divider()
+            
+            # Summary statistics per model
+            st.subheader("Significance Summary by Model")
+            st.caption("How many models is each model significantly better/worse than?")
+            
+            significance_summary = get_significance_summary(significance_matrix)
+            summary_df = pd.DataFrame(significance_summary).T
+            summary_df = summary_df.reset_index()
+            summary_df.columns = ['Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Difference', 'Worse (p<0.05)', 'Worse (p<0.01)']
+            
+            # Sort by number of models it's significantly better than
+            summary_df = summary_df.sort_values('Better (p<0.01)', ascending=False)
+            
+            st.dataframe(summary_df, width='stretch')
+            
+            st.divider()
+            
+            # Optional: Show p-values matrix
+            with st.expander("🔬 Show detailed p-values matrix", expanded=False):
+                st.caption("Exact p-values for all pairwise comparisons")
+                pvalue_matrix = get_pairwise_pvalues(df_filtered, metric='mad')
+                
+                # Style p-values: highlight significant ones
+                def color_pvalue(val):
+                    if val < 0.01:
+                        return 'background-color: #90EE90; font-weight: bold'
+                    elif val < 0.05:
+                        return 'background-color: #FFFFCC'
+                    else:
+                        return ''
+                
+                styled_pvalues = pvalue_matrix.style.map(color_pvalue).format("{:.4f}")
+                st.dataframe(styled_pvalues, width='stretch', height=600)
+    
+    with tab8:
         st.header("Best and Worst Performing Models")
         
         top_n = st.slider("Number of models to show", 5, 20, 10)
@@ -518,7 +645,7 @@ def main():
         else:
             st.warning("No data available with current filters")
     
-    with tab8:
+    with tab9:
         st.header("⏱️ Computation Time Analysis")
         st.caption("📍 Computational complexity metrics - execution time")
         
@@ -615,7 +742,7 @@ def main():
                 st.subheader("Detailed Statistics")
                 st.dataframe(model_time, width='stretch')
     
-    with tab9:
+    with tab10:
         st.header("💻 Resource Usage Analysis")
         st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
         
@@ -890,7 +1017,7 @@ def main():
                 fig.update_traces(textposition='top center')
                 st.plotly_chart(fig, width='stretch')
     
-    with tab10:
+    with tab11:
         st.header("Raw Data")
         
         # Search functionality

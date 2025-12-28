@@ -114,14 +114,14 @@ Using a virtual environment ensures isolated dependencies and prevents conflicts
 
 **Linux/Mac:**
 ```bash
-# Run setup script (creates venv and installs dependencies)
+# Run setup script (creates experiment env and installs dependencies)
 chmod +x setup_venv.sh
 ./setup_venv.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# Run setup script (creates venv and installs dependencies)
+# Run setup script (creates experiment env and installs dependencies)
 .\setup_venv.ps1
 
 # If you get execution policy error, run first:
@@ -134,34 +134,34 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ```bash
 # Create virtual environment
-python3 -m venv venv
+python3 -m venv experiment
 
 # Activate virtual environment
-source venv/bin/activate
+source experiment/bin/activate
 
-# You should see (venv) in your terminal prompt
+# You should see (experiment) in your terminal prompt
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
 # Create virtual environment
-python -m venv venv
+python -m venv experiment
 
 # Activate virtual environment
-.\venv\Scripts\Activate.ps1
+.\experiment\Scripts\Activate.ps1
 
-# You should see (venv) in your terminal prompt
+# You should see (experiment) in your terminal prompt
 ```
 
 **Windows (CMD):**
 
 ```cmd
 # Create virtual environment
-python -m venv venv
+python -m venv experiment
 
 # Activate virtual environment
-venv\Scripts\activate.bat
+experiment\Scripts\activate.bat
 ```
 
 #### Deactivate Virtual Environment
@@ -184,9 +184,10 @@ pip install -r requirements.txt
 pip list
 ```
 
-**New dependencies** (for performance monitoring):
+**Key dependencies**:
 - `psutil` - CPU and RAM monitoring
 - `GPUtil` - GPU monitoring (optional, only if CUDA available)
+- `scipy` - Statistical tests (t-tests for model comparison)
 
 If GPU monitoring is not needed, GPUtil can be skipped (performance metrics will still work without it).
 
@@ -335,13 +336,14 @@ The framework supports **parallel processing** for faster experiments:
 
 4️⃣ VISUALIZATION (5_visualize_mad_comparison.py)
    ├─ Load: experiments_results/*.csv (MAD results + performance metrics)
-   ├─ Interactive Streamlit dashboard with 10 tabs:
+   ├─ Interactive Streamlit dashboard with 11 tabs:
    │  ├─ 📊 By Model: Compare reconstruction quality across models
    │  ├─ 🎯 By Technique: Compare MCAR vs MAR vs MNAR
    │  ├─ 📉 By Missing Rate: Compare 10% vs 20% etc.
    │  ├─ 📁 By Dataset: Compare performance per dataset
    │  ├─ ⚡ By Efficiency: Overall efficiency score (time + CPU + memory)
    │  ├─ 🔥 Heatmap: Overall performance matrix
+   │  ├─ 📊 Statistical Tests: Pairwise t-tests (p<0.01, p<0.05) between models
    │  ├─ 🏆 Best/Worst: Top and bottom performing models
    │  ├─ ⏱️ Computation Time: Execution time analysis & complexity
    │  ├─ 💻 Resource Usage: CPU, RAM, GPU usage analysis
@@ -731,13 +733,34 @@ Matrix visualization showing:
 - Model × Dataset performance
 - Sortable by technique or dataset
 
-### 7. 🏆 Best/Worst
+### 7. 📊 Statistical Tests *(NEW)*
+Pairwise statistical significance testing:
+- **Significance matrix**: n×n matrix showing which model differences are statistically significant
+- **Color-coded results**:
+  - 🟩 Dark Green `+2`: Row model significantly better (p < 0.01)
+  - 🟢 Light Green `+1`: Row model significantly better (p < 0.05)
+  - ⬜ White `0`: No significant difference
+  - 🔴 Red `-1`: Row model significantly worse (p < 0.05)
+  - 🟥 Dark Red `-2`: Row model significantly worse (p < 0.01)
+- **Model statistics**: Mean, std, median, min, max for each model
+- **Significance summary**: How many models each model is significantly better/worse than
+- **P-values matrix**: Detailed p-values for all pairwise comparisons
+
+**Use cases**:
+- Determine if performance differences are statistically meaningful
+- Identify models that are consistently better/worse across experiments
+- Validate that "best" model is significantly better than alternatives
+- Scientific reporting: support conclusions with statistical evidence
+
+**Method**: Independent samples t-test on multiple iterations (each iteration = one sample)
+
+### 8. 🏆 Best/Worst
 Quick overview of top and bottom performers:
 - Best 5 models (lowest MAD)
 - Worst 5 models (highest MAD)
 - Model comparison bar charts
 
-### 8. ⏱️ Computation Time *(NEW)*
+### 9. ⏱️ Computation Time *(NEW)*
 Analyze execution time and computational complexity:
 - **Time summary**: Total, average, min, max execution time
 - **Time by model**: Average execution time with standard deviation
@@ -750,7 +773,7 @@ Analyze execution time and computational complexity:
 - Compare time-quality trade-offs
 - Plan computational budgets
 
-### 9. 💻 Resource Usage *(NEW)*
+### 10. 💻 Resource Usage *(NEW)*
 Monitor hardware resource consumption:
 - **CPU usage**: Average and peak CPU utilization per model
 - **RAM usage**: Memory consumption per model
@@ -796,7 +819,7 @@ Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
 - Optimize for deployment scenarios (cloud costs, energy efficiency)
 - Quick identification of most efficient models
 
-### 10. 📋 Raw Data
+### 11. 📋 Raw Data
 Direct access to results:
 - Searchable table with all metrics
 - Sort by any column
@@ -941,15 +964,15 @@ If you want to completely remove the virtual environment:
 # First, deactivate if active
 deactivate
 
-# Remove venv directory
+# Remove experiment directory
 # Linux/Mac:
-rm -rf venv
+rm -rf experiment
 
 # Windows (PowerShell):
-Remove-Item -Recurse -Force venv
+Remove-Item -Recurse -Force experiment
 
 # Windows (CMD):
-rmdir /s /q venv
+rmdir /s /q experiment
 ```
 
 To recreate, just follow the setup steps again.
@@ -988,16 +1011,16 @@ Always activate your virtual environment before running any scripts:
 
 ```bash
 # Linux/Mac
-source venv/bin/activate
+source experiment/bin/activate
 
 # Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
+.\experiment\Scripts\Activate.ps1
 
 # Windows (CMD)
-venv\Scripts\activate.bat
+experiment\Scripts\activate.bat
 ```
 
-You should see `(venv)` in your terminal prompt when active.
+You should see `(experiment)` in your terminal prompt when active.
 
 ### MAD Metric
 **MAD (Mean Absolute Difference)** measures reconstruction quality **ONLY for missing values**, not the entire series. This is crucial because:

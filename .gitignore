@@ -28,6 +28,8 @@ ENV/
 env.bak/
 venv.bak/
 .venv/
+experiment/
+experiments/
 
 # IDEs
 .vscode/
@@ -51,8 +53,8 @@ experiments_results/*.csv
 experiments_results/performance_metrics/*.csv
 hyperparameter_optimization/*.csv
 
-# Keep directory structure but ignore CSV files
-!data/0_source_data/*.csv
+# Keep directory structure (only .gitkeep files)
+!data/0_source_data/.gitkeep
 !data/1_cleaned_data/.gitkeep
 !data/2_missing_data/.gitkeep
 !data/3_fixed_data/.gitkeep

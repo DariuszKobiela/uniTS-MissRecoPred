@@ -18,11 +18,7 @@ accelerate==1.12.0
 # Visualization
 streamlit==1.52.2
 plotly==6.5.0
+matplotlib==3.10.8
 
-# Utilities
-joblib==1.4.2
-tqdm==4.67.1
-
-# Performance monitoring
-psutil==6.1.1
-GPUtil==1.4.0 
+# # Performance monitoring
+# GPUtil==1.4.0 
