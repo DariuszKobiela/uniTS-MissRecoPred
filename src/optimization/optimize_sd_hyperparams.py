@@ -26,6 +26,7 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from contextlib import contextmanager
 
 # Add parent directory (src) to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,6 +34,45 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import framework modules
 from utils.config_loader import load_config
 from reconstruction_models import RECONSTRUCTION_MODELS
+
+
+class TeeLogger:
+    """Logger that writes to both file and console"""
+    def __init__(self, filepath):
+        self.terminal = sys.stdout
+        self.log = open(filepath, 'w', encoding='utf-8')
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()  # Ensure immediate write
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+    
+    def close(self):
+        self.log.close()
+
+
+@contextmanager
+def suppress_output():
+    """Context manager to suppress stdout and stderr during model execution"""
+    # Save original stdout and stderr
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    
+    try:
+        # Redirect to devnull
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
+        yield
+    finally:
+        # Restore original stdout and stderr
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
 
 
 def parse_args():
@@ -202,7 +242,9 @@ def test_configuration(model_name: str, series: pd.Series, num_steps: int, guida
     start_time = time.time()
     
     try:
-        reconstructed = model_func(series, num_inference_steps=num_steps, guidance_scale=guidance)
+        # Suppress model loading and conversion messages
+        with suppress_output():
+            reconstructed = model_func(series, num_inference_steps=num_steps, guidance_scale=guidance)
         elapsed_time = time.time() - start_time
         status = 'success'
         error = None
@@ -223,250 +265,261 @@ def test_configuration(model_name: str, series: pd.Series, num_steps: int, guida
 def main():
     args = parse_args()
     
-    # Dynamically discover all Stable Diffusion models
-    SD_MODELS = get_stable_diffusion_models()
-    
-    if not SD_MODELS:
-        print("❌ Error: No Stable Diffusion models found!")
-        print("   Make sure you have models named 'stable_diffusion_*' in reconstruction_models/")
-        return
-    
-    print("="*70)
-    print("🔬 STABLE DIFFUSION HYPERPARAMETER OPTIMIZATION")
-    print("="*70)
-    print("Testing on ALL available degraded datasets for global optimization")
-    print(f"Testing {len(args.steps)} × {len(args.guidance)} = {len(args.steps) * len(args.guidance)} configurations per dataset")
-    print(f"Models ({len(SD_MODELS)}): {', '.join(SD_MODELS)}")
-    print("="*70)
-    
-    # Load config
-    config = load_config()
-    
-    # Find all degraded files
-    missing_dir = Path(config.get_missing_dir())
-    if not missing_dir.exists():
-        print(f"❌ Error: Missing data directory not found: {missing_dir}")
-        print(f"   Run: python 2_degrade_datasets.py first")
-        return
-    
-    degraded_files = sorted(missing_dir.glob("*.csv"))
-    
-    if not degraded_files:
-        print(f"❌ Error: No degraded files found in {missing_dir}")
-        print(f"   Run: python 2_degrade_datasets.py first")
-        return
-    
-    # Limit files if requested
-    if args.max_files:
-        degraded_files = degraded_files[:args.max_files]
-        print(f"\n⚠️  Limited to first {args.max_files} files for quick testing")
-    
-    print(f"\n📂 Found {len(degraded_files)} degraded files to test")
-    
-    # Parse file metadata and prepare test cases
-    test_cases = []
-    source_dir = Path(config.get_source_dir())
-    
-    for degraded_file in degraded_files:
-        metadata = parse_degraded_filename(degraded_file.name)
-        if not metadata:
-            print(f"⚠️  Skipping {degraded_file.name}: Cannot parse filename")
-            continue
-        
-        source_file = source_dir / f"{metadata['dataset']}.csv"
-        if not source_file.exists():
-            print(f"⚠️  Skipping {degraded_file.name}: Source file not found")
-            continue
-        
-        test_cases.append({
-            'degraded_file': degraded_file,
-            'source_file': source_file,
-            'metadata': metadata
-        })
-    
-    if not test_cases:
-        print("❌ No valid test cases found")
-        return
-    
-    print(f"✓ Prepared {len(test_cases)} test cases")
-    
-    # Display dataset distribution
-    datasets = {}
-    techniques = {}
-    rates = {}
-    for case in test_cases:
-        m = case['metadata']
-        datasets[m['dataset']] = datasets.get(m['dataset'], 0) + 1
-        techniques[m['technique']] = techniques.get(m['technique'], 0) + 1
-        rates[m['rate_percent']] = rates.get(m['rate_percent'], 0) + 1
-    
-    print(f"\n📊 Test case distribution:")
-    print(f"   Datasets: {len(datasets)} unique ({', '.join(datasets.keys())})")
-    print(f"   Techniques: {', '.join(f'{k}={v}' for k, v in techniques.items())}")
-    print(f"   Rates: {', '.join(f'{k}%={v}' for k, v in rates.items())}")
-    
     # Create output directory
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate timestamp
+    # Create summary log file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    summary_file = output_dir / f"Summary_opt_res_{timestamp}.txt"
     
-    # Test all configurations
-    results = []
-    total_tests = len(test_cases) * len(SD_MODELS) * len(args.steps) * len(args.guidance)
+    # Setup logger to write to both console and file
+    logger = TeeLogger(summary_file)
+    original_stdout = sys.stdout
+    sys.stdout = logger
     
-    print(f"\n🚀 Running {total_tests} total tests...")
-    print(f"   (This may take several hours depending on your hardware)\n")
-    
-    with tqdm(total=total_tests, desc="Testing configurations", unit="test", ncols=100) as pbar:
-        for test_case in test_cases:
-            # Load data
-            try:
-                source_series = load_source_dataset(str(test_case['source_file']), config)
-                degraded_series = load_degraded_dataset(str(test_case['degraded_file']))
-            except Exception as e:
-                print(f"\n⚠️  Error loading {test_case['degraded_file'].name}: {e}")
-                pbar.update(len(SD_MODELS) * len(args.steps) * len(args.guidance))
+    try:
+        # Dynamically discover all Stable Diffusion models
+        SD_MODELS = get_stable_diffusion_models()
+        
+        if not SD_MODELS:
+            print("❌ Error: No Stable Diffusion models found!")
+            print("   Make sure you have models named 'stable_diffusion_*' in reconstruction_models/")
+            return
+        
+        print("="*70)
+        print("🔬 STABLE DIFFUSION HYPERPARAMETER OPTIMIZATION")
+        print("="*70)
+        print("Testing on ALL available degraded datasets for global optimization")
+        print(f"Testing {len(args.steps)} × {len(args.guidance)} = {len(args.steps) * len(args.guidance)} configurations per dataset")
+        print(f"Models ({len(SD_MODELS)}): {', '.join(SD_MODELS)}")
+        print("="*70)
+        print()
+        
+        # Load config
+        config = load_config()
+        
+        # Find all degraded files
+        missing_dir = Path(config.get_missing_dir())
+        if not missing_dir.exists():
+            print(f"❌ Error: Missing data directory not found: {missing_dir}")
+            print(f"   Run: python 2_degrade_datasets.py first")
+            return
+        
+        degraded_files = sorted(missing_dir.glob("*.csv"))
+        
+        if not degraded_files:
+            print(f"❌ Error: No degraded files found in {missing_dir}")
+            print(f"   Run: python 2_degrade_datasets.py first")
+            return
+        
+        # Limit files if requested
+        if args.max_files:
+            degraded_files = degraded_files[:args.max_files]
+            print(f"\n⚠️  Limited to first {args.max_files} files for quick testing")
+        
+        print(f"\n📂 Found {len(degraded_files)} degraded files to test")
+        
+        # Parse file metadata and prepare test cases
+        test_cases = []
+        source_dir = Path(config.get_source_dir())
+        
+        for degraded_file in degraded_files:
+            metadata = parse_degraded_filename(degraded_file.name)
+            if not metadata:
+                print(f"⚠️  Skipping {degraded_file.name}: Cannot parse filename")
                 continue
             
-            for model_name in SD_MODELS:
-                if model_name not in RECONSTRUCTION_MODELS:
-                    print(f"\n⚠️  Warning: Model {model_name} not found in RECONSTRUCTION_MODELS")
-                    pbar.update(len(args.steps) * len(args.guidance))
+            source_file = source_dir / f"{metadata['dataset']}.csv"
+            if not source_file.exists():
+                print(f"⚠️  Skipping {degraded_file.name}: Source file not found")
+                continue
+            
+            test_cases.append({
+                'degraded_file': degraded_file,
+                'source_file': source_file,
+                'metadata': metadata
+            })
+        
+        if not test_cases:
+            print("❌ No valid test cases found")
+            return
+        
+        print(f"✓ Prepared {len(test_cases)} test cases")
+        
+        # Display dataset distribution
+        datasets = {}
+        techniques = {}
+        rates = {}
+        for case in test_cases:
+            m = case['metadata']
+            datasets[m['dataset']] = datasets.get(m['dataset'], 0) + 1
+            techniques[m['technique']] = techniques.get(m['technique'], 0) + 1
+            rates[m['rate_percent']] = rates.get(m['rate_percent'], 0) + 1
+        
+        print(f"\n📊 Test case distribution:")
+        print(f"   Datasets: {len(datasets)} unique ({', '.join(datasets.keys())})")
+        print(f"   Techniques: {', '.join(f'{k}={v}' for k, v in techniques.items())}")
+        print(f"   Rates: {', '.join(f'{k}%={v}' for k, v in rates.items())}")
+        
+        # Generate timestamp for output files
+        opt_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Test all configurations
+        results = []
+        total_tests = len(test_cases) * len(SD_MODELS) * len(args.steps) * len(args.guidance)
+        
+        print(f"\n🚀 Running {total_tests} total tests...")
+        print(f"   (This may take several hours depending on your hardware)\n")
+        
+        with tqdm(total=total_tests, desc="Testing configurations", unit="test", ncols=100) as pbar:
+            for test_case in test_cases:
+                # Load data
+                try:
+                    source_series = load_source_dataset(str(test_case['source_file']), config)
+                    degraded_series = load_degraded_dataset(str(test_case['degraded_file']))
+                except Exception as e:
+                    print(f"\n⚠️  Error loading {test_case['degraded_file'].name}: {e}")
+                    pbar.update(len(SD_MODELS) * len(args.steps) * len(args.guidance))
                     continue
                 
-                for num_steps, guidance in itertools.product(args.steps, args.guidance):
-                    pbar.set_description(
-                        f"{test_case['metadata']['dataset'][:20]} | "
-                        f"{model_name[:25]} | "
-                        f"s={num_steps} g={guidance}"
-                    )
+                for model_name in SD_MODELS:
+                    if model_name not in RECONSTRUCTION_MODELS:
+                        print(f"\n⚠️  Warning: Model {model_name} not found in RECONSTRUCTION_MODELS")
+                        pbar.update(len(args.steps) * len(args.guidance))
+                        continue
                     
-                    # Test configuration
-                    test_result = test_configuration(model_name, degraded_series, num_steps, guidance)
-                    
-                    # Calculate MAD if successful
-                    if test_result['status'] == 'success':
-                        metrics = calculate_mad(source_series, degraded_series, test_result['reconstructed'])
-                    else:
-                        metrics = {
-                            'mad': np.nan,
-                            'max_diff': np.nan,
-                            'min_diff': np.nan,
-                            'std_diff': np.nan,
-                            'n_missing': 0
-                        }
-                    
-                    # Store result
-                    results.append({
-                        'dataset': test_case['metadata']['dataset'],
-                        'technique': test_case['metadata']['technique'],
-                        'rate_percent': test_case['metadata']['rate_percent'],
-                        'iteration': test_case['metadata']['iteration'],
-                        'model': model_name,
-                        'num_inference_steps': num_steps,
-                        'guidance_scale': guidance,
-                        'mad': metrics['mad'],
-                        'max_diff': metrics['max_diff'],
-                        'min_diff': metrics['min_diff'],
-                        'std_diff': metrics['std_diff'],
-                        'n_missing': metrics['n_missing'],
-                        'time_seconds': test_result['time_seconds'],
-                        'status': test_result['status'],
-                        'error': test_result['error']
-                    })
-                    
-                    pbar.update(1)
-    
-    # Create DataFrame
-    df_results = pd.DataFrame(results)
-    
-    # Calculate efficiency metrics
-    df_results['quality_score'] = 1 / (df_results['mad'] + 0.001)  # Lower MAD = higher quality
-    df_results['time_per_step'] = df_results['time_seconds'] / df_results['num_inference_steps']
-    df_results['quality_per_second'] = df_results['quality_score'] / df_results['time_seconds']
-    
-    # Save detailed results
-    output_file = output_dir / f"optimization_results_global_{timestamp}.csv"
-    df_results.to_csv(output_file, index=False)
-    print(f"\n💾 Saved detailed results to: {output_file}")
-    
-    # Generate summary report
-    print("\n" + "="*70)
-    print("📊 GLOBAL OPTIMIZATION RESULTS")
-    print("="*70)
-    
-    # Filter successful results
-    df_success = df_results[df_results['status'] == 'success'].copy()
-    
-    if df_success.empty:
-        print("❌ No successful tests!")
-        return
-    
-    print(f"\n✓ Successfully completed: {len(df_success)}/{len(df_results)} tests")
-    print(f"✓ Failed: {len(df_results) - len(df_success)} tests")
-    
-    # Aggregate results by hyperparameters (average across all datasets)
-    agg_results = df_success.groupby(['model', 'num_inference_steps', 'guidance_scale']).agg({
-        'mad': 'mean',
-        'time_seconds': 'mean',
-        'quality_per_second': 'mean'
-    }).reset_index()
-    
-    # Best configurations by different criteria
-    print("\n🏆 GLOBALLY OPTIMAL CONFIGURATIONS:")
-    print("\n1. Best Average MAD (Lowest error across all datasets):")
-    best_mad = agg_results.nsmallest(5, 'mad')
-    for idx, row in best_mad.iterrows():
-        print(f"   {row['model']}: steps={int(row['num_inference_steps'])}, guidance={row['guidance_scale']:.1f}")
-        print(f"      Avg MAD={row['mad']:.4f}, Avg Time={row['time_seconds']:.1f}s")
-    
-    print("\n2. Best Quality/Time (Most efficient globally):")
-    best_efficiency = agg_results.nlargest(5, 'quality_per_second')
-    for idx, row in best_efficiency.iterrows():
-        print(f"   {row['model']}: steps={int(row['num_inference_steps'])}, guidance={row['guidance_scale']:.1f}")
-        print(f"      Avg MAD={row['mad']:.4f}, Avg Time={row['time_seconds']:.1f}s, Efficiency={row['quality_per_second']:.4f}")
-    
-    # Recommendations per model
-    print("\n💡 OPTIMAL HYPERPARAMETERS PER MODEL:")
-    for model_name in SD_MODELS:
-        if model_name in agg_results['model'].values:
-            model_results = agg_results[agg_results['model'] == model_name]
-            best = model_results.loc[model_results['quality_per_second'].idxmax()]
-            print(f"\n   {model_name}:")
-            print(f"      num_inference_steps: {int(best['num_inference_steps'])}")
-            print(f"      guidance_scale: {best['guidance_scale']:.1f}")
-            print(f"      Expected avg MAD: {best['mad']:.4f}")
-            print(f"      Expected avg time: {best['time_seconds']:.1f}s/dataset")
-    
-    # Analysis by hyperparameter
-    print("\n📈 HYPERPARAMETER EFFECT ANALYSIS:")
-    print("\nEffect of num_inference_steps (averaged across all datasets, techniques, rates):")
-    steps_analysis = df_success.groupby('num_inference_steps').agg({
-        'mad': ['mean', 'std'],
-        'time_seconds': 'mean'
-    }).round(4)
-    steps_analysis.columns = ['mad_mean', 'mad_std', 'time_mean']
-    print(steps_analysis.to_string())
-    
-    print("\nEffect of guidance_scale (averaged across all datasets, techniques, rates):")
-    guidance_analysis = df_success.groupby('guidance_scale').agg({
-        'mad': ['mean', 'std'],
-        'time_seconds': 'mean'
-    }).round(4)
-    guidance_analysis.columns = ['mad_mean', 'mad_std', 'time_mean']
-    print(guidance_analysis.to_string())
-    
-    # Generate config recommendations
-    print("\n" + "="*70)
-    print("⚙️  RECOMMENDED CONFIG.YAML SETTINGS (GLOBALLY OPTIMAL):")
-    print("="*70)
-    
-    # Find overall best balanced configuration
-    overall_best = agg_results.loc[agg_results['quality_per_second'].idxmax()]
-    
-    print(f"""
+                    for num_steps, guidance in itertools.product(args.steps, args.guidance):
+                        pbar.set_description(
+                            f"{test_case['metadata']['dataset'][:20]} | "
+                            f"{model_name[:25]} | "
+                            f"s={num_steps} g={guidance}"
+                        )
+                        
+                        # Test configuration
+                        test_result = test_configuration(model_name, degraded_series, num_steps, guidance)
+                        
+                        # Calculate MAD if successful
+                        if test_result['status'] == 'success':
+                            metrics = calculate_mad(source_series, degraded_series, test_result['reconstructed'])
+                        else:
+                            metrics = {
+                                'mad': np.nan,
+                                'max_diff': np.nan,
+                                'min_diff': np.nan,
+                                'std_diff': np.nan,
+                                'n_missing': 0
+                            }
+                        
+                        # Store result
+                        results.append({
+                            'dataset': test_case['metadata']['dataset'],
+                            'technique': test_case['metadata']['technique'],
+                            'rate_percent': test_case['metadata']['rate_percent'],
+                            'iteration': test_case['metadata']['iteration'],
+                            'model': model_name,
+                            'num_inference_steps': num_steps,
+                            'guidance_scale': guidance,
+                            'mad': metrics['mad'],
+                            'max_diff': metrics['max_diff'],
+                            'min_diff': metrics['min_diff'],
+                            'std_diff': metrics['std_diff'],
+                            'n_missing': metrics['n_missing'],
+                            'time_seconds': test_result['time_seconds'],
+                            'status': test_result['status'],
+                            'error': test_result['error']
+                        })
+                        
+                        pbar.update(1)
+        
+        # Create DataFrame
+        df_results = pd.DataFrame(results)
+        
+        # Calculate efficiency metrics
+        df_results['quality_score'] = 1 / (df_results['mad'] + 0.001)  # Lower MAD = higher quality
+        df_results['time_per_step'] = df_results['time_seconds'] / df_results['num_inference_steps']
+        df_results['quality_per_second'] = df_results['quality_score'] / df_results['time_seconds']
+        
+        # Save detailed results
+        output_file = output_dir / f"optimization_results_global_{opt_timestamp}.csv"
+        df_results.to_csv(output_file, index=False)
+        print(f"\n💾 Saved detailed results to: {output_file}")
+        
+        # Generate summary report
+        print("\n" + "="*70)
+        print("📊 GLOBAL OPTIMIZATION RESULTS")
+        print("="*70)
+        
+        # Filter successful results
+        df_success = df_results[df_results['status'] == 'success'].copy()
+        
+        if df_success.empty:
+            print("❌ No successful tests!")
+            return
+        
+        print(f"\n✓ Successfully completed: {len(df_success)}/{len(df_results)} tests")
+        print(f"✓ Failed: {len(df_results) - len(df_success)} tests")
+        
+        # Aggregate results by hyperparameters (average across all datasets)
+        agg_results = df_success.groupby(['model', 'num_inference_steps', 'guidance_scale']).agg({
+            'mad': 'mean',
+            'time_seconds': 'mean',
+            'quality_per_second': 'mean'
+        }).reset_index()
+        
+        # Best configurations by different criteria
+        print("\n🏆 GLOBALLY OPTIMAL CONFIGURATIONS:")
+        print("\n1. Best Average MAD (Lowest error across all datasets):")
+        best_mad = agg_results.nsmallest(5, 'mad')
+        for idx, row in best_mad.iterrows():
+            print(f"   {row['model']}: steps={int(row['num_inference_steps'])}, guidance={row['guidance_scale']:.1f}")
+            print(f"      Avg MAD={row['mad']:.4f}, Avg Time={row['time_seconds']:.1f}s")
+        
+        print("\n2. Best Quality/Time (Most efficient globally):")
+        best_efficiency = agg_results.nlargest(5, 'quality_per_second')
+        for idx, row in best_efficiency.iterrows():
+            print(f"   {row['model']}: steps={int(row['num_inference_steps'])}, guidance={row['guidance_scale']:.1f}")
+            print(f"      Avg MAD={row['mad']:.4f}, Avg Time={row['time_seconds']:.1f}s, Efficiency={row['quality_per_second']:.4f}")
+        
+        # Recommendations per model
+        print("\n💡 OPTIMAL HYPERPARAMETERS PER MODEL:")
+        for model_name in SD_MODELS:
+            if model_name in agg_results['model'].values:
+                model_results = agg_results[agg_results['model'] == model_name]
+                best = model_results.loc[model_results['quality_per_second'].idxmax()]
+                print(f"\n   {model_name}:")
+                print(f"      num_inference_steps: {int(best['num_inference_steps'])}")
+                print(f"      guidance_scale: {best['guidance_scale']:.1f}")
+                print(f"      Expected avg MAD: {best['mad']:.4f}")
+                print(f"      Expected avg time: {best['time_seconds']:.1f}s/dataset")
+        
+        # Analysis by hyperparameter
+        print("\n📈 HYPERPARAMETER EFFECT ANALYSIS:")
+        print("\nEffect of num_inference_steps (averaged across all datasets, techniques, rates):")
+        steps_analysis = df_success.groupby('num_inference_steps').agg({
+            'mad': ['mean', 'std'],
+            'time_seconds': 'mean'
+        }).round(4)
+        steps_analysis.columns = ['mad_mean', 'mad_std', 'time_mean']
+        print(steps_analysis.to_string())
+        
+        print("\nEffect of guidance_scale (averaged across all datasets, techniques, rates):")
+        guidance_analysis = df_success.groupby('guidance_scale').agg({
+            'mad': ['mean', 'std'],
+            'time_seconds': 'mean'
+        }).round(4)
+        guidance_analysis.columns = ['mad_mean', 'mad_std', 'time_mean']
+        print(guidance_analysis.to_string())
+        
+        # Generate config recommendations
+        print("\n" + "="*70)
+        print("⚙️  RECOMMENDED CONFIG.YAML SETTINGS (GLOBALLY OPTIMAL):")
+        print("="*70)
+        
+        # Find overall best balanced configuration
+        overall_best = agg_results.loc[agg_results['quality_per_second'].idxmax()]
+        
+        print(f"""
 computation:
   stable_diffusion:
     num_inference_steps: {int(overall_best['num_inference_steps'])}  # Globally optimized
@@ -485,10 +538,16 @@ computation:
 #   - {len(rates)} missing rates
 """)
     
-    print("="*70)
-    print("✅ Global optimization complete!")
-    print(f"📁 Detailed results saved to: {output_file}")
-    print("="*70)
+        print("="*70)
+        print("✅ Global optimization complete!")
+        print(f"📁 Detailed results saved to: {output_file}")
+        print(f"📄 Summary saved to: {summary_file}")
+        print("="*70)
+    
+    finally:
+        # Restore original stdout and close logger
+        sys.stdout = original_stdout
+        logger.close()
 
 
 if __name__ == "__main__":

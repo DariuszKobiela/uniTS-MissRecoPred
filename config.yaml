@@ -115,7 +115,7 @@ computation:
   
   # Stable Diffusion settings (if using SD models)
   stable_diffusion:
-    num_inference_steps: 2
+    num_inference_steps: 5
     guidance_scale: 7.5
     device: "cuda"  # "cuda" or "cpu"
 

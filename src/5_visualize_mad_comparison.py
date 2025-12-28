@@ -800,9 +800,7 @@ def main():
                 
                 # Combined CPU + GPU utilization for comparison
                 if df_perf['gpu_percent'].notna().any():
-                    st.subheader("Combined CPU + GPU Utilization by Model")
-                    st.caption("GPU-based models (e.g., Stable Diffusion) show both CPU and GPU usage")
-                    
+
                     # Prepare data: for each model show CPU and GPU side by side
                     model_compute = df_perf.groupby('model').agg({
                         'cpu_cores_used': 'mean',
@@ -828,7 +826,7 @@ def main():
                     
                     # Sort by combined usage (CPU + normalized GPU)
                     model_compute['combined'] = model_compute['cpu_cores_used'] + (model_compute['gpu_percent'] / 100.0) * 4
-                    model_compute = model_compute.sort_values('combined', ascending=False)
+                    model_compute = model_compute.sort_values('combined', ascending=True)
                     model_order = model_compute['model'].tolist()
                     
                     fig = px.bar(
@@ -863,26 +861,6 @@ def main():
                 )
                 fig.update_layout(height=max(400, len(model_mem) * 30), showlegend=False)
                 st.plotly_chart(fig, width='stretch')
-                
-                # GPU usage (if available)
-                if df_perf['gpu_percent'].notna().any():
-                    st.subheader("GPU Usage by Model")
-                    df_gpu = df_perf[df_perf['gpu_percent'].notna()]
-                    model_gpu = df_gpu.groupby('model')['gpu_percent'].agg(['mean', 'std', 'max']).reset_index()
-                    model_gpu = model_gpu.sort_values('mean', ascending=False)
-                    
-                    fig = px.bar(
-                        model_gpu,
-                        x='mean',
-                        y='model',
-                        orientation='h',
-                        title="Average GPU Usage by Model",
-                        labels={'mean': 'Avg GPU Usage (%)', 'model': 'Model'},
-                        color='mean',
-                        color_continuous_scale='Greens'
-                    )
-                    fig.update_layout(height=max(400, len(model_gpu) * 30), showlegend=False)
-                    st.plotly_chart(fig, width='stretch')
     
     with tab5:
         st.header("⚡ Resource Efficiency Analysis")

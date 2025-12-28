@@ -52,6 +52,7 @@ data/4_inpainting_conversions/*.csv
 experiments_results/*.csv
 experiments_results/performance_metrics/*.csv
 hyperparameter_optimization/*.csv
+hyperparameter_optimization/*.txt
 
 # Keep directory structure (only .gitkeep files)
 !data/0_source_data/.gitkeep
