@@ -54,10 +54,13 @@ class PerformanceMonitor:
         Returns:
             Dictionary with performance metrics:
             - time_seconds: Execution time in seconds
-            - cpu_percent: Average CPU usage percentage
+            - cpu_cores_used: CPU cores utilized (can be > 1.0 for parallel)
+            - cpu_cores_total: Total CPU cores available
             - memory_mb: Peak memory usage in MB
+            - memory_total_mb: Total system memory in MB
             - gpu_percent: GPU utilization percentage (if available)
             - gpu_memory_mb: GPU memory usage in MB (if available)
+            - gpu_memory_total_mb: Total GPU memory in MB (if available)
         """
         self.end_time = time.time()
         
@@ -67,17 +70,27 @@ class PerformanceMonitor:
         # Get CPU usage (average since start)
         cpu_percent = self.process.cpu_percent(interval=None)
         
+        # Convert to cores (100% = 1 core, 200% = 2 cores, etc.)
+        cpu_cores_used = cpu_percent / 100.0
+        cpu_cores_total = psutil.cpu_count()
+        
         # Get peak memory usage
         mem_info = self.process.memory_info()
         memory_mb = mem_info.rss / (1024 * 1024)
         peak_memory_mb = memory_mb - self.initial_memory_mb
         
+        # Get total system memory
+        total_memory = psutil.virtual_memory().total / (1024 * 1024)  # Convert to MB
+        
         metrics = {
             'time_seconds': round(execution_time, 3),
-            'cpu_percent': round(cpu_percent, 2),
+            'cpu_cores_used': round(cpu_cores_used, 2),
+            'cpu_cores_total': cpu_cores_total,
             'memory_mb': round(peak_memory_mb, 2),
+            'memory_total_mb': round(total_memory, 0),
             'gpu_percent': None,
-            'gpu_memory_mb': None
+            'gpu_memory_mb': None,
+            'gpu_memory_total_mb': None
         }
         
         # Get GPU metrics if available
@@ -89,6 +102,7 @@ class PerformanceMonitor:
                     gpu = gpus[0]
                     metrics['gpu_percent'] = round(gpu.load * 100, 2)
                     metrics['gpu_memory_mb'] = round(gpu.memoryUsed, 2)
+                    metrics['gpu_memory_total_mb'] = round(gpu.memoryTotal, 0)
             except Exception:
                 pass
         
@@ -118,14 +132,17 @@ def format_metrics(metrics: Dict[str, float]) -> str:
     """Format metrics for display"""
     lines = [
         f"Time: {metrics['time_seconds']:.2f}s",
-        f"CPU: {metrics['cpu_percent']:.1f}%",
-        f"RAM: {metrics['memory_mb']:.1f} MB"
+        f"CPU: {metrics['cpu_cores_used']:.2f}/{metrics['cpu_cores_total']} cores",
+        f"RAM: {metrics['memory_mb']:.1f}/{metrics['memory_total_mb']:.0f} MB"
     ]
     
     if metrics.get('gpu_percent') is not None:
         lines.append(f"GPU: {metrics['gpu_percent']:.1f}%")
     if metrics.get('gpu_memory_mb') is not None:
-        lines.append(f"GPU RAM: {metrics['gpu_memory_mb']:.1f} MB")
+        if metrics.get('gpu_memory_total_mb') is not None:
+            lines.append(f"GPU RAM: {metrics['gpu_memory_mb']:.1f}/{metrics['gpu_memory_total_mb']:.0f} MB")
+        else:
+            lines.append(f"GPU RAM: {metrics['gpu_memory_mb']:.1f} MB")
     
     return " | ".join(lines)
 

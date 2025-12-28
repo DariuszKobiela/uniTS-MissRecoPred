@@ -194,12 +194,12 @@ def plot_heatmap(df: pd.DataFrame, metric: str = 'mad', sort_by_technique: str =
     
     Args:
         df: DataFrame with results
-        metric: Metric to display
+        metric: Metric to display (always 'mad')
         sort_by_technique: Technique name to sort models by, or None for alphabetical
     """
     # Calculate mean MAD for each model-technique combination
     pivot_data = df.pivot_table(
-        values=metric,
+        values='mad',
         index='model',
         columns='technique',
         aggfunc='mean'
@@ -221,11 +221,11 @@ def plot_heatmap(df: pd.DataFrame, metric: str = 'mad', sort_by_technique: str =
         text=np.round(pivot_data.values, 4),
         texttemplate='%{text}',
         textfont={"size": 10},
-        colorbar=dict(title=metric.upper())
+        colorbar=dict(title='MAD')
     ))
     
     fig.update_layout(
-        title=f'Heatmap: {metric.upper()} by Model and Technique{sort_info}',
+        title=f'Heatmap: MAD by Model and Technique{sort_info}',
         xaxis_title='Missingness Technique',
         yaxis_title='Reconstruction Model',
         height=max(500, len(pivot_data.index) * 30)
@@ -264,6 +264,12 @@ def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
     df_stats = df.groupby('model')['mad'].mean().reset_index()
     df_stats = df_stats.sort_values('mad')
     
+    # Calculate global MAD range for consistent axis scaling
+    global_min = df_stats['mad'].min()
+    global_max = df_stats['mad'].max()
+    # Add 5% padding for better visualization
+    axis_range = [global_min * 0.95, global_max * 1.05]
+    
     # Best models (lowest MAD) - reverse order for display (best on top)
     best_models = df_stats.head(top_n).iloc[::-1]
     
@@ -292,8 +298,9 @@ def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
     )
     
     fig.update_layout(height=max(500, top_n * 40), showlegend=False)
-    fig.update_xaxes(title_text="MAD", row=1, col=1)
-    fig.update_xaxes(title_text="MAD", row=1, col=2)
+    # Set the same x-axis range for both subplots
+    fig.update_xaxes(title_text="MAD", range=axis_range, row=1, col=1)
+    fig.update_xaxes(title_text="MAD", range=axis_range, row=1, col=2)
     
     st.plotly_chart(fig, width='stretch')
 
@@ -384,11 +391,12 @@ def main():
     st.markdown("---")
     
     # Visualization tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "📊 By Model", 
         "🎯 By Technique", 
         "📉 By Missing Rate",
         "📁 By Dataset",
+        "⚡ By Efficiency",
         "🔥 Heatmap",
         "🏆 Best/Worst",
         "⏱️ Computation Time",
@@ -479,36 +487,28 @@ def main():
         else:
             st.warning("No data available with current filters")
     
-    with tab5:
-        st.header("Heatmap: Model vs Technique")
+    with tab6:
+        st.header("Heatmap: MAD by Model vs Technique")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            metric_choice = st.selectbox(
-                "Metric",
-                ['mad', 'max_diff', 'std_diff'],
-                format_func=lambda x: x.upper().replace('_', ' ')
-            )
-        with col2:
-            # Get available techniques for sorting
-            if len(df_filtered) > 0:
-                techniques = ['Alphabetical'] + sorted(df_filtered['technique'].unique().tolist())
-            else:
-                techniques = ['Alphabetical']
-            
-            sort_choice = st.selectbox(
-                "Sort models by",
-                techniques,
-                help="Sort models by performance on selected technique"
-            )
+        # Get available techniques for sorting
+        if len(df_filtered) > 0:
+            techniques = ['Alphabetical'] + sorted(df_filtered['technique'].unique().tolist())
+        else:
+            techniques = ['Alphabetical']
+        
+        sort_choice = st.selectbox(
+            "Sort models by",
+            techniques,
+            help="Sort models by MAD performance on selected technique"
+        )
         
         if len(df_filtered) > 0:
             sort_by = None if sort_choice == 'Alphabetical' else sort_choice
-            plot_heatmap(df_filtered, metric=metric_choice, sort_by_technique=sort_by)
+            plot_heatmap(df_filtered, metric='mad', sort_by_technique=sort_by)
         else:
             st.warning("No data available for heatmap with current filters")
     
-    with tab6:
+    with tab7:
         st.header("Best and Worst Performing Models")
         
         top_n = st.slider("Number of models to show", 5, 20, 10)
@@ -518,7 +518,7 @@ def main():
         else:
             st.warning("No data available with current filters")
     
-    with tab7:
+    with tab8:
         st.header("⏱️ Computation Time Analysis")
         st.caption("📍 Computational complexity metrics - execution time")
         
@@ -565,7 +565,7 @@ def main():
                     color_continuous_scale='Reds'
                 )
                 fig.update_layout(height=max(400, len(model_time) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Time comparison: boxplot
                 st.subheader("Time Distribution by Model")
@@ -578,7 +578,7 @@ def main():
                     color='model'
                 )
                 fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Time by technique and dataset
                 col1, col2 = st.columns(2)
@@ -595,7 +595,7 @@ def main():
                         color='time_seconds',
                         color_continuous_scale='Blues'
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 
                 with col2:
                     st.subheader("Average Time by Missing Rate")
@@ -609,22 +609,22 @@ def main():
                         color='time_seconds',
                         color_continuous_scale='Greens'
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 
                 # Detailed table
                 st.subheader("Detailed Statistics")
                 st.dataframe(model_time, width='stretch')
     
-    with tab8:
+    with tab9:
         st.header("💻 Resource Usage Analysis")
         st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
         
         # Check if performance metrics are available in the data
-        if 'cpu_percent' not in df_filtered.columns or df_filtered['cpu_percent'].isna().all():
+        if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
             st.info("Run `3_reconstruct_datasets.py` again to collect performance metrics, then `4_calculate_mad.py` to merge them.")
         else:
-            df_perf = df_filtered[df_filtered['cpu_percent'].notna()].copy()
+            df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
             
             if df_perf.empty:
                 st.warning("❌ No performance data after filtering")
@@ -635,9 +635,16 @@ def main():
                 st.subheader("💻 Resource Usage Summary")
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Avg CPU Usage", f"{df_perf['cpu_percent'].mean():.1f}%")
+                    avg_cores = df_perf['cpu_cores_used'].mean()
+                    total_cores = df_perf['cpu_cores_total'].mode()[0] if 'cpu_cores_total' in df_perf.columns else 0
+                    st.metric("Avg CPU Cores", f"{avg_cores:.2f} / {total_cores:.0f}")
                 with col2:
-                    st.metric("Avg RAM Usage", f"{df_perf['memory_mb'].mean():.1f} MB")
+                    if 'memory_total_mb' in df_perf.columns and df_perf['memory_total_mb'].notna().any():
+                        avg_memory = df_perf['memory_mb'].mean()
+                        total_memory = df_perf['memory_total_mb'].iloc[0]
+                        st.metric("Avg RAM Usage", f"{avg_memory:.1f} / {total_memory:.0f} MB")
+                    else:
+                        st.metric("Avg RAM Usage", f"{df_perf['memory_mb'].mean():.1f} MB")
                 with col3:
                     if df_perf['gpu_percent'].notna().any():
                         st.metric("Avg GPU Usage", f"{df_perf['gpu_percent'].mean():.1f}%")
@@ -646,9 +653,9 @@ def main():
                 
                 st.markdown("---")
                 
-                # CPU usage by model
-                st.subheader("CPU Usage by Model")
-                model_cpu = df_perf.groupby('model')['cpu_percent'].agg(['mean', 'std', 'max']).reset_index()
+                # CPU cores usage by model
+                st.subheader("CPU Cores Utilized by Model")
+                model_cpu = df_perf.groupby('model')['cpu_cores_used'].agg(['mean', 'std', 'max']).reset_index()
                 model_cpu = model_cpu.sort_values('mean', ascending=False)
                 
                 fig = px.bar(
@@ -656,13 +663,61 @@ def main():
                     x='mean',
                     y='model',
                     orientation='h',
-                    title="Average CPU Usage by Model",
-                    labels={'mean': 'Avg CPU Usage (%)', 'model': 'Model'},
+                    title="Average CPU Cores Utilized by Model",
+                    labels={'mean': 'Avg CPU Cores', 'model': 'Model'},
                     color='mean',
                     color_continuous_scale='Oranges'
                 )
                 fig.update_layout(height=max(400, len(model_cpu) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
+                
+                # Combined CPU + GPU utilization for comparison
+                if df_perf['gpu_percent'].notna().any():
+                    st.subheader("Combined CPU + GPU Utilization by Model")
+                    st.caption("GPU-based models (e.g., Stable Diffusion) show both CPU and GPU usage")
+                    
+                    # Prepare data: for each model show CPU and GPU side by side
+                    model_compute = df_perf.groupby('model').agg({
+                        'cpu_cores_used': 'mean',
+                        'gpu_percent': 'mean'
+                    }).reset_index()
+                    
+                    # Fill NaN GPU values with 0 for CPU-only models
+                    model_compute['gpu_percent'] = model_compute['gpu_percent'].fillna(0)
+                    
+                    # Create grouped bar chart
+                    model_compute_melted = model_compute.melt(
+                        id_vars=['model'],
+                        value_vars=['cpu_cores_used', 'gpu_percent'],
+                        var_name='Resource Type',
+                        value_name='Usage'
+                    )
+                    
+                    # Rename for better display
+                    model_compute_melted['Resource Type'] = model_compute_melted['Resource Type'].map({
+                        'cpu_cores_used': 'CPU Cores',
+                        'gpu_percent': 'GPU Utilization (%)'
+                    })
+                    
+                    # Sort by combined usage (CPU + normalized GPU)
+                    model_compute['combined'] = model_compute['cpu_cores_used'] + (model_compute['gpu_percent'] / 100.0) * 4
+                    model_compute = model_compute.sort_values('combined', ascending=False)
+                    model_order = model_compute['model'].tolist()
+                    
+                    fig = px.bar(
+                        model_compute_melted,
+                        x='Usage',
+                        y='model',
+                        color='Resource Type',
+                        orientation='h',
+                        title="CPU vs GPU Utilization by Model",
+                        labels={'Usage': 'Utilization', 'model': 'Model'},
+                        barmode='group',
+                        category_orders={'model': model_order},
+                        color_discrete_map={'CPU Cores': '#FFA500', 'GPU Utilization (%)': '#4CAF50'}
+                    )
+                    fig.update_layout(height=max(400, len(model_compute) * 40))
+                    st.plotly_chart(fig, width='stretch')
                 
                 # RAM usage by model
                 st.subheader("Memory (RAM) Usage by Model")
@@ -680,7 +735,7 @@ def main():
                     color_continuous_scale='Purples'
                 )
                 fig.update_layout(height=max(400, len(model_mem) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # GPU usage (if available)
                 if df_perf['gpu_percent'].notna().any():
@@ -700,21 +755,85 @@ def main():
                         color_continuous_scale='Greens'
                     )
                     fig.update_layout(height=max(400, len(model_gpu) * 30), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
+    
+    with tab5:
+        st.header("⚡ Resource Efficiency Analysis")
+        st.caption("Lower values = more efficient (less time and resources)")
+        
+        # Check if performance metrics are available in the data
+        if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
+            st.warning("⚠️ No performance metrics available. Run reconstructions first to collect performance data.")
+        else:
+            df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
+            
+            if len(df_perf) == 0:
+                st.warning("No performance data available with current filters")
+            else:
+                # Explanation of efficiency score calculation
+                with st.expander("ℹ️ How is the Efficiency Score calculated?", expanded=False):
+                    st.markdown("""
+                    The **Efficiency Score** combines four normalized metrics to provide an overall computational efficiency rating:
+                    
+                    **Formula:**
+                    ```
+                    Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
+                    ```
+                    
+                    **Components:**
+                    - **Time_norm**: Normalized execution time (0 to 1 scale)
+                        - `(time - min_time) / (max_time - min_time)`
+                    - **CPU_norm**: CPU cores utilized relative to total available cores
+                        - `cpu_cores_used / cpu_cores_total`
+                    - **Memory_norm**: Normalized RAM usage (0 to 1 scale)
+                        - `(memory - min_memory) / (max_memory - min_memory)`
+                    - **GPU_norm**: GPU memory utilized relative to total GPU memory (0 to 1 scale)
+                        - `gpu_memory_used / gpu_memory_total` (0 for CPU-only models)
+                    
+                    **Interpretation:**
+                    - **Lower score** = more efficient (faster execution, less CPU/RAM/GPU usage)
+                    - **Higher score** = less efficient (slower, more resource-intensive)
+                    - Score typically ranges from ~0 (most efficient) to ~4 (least efficient)
+                    - GPU-based models (e.g., Stable Diffusion) typically have higher scores due to GPU memory usage
+                    
+                    **Use Cases:**
+                    - Select models for resource-constrained environments (edge devices, embedded systems)
+                    - Balance reconstruction quality (MAD) vs. computational cost
+                    - Compare CPU-based vs. GPU-based models fairly
+                    - Optimize for deployment scenarios (cloud costs, energy efficiency)
+                    """)
                 
-                # Resource efficiency: Time vs Resources
-                st.subheader("Resource Efficiency Analysis")
-                st.caption("Lower values = more efficient (less time and resources)")
+                st.divider()
                 
-                # Create efficiency score: normalize time, CPU, and memory
+                # Create efficiency score: normalize time, CPU, RAM, and GPU
                 df_perf_copy = df_perf.copy()
                 df_perf_copy['time_norm'] = (df_perf_copy['time_seconds'] - df_perf_copy['time_seconds'].min()) / (df_perf_copy['time_seconds'].max() - df_perf_copy['time_seconds'].min() + 0.001)
-                df_perf_copy['cpu_norm'] = df_perf_copy['cpu_percent'] / 100
+                # Normalize CPU cores (divide by total available cores)
+                total_cores = df_perf_copy['cpu_cores_total'].mode()[0] if 'cpu_cores_total' in df_perf_copy.columns else 1
+                df_perf_copy['cpu_norm'] = df_perf_copy['cpu_cores_used'] / total_cores
                 df_perf_copy['mem_norm'] = (df_perf_copy['memory_mb'] - df_perf_copy['memory_mb'].min()) / (df_perf_copy['memory_mb'].max() - df_perf_copy['memory_mb'].min() + 0.001)
-                df_perf_copy['efficiency_score'] = df_perf_copy['time_norm'] + df_perf_copy['cpu_norm'] + df_perf_copy['mem_norm']
+                
+                # Normalize GPU memory (if available)
+                if 'gpu_memory_mb' in df_perf_copy.columns and 'gpu_memory_total_mb' in df_perf_copy.columns:
+                    # For models with GPU usage, normalize by total GPU memory
+                    df_perf_copy['gpu_norm'] = df_perf_copy.apply(
+                        lambda row: (row['gpu_memory_mb'] / row['gpu_memory_total_mb']) 
+                        if pd.notna(row['gpu_memory_mb']) and pd.notna(row['gpu_memory_total_mb']) and row['gpu_memory_total_mb'] > 0
+                        else 0.0,
+                        axis=1
+                    )
+                else:
+                    df_perf_copy['gpu_norm'] = 0.0
+                
+                # Combined efficiency score: lower = better
+                df_perf_copy['efficiency_score'] = df_perf_copy['time_norm'] + df_perf_copy['cpu_norm'] + df_perf_copy['mem_norm'] + df_perf_copy['gpu_norm']
                 
                 efficiency = df_perf_copy.groupby('model')['efficiency_score'].mean().reset_index()
-                efficiency = efficiency.sort_values('efficiency_score')
+                efficiency = efficiency.sort_values('efficiency_score', ascending=False)  # Ascending: lower = better
+                
+                # Overall efficiency score by model
+                st.subheader("Overall Efficiency Score by Model")
+                st.caption("Models sorted by efficiency (best to worst)")
                 
                 fig = px.bar(
                     efficiency,
@@ -727,31 +846,51 @@ def main():
                     color_continuous_scale='RdYlGn_r'
                 )
                 fig.update_layout(height=max(400, len(efficiency) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Combined scatter plot
                 st.subheader("Time vs Memory Usage")
+                st.caption("Bubble size represents combined CPU + GPU utilization")
+                
+                # Aggregate metrics including GPU
                 model_summary = df_perf.groupby('model').agg({
                     'time_seconds': 'mean',
                     'memory_mb': 'mean',
-                    'cpu_percent': 'mean'
+                    'cpu_cores_used': 'mean',
+                    'gpu_memory_mb': 'mean',
+                    'gpu_memory_total_mb': 'mean'
                 }).reset_index()
+                
+                # Calculate combined CPU + GPU metric for bubble size
+                # GPU normalized to equivalent "cores" (0-4 scale to match CPU range)
+                model_summary['gpu_normalized'] = model_summary.apply(
+                    lambda row: (row['gpu_memory_mb'] / row['gpu_memory_total_mb']) * 4.0
+                    if pd.notna(row['gpu_memory_mb']) and pd.notna(row['gpu_memory_total_mb']) and row['gpu_memory_total_mb'] > 0
+                    else 0.0,
+                    axis=1
+                )
+                model_summary['combined_compute'] = model_summary['cpu_cores_used'] + model_summary['gpu_normalized']
+                
+                # Determine if model uses GPU for coloring
+                model_summary['compute_type'] = model_summary['gpu_normalized'].apply(
+                    lambda x: 'GPU-accelerated' if x > 0 else 'CPU-only'
+                )
                 
                 fig = px.scatter(
                     model_summary,
                     x='time_seconds',
                     y='memory_mb',
-                    size='cpu_percent',
+                    size='combined_compute',
                     text='model',
-                    title="Time vs Memory (bubble size = CPU usage)",
+                    title="Time vs Memory (bubble size = CPU + GPU utilization)",
                     labels={'time_seconds': 'Avg Time (seconds)', 'memory_mb': 'Avg Memory (MB)'},
-                    color='cpu_percent',
-                    color_continuous_scale='Viridis'
+                    color='compute_type',
+                    color_discrete_map={'CPU-only': '#3498db', 'GPU-accelerated': '#e74c3c'}
                 )
                 fig.update_traces(textposition='top center')
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
     
-    with tab9:
+    with tab10:
         st.header("Raw Data")
         
         # Search functionality

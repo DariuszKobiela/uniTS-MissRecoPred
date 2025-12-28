@@ -24,7 +24,7 @@ from utils.config_loader import load_config
 
 def load_performance_metrics(results_dir: str) -> dict:
     """
-    Load performance metrics from the most recent CSV file.
+    Load performance metrics from the most recent CSV file (by timestamp in filename).
     Returns dict with key: (dataset_name, technique, rate, iter, model) -> metrics
     """
     perf_metrics_dir = os.path.join(results_dir, "performance_metrics")
@@ -36,7 +36,7 @@ def load_performance_metrics(results_dir: str) -> dict:
         return {}
     
     # Find all performance metrics files
-    perf_files = sorted(Path(perf_metrics_dir).glob("performance_metrics_*.csv"), reverse=True)
+    perf_files = list(Path(perf_metrics_dir).glob("performance_metrics_*.csv"))
     
     if not perf_files:
         print("⚠️  No performance metrics files found")
@@ -44,8 +44,21 @@ def load_performance_metrics(results_dir: str) -> dict:
         print("   Run 3_reconstruct_datasets.py first to collect metrics")
         return {}
     
-    # Use the most recent file
-    latest_file = perf_files[0]
+    # Sort by timestamp in filename (YYYYMMDD_HHMMSS) - most recent first
+    def extract_timestamp(filepath):
+        """Extract timestamp from filename: performance_metrics_YYYYMMDD_HHMMSS.csv"""
+        try:
+            filename = filepath.stem  # Get filename without extension
+            # Format: performance_metrics_20241227_120000
+            timestamp_part = filename.replace('performance_metrics_', '')
+            return timestamp_part  # Returns YYYYMMDD_HHMMSS for sorting
+        except:
+            return '00000000_000000'  # Fallback for invalid format
+    
+    perf_files_sorted = sorted(perf_files, key=extract_timestamp, reverse=True)
+    
+    # Use the most recent file (by timestamp)
+    latest_file = perf_files_sorted[0]
     
     try:
         df = pd.read_csv(latest_file)
@@ -68,10 +81,13 @@ def load_performance_metrics(results_dir: str) -> dict:
                 'iteration': row['iteration'],
                 'model': row['model'],
                 'time_seconds': row.get('time_seconds', None),
-                'cpu_percent': row.get('cpu_percent', None),
+                'cpu_cores_used': row.get('cpu_cores_used', None),
+                'cpu_cores_total': row.get('cpu_cores_total', None),
                 'memory_mb': row.get('memory_mb', None),
+                'memory_total_mb': row.get('memory_total_mb', None),
                 'gpu_percent': row.get('gpu_percent', None),
-                'gpu_memory_mb': row.get('gpu_memory_mb', None)
+                'gpu_memory_mb': row.get('gpu_memory_mb', None),
+                'gpu_memory_total_mb': row.get('gpu_memory_total_mb', None)
             }
         
         print(f"✅ Loaded {len(metrics_dict)} performance metric records from: {latest_file.name}")
@@ -387,17 +403,23 @@ Examples:
             if perf_key in performance_metrics:
                 perf = performance_metrics[perf_key]
                 result['time_seconds'] = perf.get('time_seconds', None)
-                result['cpu_percent'] = perf.get('cpu_percent', None)
+                result['cpu_cores_used'] = perf.get('cpu_cores_used', None)
+                result['cpu_cores_total'] = perf.get('cpu_cores_total', None)
                 result['memory_mb'] = perf.get('memory_mb', None)
+                result['memory_total_mb'] = perf.get('memory_total_mb', None)
                 result['gpu_percent'] = perf.get('gpu_percent', None)
                 result['gpu_memory_mb'] = perf.get('gpu_memory_mb', None)
+                result['gpu_memory_total_mb'] = perf.get('gpu_memory_total_mb', None)
             else:
                 # No performance data available (e.g., file was skipped in reconstruction)
                 result['time_seconds'] = None
-                result['cpu_percent'] = None
+                result['cpu_cores_used'] = None
+                result['cpu_cores_total'] = None
                 result['memory_mb'] = None
+                result['memory_total_mb'] = None
                 result['gpu_percent'] = None
                 result['gpu_memory_mb'] = None
+                result['gpu_memory_total_mb'] = None
             
             results.append(result)
             
@@ -433,7 +455,10 @@ Examples:
             print("\n  Performance Metrics:")
             print(f"    Total Time: {df_results['time_seconds'].sum():.2f}s")
             print(f"    Avg Time: {df_results['time_seconds'].mean():.2f}s")
-            print(f"    Avg CPU: {df_results['cpu_percent'].mean():.1f}%")
+            if 'cpu_cores_used' in df_results.columns and df_results['cpu_cores_used'].notna().any():
+                avg_cores = df_results['cpu_cores_used'].mean()
+                total_cores = df_results['cpu_cores_total'].mode()[0] if 'cpu_cores_total' in df_results.columns else 0
+                print(f"    Avg CPU: {avg_cores:.2f}/{total_cores:.0f} cores")
             print(f"    Avg Memory: {df_results['memory_mb'].mean():.1f} MB")
             if df_results['gpu_percent'].notna().any():
                 print(f"    Avg GPU: {df_results['gpu_percent'].mean():.1f}%")

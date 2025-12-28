@@ -89,7 +89,10 @@ univariate-time-series-reconstruction-framework/
 │   ├── 📁 2_missing_data/                  # Degraded datasets (generated)
 │   └── 📁 3_fixed_data/                    # Reconstructed datasets (generated)
 │
-├── 📁 experiments_results/                 # MAD results + performance metrics
+├── 📁 experiments_results/                 # Experiment results
+│   ├── reconstruction_results_*.csv        # MAD + performance metrics (merged)
+│   └── 📁 performance_metrics/             # Performance metrics archive
+│       └── performance_metrics_*.csv       # Individual performance logs
 │
 ├── ⚙️ config.yaml                          # Main configuration file
 │
@@ -332,11 +335,12 @@ The framework supports **parallel processing** for faster experiments:
 
 4️⃣ VISUALIZATION (5_visualize_mad_comparison.py)
    ├─ Load: experiments_results/*.csv (MAD results + performance metrics)
-   ├─ Interactive Streamlit dashboard with 9 tabs:
+   ├─ Interactive Streamlit dashboard with 10 tabs:
    │  ├─ 📊 By Model: Compare reconstruction quality across models
    │  ├─ 🎯 By Technique: Compare MCAR vs MAR vs MNAR
    │  ├─ 📉 By Missing Rate: Compare 10% vs 20% etc.
    │  ├─ 📁 By Dataset: Compare performance per dataset
+   │  ├─ ⚡ By Efficiency: Overall efficiency score (time + CPU + memory)
    │  ├─ 🔥 Heatmap: Overall performance matrix
    │  ├─ 🏆 Best/Worst: Top and bottom performing models
    │  ├─ ⏱️ Computation Time: Execution time analysis & complexity
@@ -388,18 +392,37 @@ The framework supports **parallel processing** for faster experiments:
 - `n_missing` - Number of missing values reconstructed
 - `n_total` - Total number of values in dataset
 
-### Performance Metrics (Included in Results)
+### Performance Metrics
 
-**Performance metrics are now included directly in `reconstruction_results_*.csv` files!**
+**Two locations for performance data:**
 
-**Additional Columns** (added to reconstruction results):
+1. **`experiments_results/performance_metrics/performance_metrics_YYYYMMDD_HHMMSS.csv`** - Archive of performance metrics
+   - Created during reconstruction (step 2)
+   - Permanent record of computational performance
+   - Includes timestamp for each reconstruction session
+
+2. **`experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv`** - Merged results
+   - Combines MAD metrics + performance metrics
+   - Created during evaluation (step 3)
+   - Single file for easy analysis
+
+**Performance Metrics Columns**:
+- `dataset_name` - Dataset name
+- `technique` - Missingness technique
+- `rate_percent` - Missing rate (%)
+- `iteration` - Iteration number
+- `model` - Reconstruction model name
 - `time_seconds` - **Execution time in seconds**
-- `cpu_percent` - **Average CPU usage (%)**
+- `cpu_cores_used` - **CPU cores utilized** (e.g., 1.18 = using 1.18 cores)
+- `cpu_cores_total` - **Total CPU cores available** (e.g., 4, 8, 16)
 - `memory_mb` - **Peak RAM usage (MB)**
+- `memory_total_mb` - **Total system RAM available (MB)**
 - `gpu_percent` - GPU utilization (%) - *null if GPU not available*
 - `gpu_memory_mb` - GPU memory usage (MB) - *null if GPU not available*
+- `gpu_memory_total_mb` - **Total GPU memory available (MB)** - *null if GPU not available*
+- `timestamp` - When reconstruction was performed
 
-**Complete File Structure**:
+**Complete Merged File Structure** (`reconstruction_results_*.csv`):
 ```csv
 dataset_name,technique,rate_percent,iteration,model,mad,max_diff,min_diff,std_diff,n_missing,n_total,time_seconds,cpu_percent,memory_mb,gpu_percent,gpu_memory_mb
 vibration_sensor_S1,MCAR,10,1,interpolate_linear,5.23,12.45,0.12,3.21,21,210,0.15,12.5,45.2,,
@@ -407,15 +430,101 @@ vibration_sensor_S1,MCAR,10,1,stable_diffusion_2_gaf,4.87,11.23,0.09,2.98,21,210
 ```
 
 **Benefits**:
-- **Single file** - All metrics in one place
+- **Dual storage** - Archive in `performance_metrics/` + merged in `reconstruction_results`
 - **Easy analysis** - Compare quality (MAD) vs. efficiency (time/resources) directly
 - **Streamlit dashboard** - Automatically shows performance tabs when data is available
+- **Historical tracking** - Keep separate performance logs for each reconstruction session
+
+**How It Works**:
+
+The framework automatically collects performance metrics during reconstruction using the `PerformanceMonitor` class:
+
+```python
+from utils.performance_metrics import PerformanceMonitor
+
+monitor = PerformanceMonitor()
+monitor.start()
+
+# Reconstruction happens here
+reconstructed = model_func(series)
+
+# Metrics collected automatically
+metrics = monitor.stop()
+# Returns: {'time_seconds': 1.23, 'cpu_cores_used': 1.18, 'cpu_cores_total': 4, 
+#           'memory_mb': 128.5, 'memory_total_mb': 16384, 
+#           'gpu_percent': 75.2, 'gpu_memory_mb': 2048, 'gpu_memory_total_mb': 8192}
+```
+
+**Interpreting Results**:
+
+*Execution Time:*
+- **< 1s** - Fast, suitable for real-time applications
+- **1-10s** - Moderate, suitable for batch processing  
+- **10-60s** - Slow, suitable for offline analysis
+- **> 60s** - Very slow, deep learning models (GPU recommended)
+
+*CPU Usage:*
+- **< 1 core** - Light computation, can run multiple instances
+- **1-4 cores** - Moderate computation
+- **> 4 cores** - Heavy parallel processing
+
+*Memory Usage:*
+- **< 100 MB** - Low memory footprint
+- **100-500 MB** - Moderate memory usage
+- **500-2000 MB** - High memory usage
+- **> 2000 MB** - Very high, requires 8GB+ RAM
+
+*GPU Usage:*
+- **None/0%** - CPU-only model (interpolation, imputation)
+- **> 0%** - GPU-accelerated model (Stable Diffusion)
+- **High GPU memory** - Requires powerful GPU (4GB+ VRAM)
 
 **Use Cases**:
-- Compare computational efficiency of models
-- Identify resource-intensive algorithms
-- Optimize for time vs. quality trade-offs
-- Plan hardware requirements for large-scale experiments
+
+*1. Model Selection for Edge Devices:*
+```python
+# Find fast models with good quality
+df = pd.read_csv('experiments_results/reconstruction_results_*.csv')
+fast_accurate = df[(df['time_seconds'] < 1.0) & (df['mad'] < 5.0)]
+```
+
+*2. Time-Quality Trade-off Analysis:*
+```python
+# Calculate efficiency: lower MAD per second = better
+df['efficiency'] = df['mad'] / df['time_seconds']
+best_efficiency = df.groupby('model')['efficiency'].mean().sort_values()
+```
+
+*3. Hardware Requirements Planning:*
+```python
+# Find peak resource usage per model
+peak_resources = df.groupby('model').agg({
+    'memory_mb': 'max',
+    'gpu_memory_mb': 'max',
+    'time_seconds': 'mean'
+})
+```
+
+*4. Cost Optimization (Cloud Computing):*
+```python
+# Estimate cloud costs (GPU ~$0.90/hour, CPU ~$0.10/hour)
+df['cost_per_run'] = df.apply(
+    lambda row: (row['time_seconds'] / 3600) * (0.90 if row['gpu_percent'] > 0 else 0.10),
+    axis=1
+)
+```
+
+**Best Practices**:
+- Run on representative data (performance varies with dataset size)
+- Compare on same hardware (results are hardware-dependent)
+- Average multiple runs for reliable timings
+- Balance accuracy (MAD) vs. efficiency (time/resources)
+- Monitor GPU memory for deep learning models
+
+**Troubleshooting**:
+- *GPU metrics show None*: Install `GPUtil` (`pip install GPUtil`) or no GPU available
+- *High memory usage*: Large datasets, close other applications
+- *Inconsistent timings*: System load, background processes interfering
 
 ## 🎯 Advanced Usage
 
@@ -590,7 +699,7 @@ computation:
 
 ## 📈 Visualization Features
 
-The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides comprehensive analysis across **9 interactive tabs**:
+The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides comprehensive analysis across **10 interactive tabs**:
 
 ### 1. 📊 By Model
 Compare reconstruction quality (MAD) across all models with:
@@ -616,19 +725,19 @@ Dataset-specific performance analysis:
 - Dataset difficulty assessment
 - Cross-dataset patterns
 
-### 5. 🔥 Heatmap
+### 6. 🔥 Heatmap
 Matrix visualization showing:
 - Model × Technique performance
 - Model × Dataset performance
 - Sortable by technique or dataset
 
-### 6. 🏆 Best/Worst
+### 7. 🏆 Best/Worst
 Quick overview of top and bottom performers:
 - Best 5 models (lowest MAD)
 - Worst 5 models (highest MAD)
 - Model comparison bar charts
 
-### 7. ⏱️ Computation Time *(NEW)*
+### 8. ⏱️ Computation Time *(NEW)*
 Analyze execution time and computational complexity:
 - **Time summary**: Total, average, min, max execution time
 - **Time by model**: Average execution time with standard deviation
@@ -641,27 +750,53 @@ Analyze execution time and computational complexity:
 - Compare time-quality trade-offs
 - Plan computational budgets
 
-### 8. 💻 Resource Usage *(NEW)*
+### 9. 💻 Resource Usage *(NEW)*
 Monitor hardware resource consumption:
 - **CPU usage**: Average and peak CPU utilization per model
 - **RAM usage**: Memory consumption per model
 - **GPU usage**: GPU utilization for deep learning models (if available)
-- **Efficiency score**: Combined metric (time + CPU + RAM)
-- **Time vs Memory scatter**: Visual efficiency comparison
+- **Combined CPU + GPU**: Side-by-side comparison for GPU-based models
 
 **Metrics tracked**:
-- CPU usage percentage
-- RAM usage in MB
+- CPU cores used / total cores available
+- RAM usage in MB / total RAM available
 - GPU utilization percentage (optional)
-- GPU memory usage in MB (optional)
+- GPU memory usage in MB / total RAM available (optional)
+- Combined view showing both CPU and GPU usage for fair comparison
 
 **Use cases**:
 - Identify resource-intensive models
+- Compare CPU-only vs GPU-accelerated models
 - Optimize for limited hardware
 - Plan cloud computing costs
-- Balance accuracy vs. efficiency
 
-### 9. 📋 Raw Data
+### 5. ⚡ By Efficiency *(NEW)*
+Overall computational efficiency ranking:
+- **Efficiency Score**: Combined normalized metric (time + CPU + RAM + GPU)
+- **Ascending sort**: Lower score = more efficient (best models at top)
+- **Time vs Memory scatter**: Visual efficiency comparison with CPU usage as bubble size
+
+**How Efficiency Score is calculated**:
+```
+Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
+```
+- **Time_norm**: Normalized execution time (0 to 1)
+- **CPU_norm**: CPU cores used / total cores available
+- **Memory_norm**: Normalized RAM usage (0 to 1)
+- **GPU_norm**: GPU memory used / total GPU memory (0 for CPU-only models)
+
+**Score interpretation**:
+- **0-1**: Highly efficient (minimal resources)
+- **1-2**: Moderately efficient
+- **2-4**: Less efficient (resource-intensive, typically GPU-based models)
+
+**Use cases**:
+- Select models for edge devices and embedded systems
+- Balance reconstruction quality (MAD) vs. computational cost
+- Optimize for deployment scenarios (cloud costs, energy efficiency)
+- Quick identification of most efficient models
+
+### 10. 📋 Raw Data
 Direct access to results:
 - Searchable table with all metrics
 - Sort by any column
@@ -784,9 +919,7 @@ streamlit run src/5_visualize_mad_comparison.py
 
 ## 📚 Additional Documentation
 
-- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - Project structure update guide (old vs new structure)
-- **[PERFORMANCE_METRICS.md](PERFORMANCE_METRICS.md)** - Detailed guide on computational performance tracking, resource monitoring, and efficiency analysis
-- **[PARALLEL_PROCESSING.md](PARALLEL_PROCESSING.md)** - Guide on parallel processing implementation and performance optimization
+- **[PERFORMANCE_METRICS.md](PERFORMANCE_METRICS.md)** - Technical details on performance monitoring, custom monitoring code, and advanced troubleshooting
 
 ## 🧹 Cleanup
 

@@ -451,10 +451,13 @@ Examples:
                 'iteration': metadata.get('iteration', 0),
                 'model': result['model'],
                 'time_seconds': metrics.get('time_seconds', 0),
-                'cpu_percent': metrics.get('cpu_percent', 0),
+                'cpu_cores_used': metrics.get('cpu_cores_used', 0),
+                'cpu_cores_total': metrics.get('cpu_cores_total', 0),
                 'memory_mb': metrics.get('memory_mb', 0),
+                'memory_total_mb': metrics.get('memory_total_mb', 0),
                 'gpu_percent': metrics.get('gpu_percent', None),
                 'gpu_memory_mb': metrics.get('gpu_memory_mb', None),
+                'gpu_memory_total_mb': metrics.get('gpu_memory_total_mb', None),
                 'timestamp': timestamp
             })
     

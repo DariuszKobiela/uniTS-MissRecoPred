@@ -1,4 +1,7 @@
-# Performance Metrics Collection
+# Performance Metrics Collection - Technical Details
+
+> **Note**: For quick overview and common use cases, see the [Performance Metrics section in README.md](README.md#performance-metrics).
+> This document provides technical details for advanced users.
 
 ## Overview
 
@@ -11,10 +14,13 @@ For each reconstruction, the following metrics are collected:
 | Metric | Description | Unit |
 |--------|-------------|------|
 | `time_seconds` | Total execution time | seconds |
-| `cpu_percent` | Average CPU utilization | % |
+| `cpu_cores_used` | CPU cores utilized (e.g., 1.18 = using 1.18 cores) | cores |
+| `cpu_cores_total` | Total CPU cores available | cores |
 | `memory_mb` | Peak RAM usage | MB |
+| `memory_total_mb` | Total system RAM available | MB |
 | `gpu_percent` | GPU utilization (if available) | % |
 | `gpu_memory_mb` | GPU memory usage (if available) | MB |
+| `gpu_memory_total_mb` | Total GPU memory available (if available) | MB |
 
 ## How It Works
 
@@ -33,7 +39,9 @@ reconstructed = model_func(series)
 
 # Collect metrics
 metrics = monitor.stop()
-# Returns: {'time_seconds': 1.23, 'cpu_percent': 45.2, 'memory_mb': 128.5, ...}
+# Returns: {'time_seconds': 1.23, 'cpu_cores_used': 1.18, 'cpu_cores_total': 4, 
+#           'memory_mb': 128.5, 'memory_total_mb': 16384, 
+#           'gpu_percent': 75.2, 'gpu_memory_mb': 2048, 'gpu_memory_total_mb': 8192, ...}
 ```
 
 ### 2. Automatic Saving
@@ -45,9 +53,9 @@ experiments_results/performance_metrics_YYYYMMDD_HHMMSS.csv
 
 Example output:
 ```csv
-dataset,technique,rate_percent,iteration,model,time_seconds,cpu_percent,memory_mb,gpu_percent,gpu_memory_mb,timestamp
-boiler,MCAR,10,1,interpolate_linear,0.123,12.5,45.2,,,20241227_120000
-boiler,MCAR,10,1,stable_diffusion_2_gaf,45.8,85.3,1024.5,75.2,2048.0,20241227_120000
+dataset_name,technique,rate_percent,iteration,model,time_seconds,cpu_cores_used,cpu_cores_total,memory_mb,memory_total_mb,gpu_percent,gpu_memory_mb,gpu_memory_total_mb,timestamp
+boiler,MCAR,10,1,interpolate_linear,0.123,0.45,4,45.2,16384,,,,20241227_120000
+boiler,MCAR,10,1,stable_diffusion_2_gaf,45.8,3.52,4,1024.5,16384,75.2,2048.0,8192.0,20241227_120000
 ```
 
 ### 3. Visualization
@@ -205,8 +213,8 @@ with monitor_performance() as monitor:
 
 metrics = monitor.stop()
 print(f"Time: {metrics['time_seconds']:.2f}s")
-print(f"CPU: {metrics['cpu_percent']:.1f}%")
-print(f"RAM: {metrics['memory_mb']:.1f} MB")
+print(f"CPU: {metrics['cpu_cores_used']:.2f}/{metrics['cpu_cores_total']} cores")
+print(f"RAM: {metrics['memory_mb']:.1f}/{metrics['memory_total_mb']:.0f} MB")
 ```
 
 ### Check if model uses GPU
