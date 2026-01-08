@@ -25,13 +25,6 @@ datasets:
       separator: ","
       decimal: "."
       index_col: 0
-    
-    # Special formats for specific file patterns
-    water_level:
-      pattern: "water_level_sensors"
-      separator: ";"
-      decimal: ","
-      index_col: 0
 
 # ============================================================================
 # RECONSTRUCTION MODELS
@@ -64,7 +57,7 @@ missingness_techniques:
   #   - "MCAR"
   #   - "MAR"
   
-  selected: ['MAR', "MCAR", "MNAR"]  # Empty = use all available techniques
+  selected: []  # Empty = use all available techniques
   
   # Available techniques (auto-discovered from missingness_techniques/):
   # - MCAR (Missing Completely At Random)
@@ -77,10 +70,22 @@ missingness_techniques:
 missingness_rates:
   # Fractions of data to remove (0.0 to 1.0)
   rates:
-    - 0.10   # 10%
-  
+  - 0.01   # 1%
+  - 0.05   # 5%
+  - 0.10   # 10%
+  - 0.20   # 20%
+  - 0.30   # 30%
+  - 0.40   # 40%
+  - 0.50   # 50%
+  - 0.60   # 60%
+  - 0.70   # 70%
+  - 0.80   # 80%
+  - 0.90   # 90%
+  - 0.95   # 95%
+  - 0.99   # 99%
+
   # Number of iterations (different random patterns per configuration)
-  iterations: 2
+  iterations: 10
   
   # Random seed for reproducibility
   seed: 42
@@ -92,19 +97,13 @@ visualization:
   # Default settings for Streamlit dashboard
   default_metric: "mad"
   show_top_n: 10
-  
-  # Plot settings
-  plots:
-    dpi: 300
-    format: "png"
-    color_scheme: "viridis"
 
 # ============================================================================
 # COMPUTATION SETTINGS
 # ============================================================================
 computation:
   # File overwriting behavior
-  overwrite_existing: false  # Set to true to overwrite existing files, false to skip
+  overwrite_existing: true  # Set to true to overwrite existing files, false to skip
   
   # Parallel processing
   # n_jobs: -1 uses all CPU cores
@@ -115,7 +114,7 @@ computation:
   
   # Stable Diffusion settings (if using SD models)
   stable_diffusion:
-    num_inference_steps: 5
+    num_inference_steps: 30
     guidance_scale: 7.5
     device: "cuda"  # "cuda" or "cpu"
 

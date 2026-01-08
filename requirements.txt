@@ -22,4 +22,7 @@ plotly==6.5.0
 matplotlib==3.10.8
 
 # Performance monitoring
-GPUtil==1.4.0 
+GPUtil==1.4.0
+
+# Hyperparameter optimization
+optuna==4.1.0 

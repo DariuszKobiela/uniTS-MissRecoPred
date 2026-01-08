@@ -676,35 +676,43 @@ make test
 
 ### Optimizing Stable Diffusion Hyperparameters
 
-The framework includes a dedicated script to find **globally optimal** `num_inference_steps` and `guidance_scale` by testing on **ALL available degraded datasets**:
+The framework includes a dedicated script to find **globally good** `num_inference_steps` and `guidance_scale` using **Bayesian optimization (Optuna/TPE)**. This typically requires **orders of magnitude fewer evaluations** than exhaustive grid search.
 
 ```bash
-# Full optimization (tests on ALL degraded datasets, all 4 SD models)
-python src/optimization/optimize_sd_hyperparams.py
-
-# Custom parameter ranges
+# Quick test (limit to first 5 files, 20 trials per model)
 python src/optimization/optimize_sd_hyperparams.py \
-  --steps 5 10 20 30 50 \
-  --guidance 3.5 5.0 7.5 10.0
-
-# Quick test (limit to first 5 files)
-python src/optimization/optimize_sd_hyperparams.py \
-  --steps 10 20 \
-  --guidance 5.0 7.5 \
+  --method optuna \
+  --n-trials 20 \
+  --steps 10 20 30 50 \
+  --guidance 5.0 7.5 10.0 \
   --max-files 5
+
+# Standard run (recommended)
+python src/optimization/optimize_sd_hyperparams.py \
+  --method optuna \
+  --n-trials 100 \
+  --max-files 20
+
+# Full run (ALL degraded datasets, may take hours)
+python src/optimization/optimize_sd_hyperparams.py \
+  --method optuna \
+  --n-trials 200
 ```
 
 **How it works:**
 - Automatically finds ALL degraded datasets in `data/2_missing_data/`
 - Dynamically discovers ALL Stable Diffusion models from `reconstruction_models/` (any model starting with `stable_diffusion_*`)
-- Tests every hyperparameter combination on every dataset and every SD model
-- Aggregates results across all datasets, techniques, rates, iterations, and models
+- For each SD model, Optuna proposes hyperparameter candidates from `--steps` and `--guidance`
+- Uses pruning (median rule) to stop bad trials early
+- Uses fixed-size encodings (512×512) to avoid RAM OOM on long time series
+- Aggregates results across datasets, techniques, rates, iterations, and models
 - Provides globally optimal recommendations for each model and overall best
 - **Extensible**: Adding new SD models to `reconstruction_models/` automatically includes them in optimization
 
 **Output:**
-- Detailed CSV with all tested configurations per dataset
-- Global aggregated statistics (average MAD, average time)
+- Detailed CSV with all evaluated trials (`hyperparameter_optimization/optimization_results_optuna_*.csv`)
+- Summary text report (`hyperparameter_optimization/Summary_opt_res_*.txt`)
+- Global aggregated statistics (average MAD, average time, efficiency)
 - Best configurations by:
   - Lowest average MAD (best quality globally)
   - Highest quality/time ratio (most efficient globally)
@@ -712,75 +720,28 @@ python src/optimization/optimize_sd_hyperparams.py \
 - Hyperparameter effect analysis with standard deviations
 - Ready-to-use `config.yaml` recommendations
 
-**Example output:**
+**Example output (Optuna):**
 ```
 🔬 STABLE DIFFUSION HYPERPARAMETER OPTIMIZATION
-Testing on ALL available degraded datasets for global optimization
+Method: Optuna (Bayesian Optimization with TPE)
+Trials per model: 100
 Models (4): stable_diffusion_2_gaf, stable_diffusion_2_mtf, stable_diffusion_2_rp, stable_diffusion_2_spec
 
-📂 Found 48 degraded files to test
-✓ Prepared 48 test cases
+📂 Found 20 degraded files to test
+✓ Prepared 20 test cases
 
-📊 Test case distribution:
-   Datasets: 3 unique (vibration_sensor_S1, boiler, power_consumption)
-   Techniques: MCAR=24, MAR=24
-   Rates: 10%=24, 20%=24
+🎯 Optimization Method: OPTUNA
+🎯 Using Optuna (TPE Bayesian Optimization)
+   Search space (categorical):
+     - num_inference_steps: [5, 10, 20, 30, 50, 75, 100]
+     - guidance_scale: [3.5, 5.0, 7.5, 10.0]
 
-🚀 Running 3840 total tests...
-
-🏆 GLOBALLY OPTIMAL CONFIGURATIONS:
-
-1. Best Average MAD (Lowest error across all datasets):
-   stable_diffusion_2_gaf: steps=50, guidance=7.5
-      Avg MAD=4.8234, Avg Time=92.3s
-   stable_diffusion_2_rp: steps=30, guidance=7.5
-      Avg MAD=5.1245, Avg Time=55.1s
-
-2. Best Quality/Time (Most efficient globally):
-   stable_diffusion_2_gaf: steps=20, guidance=7.5
-      Avg MAD=5.0123, Avg Time=36.8s, Efficiency=0.0534
-
-💡 OPTIMAL HYPERPARAMETERS PER MODEL:
-   stable_diffusion_2_gaf:
-      num_inference_steps: 20
-      guidance_scale: 7.5
-      Expected avg MAD: 5.0123
-      Expected avg time: 36.8s/dataset
-   
-   stable_diffusion_2_mtf:
-      num_inference_steps: 30
-      guidance_scale: 7.5
-      Expected avg MAD: 5.2456
-      Expected avg time: 54.2s/dataset
-   
-   stable_diffusion_2_rp:
-      num_inference_steps: 20
-      guidance_scale: 5.0
-      Expected avg MAD: 5.1789
-      Expected avg time: 35.9s/dataset
-   
-   stable_diffusion_2_spec:
-      num_inference_steps: 20
-      guidance_scale: 7.5
-      Expected avg MAD: 5.3012
-      Expected avg time: 37.1s/dataset
-
-⚙️  RECOMMENDED CONFIG.YAML SETTINGS (GLOBALLY OPTIMAL):
-
-computation:
-  stable_diffusion:
-    num_inference_steps: 20  # Globally optimized
-    guidance_scale: 7.5
-    
-# Expected performance (averaged across all datasets):
-#   Average MAD: 5.0123
-#   Average time per reconstruction: ~36.8s
-#
-# Tested on:
-#   - 48 degraded datasets
-#   - 3 unique source datasets
-#   - 2 missingness techniques
-#   - 2 missing rates
+📊 Optimizing stable_diffusion_2_gaf (1/4)
+🚀 Running 100 trials for stable_diffusion_2_gaf...
+[I ...] Trial 0 finished with value: ...
+[I ...] Trial 1 pruned ...
+...
+✓ Best for stable_diffusion_2_gaf: steps=20, guidance=7.5, MAD=...
 ```
 
 **⚠️ Important:** 

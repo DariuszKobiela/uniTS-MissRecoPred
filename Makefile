@@ -1,4 +1,4 @@
-.PHONY: help setup install clean-datasets degrade optimize reconstruct calculate visualize pipeline clean clean-all
+.PHONY: help setup install clean-datasets degrade optimize reconstruct calculate visualize pipeline clean clean-all test
 
 # Default target
 help:
@@ -13,7 +13,8 @@ help:
 	@echo "Pipeline commands (run in order):"
 	@echo "  make clean-datasets  - Clean and validate raw datasets"
 	@echo "  make degrade         - Create degraded datasets with missing data"
-	@echo "  make optimize        - Optimize Stable Diffusion hyperparameters (optional)"
+	@echo "  make optimize        - Optimize Stable Diffusion hyperparameters (Bayesian, default: 30 random files)"
+	@echo "  make optimize-quick  - Quick optimization test (limit files)"
 	@echo "  make reconstruct     - Reconstruct missing values with all models"
 	@echo "  make calculate       - Calculate MAD metrics"
 	@echo "  make visualize       - Launch Streamlit dashboard"
@@ -56,14 +57,23 @@ degrade:
 	experiment/bin/python src/2_degrade_datasets.py
 	@echo "✓ Degraded datasets created"
 
-# Optional: Optimize Stable Diffusion hyperparameters
+# Optional: Optimize Stable Diffusion hyperparameters (Full)
 optimize:
 	@echo "==================================================================="
-	@echo "Optimizing Stable Diffusion hyperparameters"
+	@echo "Optimizing Stable Diffusion hyperparameters (Bayesian/Optuna)"
 	@echo "==================================================================="
 	@echo "⚠️  This may take several hours..."
+	@echo "ℹ️  Using default: 30 random files (change in src/optimization/optimize_sd_hyperparams.py or use args)"
 	experiment/bin/python src/optimization/optimize_sd_hyperparams.py
 	@echo "✓ Optimization complete"
+
+# Optional: Optimize Stable Diffusion hyperparameters (Quick Test)
+optimize-quick:
+	@echo "==================================================================="
+	@echo "Optimizing Stable Diffusion hyperparameters (Quick Test)"
+	@echo "==================================================================="
+	experiment/bin/python src/optimization/optimize_sd_hyperparams.py --n-trials 20 --max-files 5
+	@echo "✓ Quick optimization complete"
 
 # Step 3: Reconstruct datasets
 reconstruct:
@@ -114,6 +124,7 @@ clean-all:
 	rm -rf data/3_fixed_data/*
 	rm -rf experiments_results/*.csv
 	rm -rf experiments_results/performance_metrics/*.csv
+	rm -rf hyperparameter_optimization/*
 	@echo "✓ All generated files removed"
 
 # Quick test (for development)
@@ -123,4 +134,3 @@ test:
 	experiment/bin/python src/3_reconstruct_datasets.py --models interpolate_linear interpolate_cubic
 	experiment/bin/python src/4_calculate_mad.py
 	@echo "✓ Quick test complete"
-

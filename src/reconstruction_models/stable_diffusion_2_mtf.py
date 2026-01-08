@@ -19,6 +19,7 @@ _MODEL_CACHE = {}
 def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec"):
     """Load the Stable Diffusion 2 inpainting model. Uses cache to avoid reloading."""
     if model_id not in _MODEL_CACHE:
+        print("Loading model... please wait")
         print(f"Loading Stable Diffusion 2 model from HuggingFace: {model_id}")
         print("This may take a while on first run (downloading ~20GB model)...")
         
@@ -28,16 +29,22 @@ def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-s
         print(f"Using device: {device}")
         
         # Note: safety_checker=None is OK for scientific research on time series data
+        print("  ⚠️  Notice: Safety checker is disabled for scientific time series reconstruction.")
+        print("  ⚠️  Notice: 'dtype' argument is ignored by this pipeline version (using default float32/float16).")
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='.*safety_checker.*')
+            warnings.filterwarnings('ignore', message='.*dtype.*')
             pipeline = StableDiffusionInpaintPipeline.from_pretrained(
                 model_id,
                 torch_dtype=dtype,
-                safety_checker=None
-            ).to(device)
+                safety_checker=None,
+                use_safetensors=True,
+            )
         
         if device == "cuda":
+            pipeline = pipeline.to(device)
             pipeline.enable_attention_slicing()
+            pipeline.enable_vae_slicing()
         
         _MODEL_CACHE[model_id] = pipeline
         print(f"✓ Model loaded successfully and cached")
@@ -46,8 +53,18 @@ def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-s
 
 
 def series_to_mtf(series: pd.Series, n_bins: int = 8, size: int = 512) -> np.ndarray:
-    """Convert time series to Markov Transition Field (MTF) image."""
-    values = series.values
+    """Convert time series to Markov Transition Field (MTF) image.
+    
+    MTF is O(n^2). To avoid RAM OOM on long series, we first resample the series
+    to `size` (default 512) and compute a fixed 512×512 MTF.
+    """
+    values = series.to_numpy(dtype=np.float32, copy=False)
+
+    # Resample to fixed length to avoid O(n^2) blow-up
+    if len(values) != size:
+        x_old = np.linspace(0.0, 1.0, num=len(values), dtype=np.float32)
+        x_new = np.linspace(0.0, 1.0, num=size, dtype=np.float32)
+        values = np.interp(x_new, x_old, values).astype(np.float32, copy=False)
     
     # Quantize into bins
     min_val, max_val = values.min(), values.max()
@@ -58,20 +75,9 @@ def series_to_mtf(series: pd.Series, n_bins: int = 8, size: int = 512) -> np.nda
     else:
         quantized = np.zeros(len(values), dtype=int)
     
-    # Create transition matrix
-    mtf = np.zeros((len(values), len(values)))
-    for i in range(len(values) - 1):
-        for j in range(i + 1, len(values)):
-            transition_prob = 1.0 if quantized[i] == quantized[j] else 0.0
-            mtf[i, j] = transition_prob
-            mtf[j, i] = transition_prob
-    
-    # Resize if needed
-    if mtf.shape[0] != size:
-        from scipy.ndimage import zoom
-        zoom_factor = size / mtf.shape[0]
-        mtf = zoom(mtf, zoom_factor, order=1)
-    
+    # Transition similarity matrix (vectorized)
+    mtf = (quantized[:, None] == quantized[None, :]).astype(np.float32)
+
     return mtf
 
 

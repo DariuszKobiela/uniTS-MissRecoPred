@@ -19,6 +19,7 @@ _MODEL_CACHE = {}
 def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec"):
     """Load the Stable Diffusion 2 inpainting model. Uses cache to avoid reloading."""
     if model_id not in _MODEL_CACHE:
+        print("Loading model... please wait")
         print(f"Loading Stable Diffusion 2 model from HuggingFace: {model_id}")
         print("This may take a while on first run (downloading ~20GB model)...")
         
@@ -28,16 +29,22 @@ def get_model(model_id: str = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-s
         print(f"Using device: {device}")
         
         # Note: safety_checker=None is OK for scientific research on time series data
+        print("  ⚠️  Notice: Safety checker is disabled for scientific time series reconstruction.")
+        print("  ⚠️  Notice: 'dtype' argument is ignored by this pipeline version (using default float32/float16).")
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='.*safety_checker.*')
+            warnings.filterwarnings('ignore', message='.*dtype.*')
             pipeline = StableDiffusionInpaintPipeline.from_pretrained(
                 model_id,
                 torch_dtype=dtype,
-                safety_checker=None
-            ).to(device)
+                safety_checker=None,
+                use_safetensors=True,
+            )
         
         if device == "cuda":
+            pipeline = pipeline.to(device)
             pipeline.enable_attention_slicing()
+            pipeline.enable_vae_slicing()
         
         _MODEL_CACHE[model_id] = pipeline
         print(f"✓ Model loaded successfully and cached")
