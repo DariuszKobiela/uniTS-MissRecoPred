@@ -79,12 +79,12 @@ univariate-time-series-reconstruction-framework/
 │   └── 📁 3_fixed_data/                    # Reconstructed datasets (generated)
 │
 ├── 📁 experiments_results/                 # Experiment results
-│   ├── reconstruction_results_*.csv        # MAD + performance metrics (merged)
+│   ├── 📝 reconstruction_results_*.csv        # MAD + performance metrics (merged)
 │   └── 📁 performance_metrics/             # Performance metrics archive
-│       └── performance_metrics_*.csv       # Individual performance logs
+│       └── 📝 performance_metrics_*.csv       # Individual performance logs
 │
 ├── 📁 .streamlit/                          # Streamlit configuration
-│   └── config.toml                         # Streamlit settings (file watching disabled)
+│   └── ⚙️ config.toml                         # Streamlit settings (file watching disabled)
 │
 ├── ⚙️ config.yaml                          # Main configuration file
 ├── 📝 Makefile                             # Make commands for easy pipeline execution
@@ -327,74 +327,84 @@ The framework supports **parallel processing** for faster experiments:
 
 **Note**: Hyperparameter optimization (`optimize_sd_hyperparams.py`) runs sequentially on GPU models and may take several hours depending on the number of test cases and parameter combinations
 
+## 📝 Input Data Requirements
+
+To ensure optimal results, verify your source data in `data/0_source_data/` meets these requirements before running the pipeline.
+
+### Required CSV Format
+Your input files should be **standard CSV files** with **two columns**:
+
+1.  **Column 1 (Index/Time)**:
+    *   **Type**: Datetime (ISO format preferred: `YYYY-MM-DD HH:MM:SS`) OR Numeric (Integer/Float steps).
+    *   **Constraint**: Must be unique (no duplicate timestamps) and monotonic.
+2.  **Column 2 (Value)**:
+    *   **Type**: Numeric (Float).
+    *   **Constraint**: The univariate time series data to be analyzed.
+
+**Example `my_dataset.csv`**:
+```csv
+timestamp,value
+2024-01-01 10:00:00,24.5
+2024-01-01 10:15:00,24.8
+2024-01-01 10:30:00,25.1
+```
+
+### Best Practices
+*   **Separators**: Use comma `,` as separator and dot `.` as decimal point.
+*   **Cleanliness**: Although `1_clean_datasets.py` attempts to fix issues, provide clean data to avoid ambiguity.
+*   **Length**: For Stable Diffusion models, ensure sufficient length (e.g., > 100 points) for meaningful patterns.
+
 ## 🔄 Workflow
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    RECONSTRUCTION WORKFLOW                       │
-└─────────────────────────────────────────────────────────────────┘
+This framework follows a strict data pipeline where each script transforms data from one state to another.
 
-0️⃣ DATA CLEANING (1_clean_datasets.py)
-   ├─ Load: data/0_source_data/*.csv (raw data)
-   ├─ Auto-detect CSV format (separator, decimal point)
-   ├─ Validate & convert: index (datetime/numeric), values (float)
-   ├─ Remove: duplicates, invalid rows
-   └─ Save: data/1_cleaned_data/*.csv (standardized format)
-   
-   📊 Example: 6 raw datasets → 6 cleaned datasets
+### 📋 Pipeline Roadmap
 
-                              ↓
+#### 0. Data Cleaning
+*   **Script**: `src/1_clean_datasets.py`
+*   **📥 INPUT**: Raw CSV files in `data/0_source_data/`
+    *   *Requirement*: Any CSV with at least 2 columns.
+*   **📤 OUTPUT**: Standardized CSV files in `data/1_cleaned_data/`
+    *   *Format*: UTF-8, Comma-separated, Index + Value, No missing values, Validated types.
 
-1️⃣ DEGRADATION (2_degrade_datasets.py)
-   ├─ Auto-discover: data/1_cleaned_data/*.csv
-   ├─ Apply: MCAR / MAR / MNAR
-   ├─ Rates: 10%, 20% (from config.yaml)
-   ├─ Iterations: 2x (from config.yaml)
-   └─ Save: data/2_missing_data/{dataset}_{technique}_{rate}p_{iter}.csv
-   
-   📊 Example: 6 datasets × 3 techniques × 2 rates × 2 iterations = 72 files
+#### 1. Degradation (Introduction of Missing Data)
+*   **Script**: `src/2_degrade_datasets.py`
+*   **📥 INPUT**: Cleaned CSV files in `data/1_cleaned_data/`
+*   **📤 OUTPUT**: Degraded CSV files in `data/2_missing_data/`
+    *   *Format*: `{dataset}_{technique}_{rate}p_{iteration}.csv`
+    *   *Content*: Same as input but with specific values replaced by `NaN` according to technique (MCAR/MAR/MNAR).
 
-                              ↓
+#### 2. Reconstruction (The Core Task)
+*   **Script**: `src/3_reconstruct_datasets.py`
+*   **📥 INPUT**: Degraded CSV files in `data/2_missing_data/` (containing `NaNs`)
+*   **📤 OUTPUT**: Reconstructed CSV files in `data/3_fixed_data/`
+    *   *Format*: `{dataset}_{technique}_{rate}p_{iter}_{model}.csv`
+    *   *Content*: `NaN` values filled with reconstructed estimates. Non-missing values are preserved exactly.
+*   **📝 METRICS OUTPUT**: `experiments_results/performance_metrics/*.csv` (Time, CPU, RAM usage logs).
 
-2️⃣ RECONSTRUCTION (3_reconstruct_datasets.py)
-   ├─ Load: data/2_missing_data/*.csv
-   ├─ Apply: 20 reconstruction models (from config.yaml)
-   ├─ Monitor: Time, CPU, RAM, GPU usage per reconstruction
-   ├─ Save: data/3_fixed_data/{dataset}_{technique}_{rate}p_{iter}_{model}.csv
-   └─ Save metrics: experiments_results/performance_metrics/performance_metrics_YYYYMMDD_HHMMSS.csv
-   
-   📊 Example: 72 × 20 = 1,440 files + performance_metrics CSV
+#### 3. Evaluation
+*   **Script**: `src/4_calculate_mad.py`
+*   **📥 INPUT**: 
+    1.  **Reconstructed Data** from `data/3_fixed_data/` (The solution)
+    2.  **Ground Truth Data** from `data/1_cleaned_data/` (The original perfect data)
+*   **📤 OUTPUT**: `experiments_results/reconstruction_results_*.csv`
+    *   *Content*: A comprehensive summary CSV containing MAD scores (quality) and performance metrics (efficiency) for every test case.
 
-                              ↓
+#### 4. Visualization
+*   **Script**: `src/5_visualize_mad_comparison.py`
+*   **📥 INPUT**: Results CSV from `experiments_results/`
+*   **📤 OUTPUT**: Interactive Streamlit Dashboard (Web Interface).
 
-3️⃣ EVALUATION (4_calculate_mad.py)
-   ├─ Load: data/3_fixed_data/*.csv
-   ├─ Compare ONLY missing values with: data/1_cleaned_data/*.csv
-   ├─ Calculate: MAD (Mean Absolute Difference)
-   ├─ Merge: Performance metrics from step 2
-   └─ Save: experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv
-   
-   📊 Output: Single CSV with 1,440 rows (MAD + performance metrics)
-   
-   ⚠️  IMPORTANT: MAD is calculated ONLY for values that were missing!
+---
 
-                              ↓
-
-4️⃣ VISUALIZATION (5_visualize_mad_comparison.py)
-   ├─ Load: experiments_results/*.csv (MAD results + performance metrics)
-   ├─ Interactive Streamlit dashboard with 11 tabs:
-   │  ├─ 📊 By Model: Compare reconstruction quality across models
-   │  ├─ 🎯 By Technique: Compare MCAR vs MAR vs MNAR
-   │  ├─ 📉 By Missing Rate: Compare 10% vs 20% etc.
-   │  ├─ 📁 By Dataset: Compare performance per dataset
-   │  ├─ ⚡ By Efficiency: Overall efficiency score (time + CPU + memory)
-   │  ├─ 🔥 Heatmap: Overall performance matrix
-   │  ├─ 📊 Statistical Tests: Pairwise t-tests (p<0.01, p<0.05) between models
-   │  ├─ 🏆 Best/Worst: Top and bottom performing models
-   │  ├─ ⏱️ Computation Time: Execution time analysis & complexity
-   │  ├─ 💻 Resource Usage: CPU, RAM, GPU usage analysis
-   │  └─ 📋 Raw Data: Searchable table with download
-   └─ Export: Filtered results, plots
+```mermaid
+graph TD
+    A[data/0_source_data] -->|1_clean_datasets.py| B[data/1_cleaned_data]
+    B -->|2_degrade_datasets.py| C[data/2_missing_data]
+    C -->|3_reconstruct_datasets.py| D[data/3_fixed_data]
+    D -->|4_calculate_mad.py| E[experiments_results]
+    B -->|Ground Truth| E
+    E -->|5_visualize...| F[Streamlit Dashboard]
 ```
 
 ## 📊 Output Files
@@ -697,11 +707,25 @@ python src/optimization/optimize_sd_hyperparams.py \
 python src/optimization/optimize_sd_hyperparams.py \
   --method optuna \
   --n-trials 200
+
+# Robust optimization (multiple runs to avoid random sample bias)
+# Run 3-5 times with different random samples
+for i in {1..3}; do
+  python src/optimization/optimize_sd_hyperparams.py \
+    --n-trials 100 \
+    --max-files 30 \
+    --output-dir "hyperparameter_optimization/run_$i"
+done
+# Then compare results across runs to find consistent optimal values
 ```
 
 **How it works:**
 - Automatically finds ALL degraded datasets in `data/2_missing_data/`
 - Dynamically discovers ALL Stable Diffusion models from `reconstruction_models/` (any model starting with `stable_diffusion_*`)
+- **Selects test files once**: When using `--max-files`, randomly selects N files at the start and uses THE SAME files across ALL trials
+  - This ensures fair comparison between hyperparameter configurations
+  - All trials are evaluated on identical data for valid optimization
+  - Random selection is done once before optimization begins, not per trial
 - For each SD model, Optuna proposes hyperparameter candidates from `--steps` and `--guidance`
 - Uses pruning (median rule) to stop bad trials early
 - Uses fixed-size encodings (512×512) to avoid RAM OOM on long time series
@@ -750,6 +774,11 @@ Models (4): stable_diffusion_2_gaf, stable_diffusion_2_mtf, stable_diffusion_2_r
 - Models are detected by naming convention: `stable_diffusion_*` (e.g., `stable_diffusion_2_gaf`)
 - Adding new SD models to the framework automatically includes them in optimization - no code changes needed!
 - Optimization may take several hours depending on hardware, number of test cases, and number of SD models
+- **Run optimization multiple times (3-5 runs)**: When using `--max-files`, random file selection may introduce bias
+  - A single run might select "lucky" files that favor certain hyperparameters
+  - Multiple runs with different random file samples provide more robust results
+  - Compare results across runs to identify consistent optimal hyperparameters
+  - If results vary significantly between runs, consider increasing `--max-files` or using all files (omit `--max-files`)
 
 ### Available Models
 
