@@ -1,4 +1,4 @@
-# Time Series Reconstruction Framework
+# Univariate Time Series Reconstruction Framework
 
 A modular framework for evaluating time series reconstruction methods on univariate datasets with various types of missing data.
 
