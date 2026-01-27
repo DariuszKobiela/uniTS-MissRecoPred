@@ -14,6 +14,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 import argparse
+import concurrent.futures
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -244,6 +245,99 @@ def generate_output_filename():
     return f"reconstruction_results_{timestamp}.csv"
 
 
+def process_file_wrapper(args):
+    """
+    Wrapper for processing a single file, to be used with ProcessPoolExecutor.
+    Args:
+        args: Tuple containing (reconstructed_file_path, dataset_mapping, missing_dir, config, performance_metrics)
+    Returns:
+        dict with status ('success' or 'error') and result data or error message
+    """
+    reconstructed_file_path, dataset_mapping, missing_dir, config, performance_metrics = args
+    filename = os.path.basename(reconstructed_file_path)
+    
+    try:
+        # Parse filename
+        metadata = parse_filename(filename)
+        
+        # Find corresponding source file
+        dataset_name = metadata['dataset_name']
+        if dataset_name not in dataset_mapping:
+            return {'status': 'error', 'msg': f"Unknown dataset: {dataset_name}", 'filename': filename}
+        
+        source_file_path = dataset_mapping[dataset_name]
+        
+        # Check if source file exists
+        if not os.path.exists(source_file_path):
+            return {'status': 'error', 'msg': f"Source file not found: {source_file_path}", 'filename': filename}
+        
+        # Find corresponding degraded file
+        degraded_filename = get_degraded_filename(
+            metadata['dataset_name'],
+            metadata['technique'],
+            metadata['rate_percent'],
+            metadata['iteration']
+        )
+        degraded_file_path = os.path.join(missing_dir, degraded_filename)
+        
+        # Check if degraded file exists
+        if not os.path.exists(degraded_file_path):
+            return {'status': 'error', 'msg': f"Degraded file not found: {degraded_file_path}", 'filename': filename}
+        
+        # Calculate metrics (comparing ONLY missing values)
+        metrics = calculate_mad(source_file_path, degraded_file_path, reconstructed_file_path, config)
+        
+        # Add result with MAD metrics
+        result = {
+            'dataset_name': metadata['dataset_name'],
+            'technique': metadata['technique'],
+            'rate_percent': metadata['rate_percent'],
+            'iteration': metadata['iteration'],
+            'model': metadata['model'],
+            'mad': metrics['mad'],
+            'max_diff': metrics['max_diff'],
+            'min_diff': metrics['min_diff'],
+            'std_diff': metrics['std_diff'],
+            'n_missing': metrics['n_missing'],
+            'n_total': metrics['n_total']
+        }
+        
+        # Add performance metrics if available
+        perf_key = str((
+            metadata['dataset_name'],
+            metadata['technique'],
+            metadata['rate_percent'],
+            metadata['iteration'],
+            metadata['model']
+        ))
+        
+        if perf_key in performance_metrics:
+            perf = performance_metrics[perf_key]
+            result['time_seconds'] = perf.get('time_seconds', None)
+            result['cpu_cores_used'] = perf.get('cpu_cores_used', None)
+            result['cpu_cores_total'] = perf.get('cpu_cores_total', None)
+            result['memory_mb'] = perf.get('memory_mb', None)
+            result['memory_total_mb'] = perf.get('memory_total_mb', None)
+            result['gpu_percent'] = perf.get('gpu_percent', None)
+            result['gpu_memory_mb'] = perf.get('gpu_memory_mb', None)
+            result['gpu_memory_total_mb'] = perf.get('gpu_memory_total_mb', None)
+        else:
+            # No performance data available
+            result['time_seconds'] = None
+            result['cpu_cores_used'] = None
+            result['cpu_cores_total'] = None
+            result['memory_mb'] = None
+            result['memory_total_mb'] = None
+            result['gpu_percent'] = None
+            result['gpu_memory_mb'] = None
+            result['gpu_memory_total_mb'] = None
+            
+        return {'status': 'success', 'data': result, 'filename': filename}
+        
+    except Exception as e:
+        return {'status': 'error', 'msg': str(e), 'filename': filename}
+
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -333,103 +427,64 @@ Examples:
     processed_count = 0
     error_count = 0
     
-    # Process each reconstructed file
-    for reconstructed_file in reconstructed_files:
-        filename = reconstructed_file.name
+    # Determine parallel processing
+    n_jobs = config.get_n_jobs()
+    if n_jobs == -1:
+        n_jobs = os.cpu_count() or 1
         
-        try:
-            # Parse filename
-            metadata = parse_filename(filename)
+    # Process files
+    if n_jobs > 1 and len(reconstructed_files) > 1:
+        print(f"\n🚀 Processing with {n_jobs} parallel jobs...")
+        
+        # Prepare arguments for each job
+        # Note: we pass strings instead of Path objects where possible to ensure picklability
+        job_args = [
+            (str(f), dataset_mapping, missing_dir, config, performance_metrics) 
+            for f in reconstructed_files
+        ]
+        
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            # Submit all jobs
+            future_to_file = {executor.submit(process_file_wrapper, args): args[0] for args in job_args}
             
-            print(f"\n[{processed_count + 1}/{len(reconstructed_files)}] Processing: {filename}")
-            
-            # Find corresponding source file
-            dataset_name = metadata['dataset_name']
-            if dataset_name not in dataset_mapping:
-                print(f"  ❌ Unknown dataset: {dataset_name}")
-                error_count += 1
-                continue
-            
-            source_file_path = dataset_mapping[dataset_name]
-            
-            # Check if source file exists
-            if not Path(source_file_path).exists():
-                print(f"  ❌ Source file not found: {source_file_path}")
-                error_count += 1
-                continue
-            
-            # Find corresponding degraded file
-            degraded_filename = get_degraded_filename(
-                metadata['dataset_name'],
-                metadata['technique'],
-                metadata['rate_percent'],
-                metadata['iteration']
-            )
-            degraded_file_path = os.path.join(missing_dir, degraded_filename)
-            
-            # Check if degraded file exists
-            if not Path(degraded_file_path).exists():
-                print(f"  ❌ Degraded file not found: {degraded_file_path}")
-                error_count += 1
-                continue
-            
-            # Calculate metrics (comparing ONLY missing values)
-            metrics = calculate_mad(source_file_path, degraded_file_path, str(reconstructed_file), config)
-            
-            # Add result with MAD metrics
-            result = {
-                'dataset_name': metadata['dataset_name'],
-                'technique': metadata['technique'],
-                'rate_percent': metadata['rate_percent'],
-                'iteration': metadata['iteration'],
-                'model': metadata['model'],
-                'mad': metrics['mad'],
-                'max_diff': metrics['max_diff'],
-                'min_diff': metrics['min_diff'],
-                'std_diff': metrics['std_diff'],
-                'n_missing': metrics['n_missing'],
-                'n_total': metrics['n_total']
-            }
-            
-            # Add performance metrics if available
-            perf_key = str((
-                metadata['dataset_name'],
-                metadata['technique'],
-                metadata['rate_percent'],
-                metadata['iteration'],
-                metadata['model']
-            ))
-            
-            if perf_key in performance_metrics:
-                perf = performance_metrics[perf_key]
-                result['time_seconds'] = perf.get('time_seconds', None)
-                result['cpu_cores_used'] = perf.get('cpu_cores_used', None)
-                result['cpu_cores_total'] = perf.get('cpu_cores_total', None)
-                result['memory_mb'] = perf.get('memory_mb', None)
-                result['memory_total_mb'] = perf.get('memory_total_mb', None)
-                result['gpu_percent'] = perf.get('gpu_percent', None)
-                result['gpu_memory_mb'] = perf.get('gpu_memory_mb', None)
-                result['gpu_memory_total_mb'] = perf.get('gpu_memory_total_mb', None)
-            else:
-                # No performance data available (e.g., file was skipped in reconstruction)
-                result['time_seconds'] = None
-                result['cpu_cores_used'] = None
-                result['cpu_cores_total'] = None
-                result['memory_mb'] = None
-                result['memory_total_mb'] = None
-                result['gpu_percent'] = None
-                result['gpu_memory_mb'] = None
-                result['gpu_memory_total_mb'] = None
-            
-            results.append(result)
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename = os.path.basename(future_to_file[future])
+                try:
+                    res = future.result()
+                    processed_count += 1
+                    
+                    if res['status'] == 'success':
+                        metrics = res['data']
+                        results.append(metrics)
+                        print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
+                        print(f"  ✓ MAD: {metrics['mad']:.4f}, Max Diff: {metrics['max_diff']:.4f}, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+                    else:
+                        print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
+                        print(f"  ❌ Error: {res['msg']}")
+                        error_count += 1
+                except Exception as exc:
+                    print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
+                    print(f"  ❌ Exception: {exc}")
+                    error_count += 1
+    else:
+        print("\nSequential processing...")
+        for reconstructed_file in reconstructed_files:
+            filename = reconstructed_file.name
+            args = (str(reconstructed_file), dataset_mapping, missing_dir, config, performance_metrics)
             
             processed_count += 1
-            print(f"  ✓ MAD: {metrics['mad']:.4f}, Max Diff: {metrics['max_diff']:.4f}, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+            print(f"\n[{processed_count}/{len(reconstructed_files)}] Processing: {filename}")
             
-        except Exception as e:
-            print(f"  ❌ Error processing {filename}: {e}")
-            error_count += 1
-            continue
+            res = process_file_wrapper(args)
+            
+            if res['status'] == 'success':
+                metrics = res['data']
+                results.append(metrics)
+                print(f"  ✓ MAD: {metrics['mad']:.4f}, Max Diff: {metrics['max_diff']:.4f}, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+            else:
+                print(f"  ❌ Error: {res['msg']}")
+                error_count += 1
     
     # Save results to CSV
     if results:
@@ -439,7 +494,7 @@ Examples:
         print("\n" + "="*70)
         print("RESULTS SAVED")
         print("="*70)
-        print(f"✓ Successfully processed: {processed_count}/{len(reconstructed_files)}")
+        print(f"✓ Successfully processed: {processed_count - error_count}/{len(reconstructed_files)}")
         print(f"❌ Errors: {error_count}")
         print(f"📁 Results saved to: {output_file}")
         print("="*70)

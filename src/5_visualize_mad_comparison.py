@@ -352,26 +352,26 @@ def main():
     st.sidebar.info("🌍 **Global filters** - apply to all tabs")
     
     # Get unique values
-    all_datasets = ['All'] + sorted(df['dataset_name'].unique().tolist())
-    all_models = ['All'] + sorted(df['model'].unique().tolist())
-    all_techniques = ['All'] + sorted(df['technique'].unique().tolist())
-    all_rates = ['All'] + sorted(df['rate_percent'].unique().tolist())
+    all_datasets = sorted(df['dataset_name'].unique().tolist())
+    all_models = sorted(df['model'].unique().tolist())
+    all_techniques = sorted(df['technique'].unique().tolist())
+    all_rates = sorted(df['rate_percent'].unique().tolist())
     
-    selected_dataset = st.sidebar.selectbox("Dataset", all_datasets)
-    selected_model = st.sidebar.selectbox("Model", all_models)
-    selected_technique = st.sidebar.selectbox("Technique", all_techniques)
-    selected_rate = st.sidebar.selectbox("Missing Rate (%)", all_rates)
+    selected_datasets = st.sidebar.multiselect("Dataset", all_datasets, default=all_datasets)
+    selected_models = st.sidebar.multiselect("Model", all_models, default=all_models)
+    selected_techniques = st.sidebar.multiselect("Technique", all_techniques, default=all_techniques)
+    selected_rates = st.sidebar.multiselect("Missing Rate (%)", all_rates, default=all_rates)
     
     # Apply filters to dataframe
     df_filtered = df.copy()
-    if selected_dataset != 'All':
-        df_filtered = df_filtered[df_filtered['dataset_name'] == selected_dataset]
-    if selected_model != 'All':
-        df_filtered = df_filtered[df_filtered['model'] == selected_model]
-    if selected_technique != 'All':
-        df_filtered = df_filtered[df_filtered['technique'] == selected_technique]
-    if selected_rate != 'All':
-        df_filtered = df_filtered[df_filtered['rate_percent'] == selected_rate]
+    if selected_datasets:
+        df_filtered = df_filtered[df_filtered['dataset_name'].isin(selected_datasets)]
+    if selected_models:
+        df_filtered = df_filtered[df_filtered['model'].isin(selected_models)]
+    if selected_techniques:
+        df_filtered = df_filtered[df_filtered['technique'].isin(selected_techniques)]
+    if selected_rates:
+        df_filtered = df_filtered[df_filtered['rate_percent'].isin(selected_rates)]
     
     # Display overview metrics
     st.header("📈 Overview")
