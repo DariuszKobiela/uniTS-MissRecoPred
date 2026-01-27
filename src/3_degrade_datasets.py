@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 Dataset Degradation Script
-Introduces missing values into source univariate time series datasets.
+Introduces missing values into training time series datasets.
 Uses config.yaml for configuration.
+
+NOTE: This script operates on TRAINING data only (from data/2_splitted_data/train/).
+Test data is preserved separately for prediction evaluation.
 """
 
 import os
@@ -140,16 +143,16 @@ def main():
         epilog="""
 Examples:
   # Use configuration from config.yaml
-  python degrade_datasets.py
+  python 3_degrade_datasets.py
   
   # Override config with custom parameters
-  python degrade_datasets.py --techniques MCAR --rates 0.05 --iterations 3
+  python 3_degrade_datasets.py --techniques MCAR --rates 0.05 --iterations 3
   
   # Use custom config file
-  python degrade_datasets.py --config my_config.yaml
+  python 3_degrade_datasets.py --config my_config.yaml
   
-  # Specify datasets by file paths
-  python degrade_datasets.py --dataset-files data/0_source_data/boiler.csv data/0_source_data/pump.csv
+  # Specify datasets by file paths (from training split)
+  python 3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
         """
     )
     

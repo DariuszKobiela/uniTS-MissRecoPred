@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
 Calculate Reconstruction Differences
-Compares reconstructed datasets with original source data and calculates Mean Absolute Difference (MAD).
-Results are saved to experiments_results/ with timestamp.
+Compares reconstructed training datasets with original training data (ground truth)
+and calculates Mean Absolute Difference (MAD).
+Results are saved to reconstruction_experiments_results/ with timestamp.
 Uses config.yaml for configuration.
+
+NOTE: This script compares reconstructed TRAINING data with original TRAINING data.
+Test data is preserved separately for prediction evaluation.
 """
 
 import os
@@ -33,7 +37,7 @@ def load_performance_metrics(results_dir: str) -> dict:
     if not os.path.exists(perf_metrics_dir):
         print("⚠️  No performance metrics directory found")
         print(f"   Expected: {perf_metrics_dir}")
-        print("   Run 3_reconstruct_datasets.py first to collect metrics")
+        print("   Run 4_reconstruct_datasets.py first to collect metrics")
         return {}
     
     # Find all performance metrics files
@@ -42,7 +46,7 @@ def load_performance_metrics(results_dir: str) -> dict:
     if not perf_files:
         print("⚠️  No performance metrics files found")
         print(f"   Directory: {perf_metrics_dir}")
-        print("   Run 3_reconstruct_datasets.py first to collect metrics")
+        print("   Run 4_reconstruct_datasets.py first to collect metrics")
         return {}
     
     # Sort by timestamp in filename (YYYYMMDD_HHMMSS) - most recent first

@@ -1,4 +1,5 @@
-# Time Series Reconstruction Framework - Configuration File
+# Time Series Reconstruction & Prediction Framework - Configuration File
+# Framework: uniTS-MissRecoPred
 
 # ============================================================================
 # DATA DIRECTORIES
@@ -6,10 +7,23 @@
 data:
   raw_source_dir: "data/0_source_data"       # Directory with raw datasets (input)
   cleaned_dir: "data/1_cleaned_data"         # Directory with cleaned datasets
-  source_dir: "data/1_cleaned_data"          # Directory with source datasets for degradation
-  missing_dir: "data/2_missing_data"         # Directory for degraded datasets
-  fixed_dir: "data/3_fixed_data"             # Directory for reconstructed datasets
-  results_dir: "experiments_results"          # Directory for experiment results
+  splitted_dir: "data/2_splitted_data"       # Directory with train/test split data
+  splitted_train_dir: "data/2_splitted_data/train"  # Training data (used for degradation)
+  splitted_test_dir: "data/2_splitted_data/test"    # Test data (used for prediction evaluation)
+  source_dir: "data/2_splitted_data/train"   # Directory with source datasets for degradation (training data)
+  missing_dir: "data/3_missing_data"         # Directory for degraded datasets
+  fixed_dir: "data/4_fixed_data"             # Directory for reconstructed datasets
+  reconstruction_results_dir: "reconstruction_experiments_results"  # Directory for reconstruction experiment results
+  prediction_results_dir: "prediction_experiment_results"  # Directory for prediction experiment results
+
+# ============================================================================
+# TRAIN/TEST SPLIT SETTINGS
+# ============================================================================
+split:
+  # Number of last samples to use as test set for each time series
+  # The remaining samples go to training set
+  # This temporal split preserves time series structure for prediction tasks
+  test_samples: 100  # Last 100 samples for test, rest for training
 
 # ============================================================================
 # DATASETS
@@ -46,6 +60,37 @@ reconstruction_models:
     # - "stable_diffusion_2_mtf"
     # - "stable_diffusion_2_rp"
     # - "stable_diffusion_2_spec"
+
+# ============================================================================
+# PREDICTION MODELS
+# ============================================================================
+prediction_models:
+  # Leave empty to use all available models from prediction_models/
+  # Or specify models to use:
+  # selected:
+  #   - "holt_winters"
+  #   - "prophet"
+  #   - "lstm"
+  
+  selected: []  # Empty = use all available models
+  
+  # You can exclude specific models:
+  excluded:
+    # - "transformer"  # Uncomment to exclude (slow to train)
+    # - "nbeats"
+    # - "deepar"
+
+# ============================================================================
+# PREDICTION SETTINGS
+# ============================================================================
+prediction:
+  # Whether to also predict on original training data (without reconstruction)
+  # This allows comparing: original train data vs reconstructed train data
+  predict_on_original_train: true
+  
+  # Whether to predict on reconstructed data (from 4_fixed_data)
+  # This is the main prediction task
+  predict_on_reconstructed: true
 
 # ============================================================================
 # MISSINGNESS TECHNIQUES
@@ -109,8 +154,8 @@ computation:
   # n_jobs: -1 uses all CPU cores
   # n_jobs: 1 disables parallelization (sequential)
   # n_jobs: N uses N cores
-  # WARNING: Set n_jobs=1 when using GPU models (Stable Diffusion)
-  n_jobs: 4
+  # WARNING: Set n_jobs=1 when using GPU models (Stable Diffusion, deep learning)
+  n_jobs: 16
   
   # Stable Diffusion settings (if using SD models)
   stable_diffusion:
@@ -127,4 +172,3 @@ computation:
 # config_full.yaml - Full experiment with all datasets, all models
 # config_gpu.yaml - Only GPU-based models (Stable Diffusion)
 # config_traditional.yaml - Only traditional methods (no deep learning)
-

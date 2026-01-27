@@ -46,21 +46,33 @@ experiments/
 # Generated data directories - ignore all CSV files
 data/0_source_data/*.csv
 data/1_cleaned_data/*.csv
-data/2_missing_data/*.csv
-data/3_fixed_data/*.csv
-data/4_inpainting_conversions/*.csv
-experiments_results/*.csv
-experiments_results/performance_metrics/*.csv
+data/2_splitted_data/train/*.csv
+data/2_splitted_data/test/*.csv
+data/3_missing_data/*.csv
+data/4_fixed_data/*.csv
+
+# Experiment results - ignore all CSV files
+reconstruction_experiments_results/*.csv
+reconstruction_experiments_results/performance_metrics/*.csv
+prediction_experiment_results/*.csv
+prediction_experiment_results/predictions/*.csv
+prediction_experiment_results/performance_metrics/*.csv
 hyperparameter_optimization/*.csv
 hyperparameter_optimization/*.txt
 
 # Keep directory structure (only .gitkeep files)
 !data/0_source_data/.gitkeep
 !data/1_cleaned_data/.gitkeep
-!data/2_missing_data/.gitkeep
-!data/3_fixed_data/.gitkeep
-!data/4_inpainting_conversions/.gitkeep
-!experiments_results/.gitkeep
+!data/2_splitted_data/.gitkeep
+!data/2_splitted_data/train/.gitkeep
+!data/2_splitted_data/test/.gitkeep
+!data/3_missing_data/.gitkeep
+!data/4_fixed_data/.gitkeep
+!reconstruction_experiments_results/.gitkeep
+!reconstruction_experiments_results/performance_metrics/.gitkeep
+!prediction_experiment_results/.gitkeep
+!prediction_experiment_results/predictions/.gitkeep
+!prediction_experiment_results/performance_metrics/.gitkeep
 !hyperparameter_optimization/.gitkeep
 
 # Model cache

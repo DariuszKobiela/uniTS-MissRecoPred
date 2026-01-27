@@ -32,6 +32,10 @@ class Config:
         
         return config
     
+    # =========================================================================
+    # DATA DIRECTORIES
+    # =========================================================================
+    
     def get_raw_source_dir(self) -> str:
         """Get raw source data directory (before cleaning)"""
         return self.config['data'].get('raw_source_dir', 'data/0_source_data')
@@ -40,8 +44,24 @@ class Config:
         """Get cleaned data directory"""
         return self.config['data'].get('cleaned_dir', 'data/1_cleaned_data')
     
+    def get_splitted_dir(self) -> str:
+        """Get splitted data base directory"""
+        return self.config['data'].get('splitted_dir', 'data/2_splitted_data')
+    
+    def get_splitted_train_dir(self) -> str:
+        """Get splitted training data directory"""
+        return self.config['data'].get('splitted_train_dir', 'data/2_splitted_data/train')
+    
+    def get_splitted_test_dir(self) -> str:
+        """Get splitted test data directory"""
+        return self.config['data'].get('splitted_test_dir', 'data/2_splitted_data/test')
+    
+    def get_test_samples(self) -> int:
+        """Get number of samples for test set in train/test split"""
+        return self.config.get('split', {}).get('test_samples', 100)
+    
     def get_source_dir(self) -> str:
-        """Get source data directory (cleaned datasets for processing)"""
+        """Get source data directory (training datasets for degradation)"""
         return self.config['data']['source_dir']
     
     def get_missing_dir(self) -> str:
@@ -53,8 +73,20 @@ class Config:
         return self.config['data']['fixed_dir']
     
     def get_results_dir(self) -> str:
-        """Get results directory"""
-        return self.config['data']['results_dir']
+        """Get reconstruction results directory (backward compatible)"""
+        return self.get_reconstruction_results_dir()
+    
+    def get_reconstruction_results_dir(self) -> str:
+        """Get reconstruction experiment results directory"""
+        return self.config['data'].get('reconstruction_results_dir', 'reconstruction_experiments_results')
+    
+    def get_prediction_results_dir(self) -> str:
+        """Get prediction experiment results directory"""
+        return self.config['data'].get('prediction_results_dir', 'prediction_experiment_results')
+    
+    # =========================================================================
+    # DATASETS
+    # =========================================================================
     
     def get_datasets(self) -> List[str]:
         """
@@ -123,6 +155,10 @@ class Config:
             'index_col': default['index_col']
         }
     
+    # =========================================================================
+    # RECONSTRUCTION MODELS
+    # =========================================================================
+    
     def get_reconstruction_models(self) -> List[str]:
         """
         Get list of reconstruction models to use.
@@ -149,6 +185,50 @@ class Config:
             # Use all available models except excluded
             all_models = list(RECONSTRUCTION_MODELS.keys())
             return [m for m in all_models if m not in excluded]
+    
+    # =========================================================================
+    # PREDICTION MODELS
+    # =========================================================================
+    
+    def get_prediction_models(self) -> List[str]:
+        """
+        Get list of prediction models to use.
+        If selected is empty, use all available models (excluding excluded ones).
+        
+        Returns:
+            List of model names
+        """
+        from prediction_models import PREDICTION_MODELS
+        
+        prediction_config = self.config.get('prediction_models', {})
+        selected = prediction_config.get('selected', [])
+        excluded = prediction_config.get('excluded', [])
+        
+        # Handle None values (YAML can return None for empty lists)
+        if selected is None:
+            selected = []
+        if excluded is None:
+            excluded = []
+        
+        if selected:
+            # Use only specified models
+            return [m for m in selected if m not in excluded]
+        else:
+            # Use all available models except excluded
+            all_models = list(PREDICTION_MODELS.keys())
+            return [m for m in all_models if m not in excluded]
+    
+    def get_predict_on_original_train(self) -> bool:
+        """Get whether to predict on original training data"""
+        return self.config.get('prediction', {}).get('predict_on_original_train', True)
+    
+    def get_predict_on_reconstructed(self) -> bool:
+        """Get whether to predict on reconstructed data"""
+        return self.config.get('prediction', {}).get('predict_on_reconstructed', True)
+    
+    # =========================================================================
+    # MISSINGNESS SETTINGS
+    # =========================================================================
     
     def get_missingness_techniques(self) -> List[str]:
         """
@@ -180,6 +260,10 @@ class Config:
         """Get random seed"""
         return self.config['missingness_rates']['seed']
     
+    # =========================================================================
+    # COMPUTATION SETTINGS
+    # =========================================================================
+    
     def get_stable_diffusion_settings(self) -> Dict[str, Any]:
         """Get Stable Diffusion model settings"""
         return self.config['computation']['stable_diffusion']
@@ -192,6 +276,10 @@ class Config:
         """Get number of parallel jobs"""
         return self.config['computation'].get('n_jobs', 1)
     
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+    
     def print_config_summary(self):
         """Print a summary of the current configuration"""
         print("="*70)
@@ -199,10 +287,19 @@ class Config:
         print("="*70)
         
         print("\n📁 Data Directories:")
-        print(f"  Source:  {self.get_source_dir()}")
-        print(f"  Missing: {self.get_missing_dir()}")
-        print(f"  Fixed:   {self.get_fixed_dir()}")
-        print(f"  Results: {self.get_results_dir()}")
+        print(f"  Raw Source:             {self.get_raw_source_dir()}")
+        print(f"  Cleaned:                {self.get_cleaned_dir()}")
+        print(f"  Splitted:               {self.get_splitted_dir()}")
+        print(f"    Train:                {self.get_splitted_train_dir()}")
+        print(f"    Test:                 {self.get_splitted_test_dir()}")
+        print(f"  Source:                 {self.get_source_dir()}")
+        print(f"  Missing:                {self.get_missing_dir()}")
+        print(f"  Fixed:                  {self.get_fixed_dir()}")
+        print(f"  Reconstruction Results: {self.get_reconstruction_results_dir()}")
+        print(f"  Prediction Results:     {self.get_prediction_results_dir()}")
+        
+        print(f"\n📊 Train/Test Split:")
+        print(f"  Test samples:  {self.get_test_samples()} (last N samples per dataset)")
         
         datasets = self.get_datasets()
         print(f"\n📊 Datasets ({len(datasets)}):")
@@ -221,6 +318,13 @@ class Config:
         if len(models) > 10:
             print(f"  ... and {len(models) - 10} more")
         
+        pred_models = self.get_prediction_models()
+        print(f"\n🔮 Prediction Models ({len(pred_models)}):")
+        for m in pred_models[:10]:
+            print(f"  - {m}")
+        if len(pred_models) > 10:
+            print(f"  ... and {len(pred_models) - 10} more")
+        
         techniques = self.get_missingness_techniques()
         print(f"\n🎯 Missingness Techniques ({len(techniques)}):")
         for t in techniques:
@@ -232,6 +336,10 @@ class Config:
         
         print(f"\n🔄 Iterations: {self.get_iterations()}")
         print(f"🎲 Random Seed: {self.get_seed()}")
+        
+        print(f"\n🔮 Prediction Settings:")
+        print(f"  Predict on original train: {self.get_predict_on_original_train()}")
+        print(f"  Predict on reconstructed:  {self.get_predict_on_reconstructed()}")
         
         print("="*70)
 
@@ -256,4 +364,3 @@ if __name__ == "__main__":
         config.print_config_summary()
     except Exception as e:
         print(f"Error loading configuration: {e}")
-

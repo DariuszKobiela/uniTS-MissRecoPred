@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Streamlit Visualization App for Reconstruction Results
+Streamlit Visualization App for Reconstruction & Prediction Results
 Interactive dashboard for comparing reconstruction models, techniques, and missing rates.
+Part of uniTS-MissRecoPred framework.
 """
 
 import sys
@@ -29,7 +30,7 @@ def load_results(file_path: str) -> pd.DataFrame:
 
 def get_available_results() -> list:
     """Get list of available result files"""
-    results_dir = Path("experiments_results")
+    results_dir = Path("reconstruction_experiments_results")
     if not results_dir.exists():
         return []
     
@@ -322,8 +323,8 @@ def main():
     available_files = get_available_results()
     
     if not available_files:
-        st.error("No result files found in `experiments_results/` directory.")
-        st.info("Run `python calculate_differences.py` first to generate results.")
+        st.error("No result files found in `reconstruction_experiments_results/` directory.")
+        st.info("Run `python 5_calculate_mad.py` first to generate results.")
         return
     
     # File selection
@@ -652,7 +653,7 @@ def main():
         # Check if performance metrics are available in the data
         if 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `3_reconstruct_datasets.py` again to collect performance metrics, then `4_calculate_mad.py` to merge them.")
+            st.info("Run `4_reconstruct_datasets.py` again to collect performance metrics, then `5_calculate_mad.py` to merge them.")
         else:
             df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
             
@@ -749,7 +750,7 @@ def main():
         # Check if performance metrics are available in the data
         if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `3_reconstruct_datasets.py` again to collect performance metrics, then `4_calculate_mad.py` to merge them.")
+            st.info("Run `4_reconstruct_datasets.py` again to collect performance metrics, then `5_calculate_mad.py` to merge them.")
         else:
             df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
             

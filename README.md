@@ -1,6 +1,8 @@
-# Univariate Time Series Reconstruction Framework
+# Univariate Time Series Reconstruction & Prediction Framework
 
-A modular framework for evaluating time series reconstruction methods on univariate datasets with various types of missing data.
+A modular framework for evaluating time series reconstruction methods on univariate datasets with various types of missing data, with support for prediction task evaluation.
+
+**Framework name**: uniTS-MissRecoPred
 
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
@@ -34,6 +36,7 @@ A modular framework for evaluating time series reconstruction methods on univari
 
 - **20+ Reconstruction Models**: From simple imputation to deep learning (Stable Diffusion 2)
 - **3 Missingness Patterns**: MCAR, MAR, MNAR with configurable rates
+- **Train/Test Split**: Temporal split preserving time series structure for prediction tasks
 - **Automatic Discovery**: Auto-detects datasets, models, and techniques
 - **Configuration-Based**: YAML config for easy experiment management
 - **Interactive Visualization**: Streamlit dashboard for result analysis
@@ -43,14 +46,15 @@ A modular framework for evaluating time series reconstruction methods on univari
 ## 📁 Project Structure
 
 ```
-univariate-time-series-reconstruction-framework/
+uniTS-MissRecoPred/
 │
 ├── 📁 src/                                 # Source code directory
 │   ├── 🐍 1_clean_datasets.py              # [MAIN] Clean and validate raw data
-│   ├── 🐍 2_degrade_datasets.py            # [MAIN] Introduce missing data
-│   ├── 🐍 3_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
-│   ├── 🐍 4_calculate_mad.py               # [MAIN] Calculate MAD metric
-│   ├── 🐍 5_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
+│   ├── 🐍 2_create_split.py                # [MAIN] Split into train/test sets
+│   ├── 🐍 3_degrade_datasets.py            # [MAIN] Introduce missing data (training)
+│   ├── 🐍 4_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
+│   ├── 🐍 5_calculate_mad.py               # [MAIN] Calculate MAD metric
+│   ├── 🐍 6_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
 │   │
 │   ├── 📁 utils/                           # Utility modules
 │   │   ├── 🐍 config_loader.py                # Configuration manager
@@ -75,10 +79,13 @@ univariate-time-series-reconstruction-framework/
 ├── 📁 data/
 │   ├── 📁 0_source_data/                   # Original datasets (auto-discovered)
 │   ├── 📁 1_cleaned_data/                  # Cleaned datasets (generated)
-│   ├── 📁 2_missing_data/                  # Degraded datasets (generated)
-│   └── 📁 3_fixed_data/                    # Reconstructed datasets (generated)
+│   ├── 📁 2_splitted_data/                 # Train/test split (generated)
+│   │   ├── 📁 train/                          # Training data (for reconstruction)
+│   │   └── 📁 test/                           # Test data (for prediction)
+│   ├── 📁 3_missing_data/                  # Degraded training datasets (generated)
+│   └── 📁 4_fixed_data/                    # Reconstructed training datasets (generated)
 │
-├── 📁 experiments_results/                 # Experiment results
+├── 📁 reconstruction_experiments_results/                 # Experiment results
 │   ├── 📝 reconstruction_results_*.csv        # MAD + performance metrics (merged)
 │   └── 📁 performance_metrics/             # Performance metrics archive
 │       └── 📝 performance_metrics_*.csv       # Individual performance logs
@@ -186,6 +193,7 @@ If GPU monitoring is not needed, GPUtil can be skipped (performance metrics will
 
 Edit `config.yaml` to set:
 - Datasets to use (auto-discovers all CSVs in `data/0_source_data/`)
+- Train/test split configuration (number of test samples)
 - Reconstruction models to test
 - Missingness techniques (MCAR, MAR, MNAR)
 - Missing rates (e.g., 10%, 20%)
@@ -204,13 +212,14 @@ make pipeline
 
 # Option 2: Run step by step
 make clean-datasets    # Step 1: Clean and validate raw data
-make degrade           # Step 2: Create degraded datasets
+make split             # Step 2: Split into train/test sets
+make degrade           # Step 3: Create degraded training datasets
 # OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
 make optimize          # Find optimal num_inference_steps and guidance_scale
 # Then update config.yaml with recommended values
-make reconstruct       # Step 3: Reconstruct missing values
-make calculate         # Step 4: Calculate MAD metric
-make visualize         # Step 5: Launch Streamlit dashboard
+make reconstruct       # Step 4: Reconstruct missing values
+make calculate         # Step 5: Calculate MAD metric
+make visualize         # Step 6: Launch Streamlit dashboard
 
 
 ```
@@ -219,11 +228,12 @@ make visualize         # Step 5: Launch Streamlit dashboard
 
 ```bash
 python src/1_clean_datasets.py        # Clean and validate raw data
-python src/2_degrade_datasets.py      # Create degraded datasets
-python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable Diffusion hyperparameters
-python src/3_reconstruct_datasets.py   # Reconstruct missing values
-python src/4_calculate_mad.py          # Calculate MAD metric
-streamlit run src/5_visualize_mad_comparison.py  # Visualize results
+python src/2_create_split.py          # Split into train/test sets
+python src/3_degrade_datasets.py      # Create degraded training datasets
+python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable Diffusion
+python src/4_reconstruct_datasets.py  # Reconstruct missing values
+python src/5_calculate_mad.py         # Calculate MAD metric
+streamlit run src/6_visualize_mad_comparison.py  # Visualize results
 ```
 
 **💡 Tip**: For long-running experiments, use `tmux` to keep processes running in background:
@@ -232,7 +242,7 @@ streamlit run src/5_visualize_mad_comparison.py  # Visualize results
 tmux new -s experiments
 
 # Run reconstruction (may take hours with Stable Diffusion)
-python src/3_reconstruct_datasets.py
+python src/4_reconstruct_datasets.py
 
 # Detach: Ctrl+B then D
 # Reattach later: 
@@ -256,7 +266,7 @@ make setup          # Create virtual environment
 make install        # Install dependencies
 
 # Full workflow
-make pipeline       # Run steps 1-4 automatically
+make pipeline       # Run steps 1-5 automatically
 make visualize      # View results
 
 # Cleanup
@@ -275,10 +285,17 @@ The framework uses `config.yaml` for all settings:
 data:
   raw_source_dir: "data/0_source_data"     # Raw input data
   cleaned_dir: "data/1_cleaned_data"       # Cleaned data
-  source_dir: "data/1_cleaned_data"        # Source for degradation
-  missing_dir: "data/2_missing_data"
-  fixed_dir: "data/3_fixed_data"
-  results_dir: "experiments_results"
+  splitted_dir: "data/2_splitted_data"     # Train/test split
+  splitted_train_dir: "data/2_splitted_data/train"  # Training data
+  splitted_test_dir: "data/2_splitted_data/test"    # Test data
+  source_dir: "data/2_splitted_data/train" # Source for degradation (training)
+  missing_dir: "data/3_missing_data"
+  fixed_dir: "data/4_fixed_data"
+  results_dir: "reconstruction_experiments_results"
+
+# Train/test split settings
+split:
+  test_samples: 100  # Last N samples for test set per dataset
 
 # Datasets (empty = auto-discover all CSVs)
 datasets:
@@ -354,6 +371,7 @@ timestamp,value
 *   **Separators**: Use comma `,` as separator and dot `.` as decimal point.
 *   **Cleanliness**: Although `1_clean_datasets.py` attempts to fix issues, provide clean data to avoid ambiguity.
 *   **Length**: For Stable Diffusion models, ensure sufficient length (e.g., > 100 points) for meaningful patterns.
+*   **Test samples**: Ensure your time series has more samples than `test_samples` configured in config.yaml.
 
 ## 🔄 Workflow
 
@@ -361,39 +379,47 @@ This framework follows a strict data pipeline where each script transforms data 
 
 ### 📋 Pipeline Roadmap
 
-#### 0. Data Cleaning
+#### 1. Data Cleaning
 *   **Script**: `src/1_clean_datasets.py`
 *   **📥 INPUT**: Raw CSV files in `data/0_source_data/`
     *   *Requirement*: Any CSV with at least 2 columns.
 *   **📤 OUTPUT**: Standardized CSV files in `data/1_cleaned_data/`
     *   *Format*: UTF-8, Comma-separated, Index + Value, No missing values, Validated types.
 
-#### 1. Degradation (Introduction of Missing Data)
-*   **Script**: `src/2_degrade_datasets.py`
+#### 2. Train/Test Split
+*   **Script**: `src/2_create_split.py`
 *   **📥 INPUT**: Cleaned CSV files in `data/1_cleaned_data/`
-*   **📤 OUTPUT**: Degraded CSV files in `data/2_missing_data/`
+*   **📤 OUTPUT**: Split CSV files in `data/2_splitted_data/`
+    *   `train/` - Training data (all but last N samples) - used for reconstruction experiments
+    *   `test/` - Test data (last N samples) - preserved for prediction evaluation
+*   **Note**: N is configured via `split.test_samples` in config.yaml
+
+#### 3. Degradation (Introduction of Missing Data)
+*   **Script**: `src/3_degrade_datasets.py`
+*   **📥 INPUT**: Training CSV files in `data/2_splitted_data/train/`
+*   **📤 OUTPUT**: Degraded CSV files in `data/3_missing_data/`
     *   *Format*: `{dataset}_{technique}_{rate}p_{iteration}.csv`
     *   *Content*: Same as input but with specific values replaced by `NaN` according to technique (MCAR/MAR/MNAR).
 
-#### 2. Reconstruction (The Core Task)
-*   **Script**: `src/3_reconstruct_datasets.py`
-*   **📥 INPUT**: Degraded CSV files in `data/2_missing_data/` (containing `NaNs`)
-*   **📤 OUTPUT**: Reconstructed CSV files in `data/3_fixed_data/`
+#### 4. Reconstruction (The Core Task)
+*   **Script**: `src/4_reconstruct_datasets.py`
+*   **📥 INPUT**: Degraded CSV files in `data/3_missing_data/` (containing `NaNs`)
+*   **📤 OUTPUT**: Reconstructed CSV files in `data/4_fixed_data/`
     *   *Format*: `{dataset}_{technique}_{rate}p_{iter}_{model}.csv`
     *   *Content*: `NaN` values filled with reconstructed estimates. Non-missing values are preserved exactly.
-*   **📝 METRICS OUTPUT**: `experiments_results/performance_metrics/*.csv` (Time, CPU, RAM usage logs).
+*   **📝 METRICS OUTPUT**: `reconstruction_experiments_results/performance_metrics/*.csv` (Time, CPU, RAM usage logs).
 
-#### 3. Evaluation
-*   **Script**: `src/4_calculate_mad.py`
+#### 5. Evaluation
+*   **Script**: `src/5_calculate_mad.py`
 *   **📥 INPUT**: 
-    1.  **Reconstructed Data** from `data/3_fixed_data/` (The solution)
-    2.  **Ground Truth Data** from `data/1_cleaned_data/` (The original perfect data)
-*   **📤 OUTPUT**: `experiments_results/reconstruction_results_*.csv`
+    1.  **Reconstructed Data** from `data/4_fixed_data/` (The solution)
+    2.  **Ground Truth Data** from `data/2_splitted_data/train/` (The original training data)
+*   **📤 OUTPUT**: `reconstruction_experiments_results/reconstruction_results_*.csv`
     *   *Content*: A comprehensive summary CSV containing MAD scores (quality) and performance metrics (efficiency) for every test case.
 
-#### 4. Visualization
-*   **Script**: `src/5_visualize_mad_comparison.py`
-*   **📥 INPUT**: Results CSV from `experiments_results/`
+#### 6. Visualization
+*   **Script**: `src/6_visualize_mad_comparison.py`
+*   **📥 INPUT**: Results CSV from `reconstruction_experiments_results/`
 *   **📤 OUTPUT**: Interactive Streamlit Dashboard (Web Interface).
 
 ---
@@ -401,11 +427,14 @@ This framework follows a strict data pipeline where each script transforms data 
 ```mermaid
 graph TD
     A[data/0_source_data] -->|1_clean_datasets.py| B[data/1_cleaned_data]
-    B -->|2_degrade_datasets.py| C[data/2_missing_data]
-    C -->|3_reconstruct_datasets.py| D[data/3_fixed_data]
-    D -->|4_calculate_mad.py| E[experiments_results]
-    B -->|Ground Truth| E
-    E -->|5_visualize...| F[Streamlit Dashboard]
+    B -->|2_create_split.py| C[data/2_splitted_data]
+    C -->|train/| D[Training Data]
+    C -->|test/| E[Test Data - preserved]
+    D -->|3_degrade_datasets.py| F[data/3_missing_data]
+    F -->|4_reconstruct_datasets.py| G[data/4_fixed_data]
+    G -->|5_calculate_mad.py| H[reconstruction_experiments_results]
+    D -->|Ground Truth| H
+    H -->|6_visualize...| I[Streamlit Dashboard]
 ```
 
 ## 📊 Output Files
@@ -455,14 +484,14 @@ graph TD
 
 **Two locations for performance data:**
 
-1. **`experiments_results/performance_metrics/performance_metrics_YYYYMMDD_HHMMSS.csv`** - Archive of performance metrics
-   - Created during reconstruction (step 2)
+1. **`reconstruction_experiments_results/performance_metrics/performance_metrics_YYYYMMDD_HHMMSS.csv`** - Archive of performance metrics
+   - Created during reconstruction (step 4)
    - Permanent record of computational performance
    - Includes timestamp for each reconstruction session
 
-2. **`experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv`** - Merged results
+2. **`reconstruction_experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv`** - Merged results
    - Combines MAD metrics + performance metrics
-   - Created during evaluation (step 3)
+   - Created during evaluation (step 5)
    - Single file for easy analysis
 
 **Performance Metrics Columns**:
@@ -481,142 +510,6 @@ graph TD
 - `gpu_memory_total_mb` - **Total GPU memory available (MB)** - *null if GPU not available*
 - `timestamp` - When reconstruction was performed
 
-**Complete Merged File Structure** (`reconstruction_results_*.csv`):
-```csv
-dataset_name,technique,rate_percent,iteration,model,mad,max_diff,min_diff,std_diff,n_missing,n_total,time_seconds,cpu_percent,memory_mb,gpu_percent,gpu_memory_mb
-vibration_sensor_S1,MCAR,10,1,interpolate_linear,5.23,12.45,0.12,3.21,21,210,0.15,12.5,45.2,,
-vibration_sensor_S1,MCAR,10,1,stable_diffusion_2_gaf,4.87,11.23,0.09,2.98,21,210,45.8,85.3,1024.5,75.2,2048.0
-```
-
-**Benefits**:
-- **Dual storage** - Archive in `performance_metrics/` + merged in `reconstruction_results`
-- **Easy analysis** - Compare quality (MAD) vs. efficiency (time/resources) directly
-- **Streamlit dashboard** - Automatically shows performance tabs when data is available
-- **Historical tracking** - Keep separate performance logs for each reconstruction session
-
-**How It Works**:
-
-The framework automatically collects performance metrics during reconstruction using the `PerformanceMonitor` class:
-
-```python
-from utils.performance_metrics import PerformanceMonitor
-
-monitor = PerformanceMonitor()
-monitor.start()
-
-# Reconstruction happens here
-reconstructed = model_func(series)
-
-# Metrics collected automatically
-metrics = monitor.stop()
-# Returns: {'time_seconds': 1.23, 'cpu_cores_used': 1.18, 'cpu_cores_total': 4, 
-#           'memory_mb': 128.5, 'memory_total_mb': 16384, 
-#           'gpu_percent': 75.2, 'gpu_memory_mb': 2048, 'gpu_memory_total_mb': 8192}
-```
-
-**Interpreting Results**:
-
-*Execution Time:*
-- **< 1s** - Fast, suitable for real-time applications
-- **1-10s** - Moderate, suitable for batch processing  
-- **10-60s** - Slow, suitable for offline analysis
-- **> 60s** - Very slow, deep learning models (GPU recommended)
-
-*CPU Usage:*
-- **< 1 core** - Light computation, can run multiple instances
-- **1-4 cores** - Moderate computation
-- **> 4 cores** - Heavy parallel processing
-
-*Memory Usage:*
-- **< 100 MB** - Low memory footprint
-- **100-500 MB** - Moderate memory usage
-- **500-2000 MB** - High memory usage
-- **> 2000 MB** - Very high, requires 8GB+ RAM
-
-*GPU Usage:*
-- **None/0%** - CPU-only model (interpolation, imputation)
-- **> 0%** - GPU-accelerated model (Stable Diffusion)
-- **High GPU memory** - Requires powerful GPU (4GB+ VRAM)
-
-**Use Cases**:
-
-*1. Model Selection for Edge Devices:*
-```python
-# Find fast models with good quality
-df = pd.read_csv('experiments_results/reconstruction_results_*.csv')
-fast_accurate = df[(df['time_seconds'] < 1.0) & (df['mad'] < 5.0)]
-```
-
-*2. Time-Quality Trade-off Analysis:*
-```python
-# Calculate efficiency: lower MAD per second = better
-df['efficiency'] = df['mad'] / df['time_seconds']
-best_efficiency = df.groupby('model')['efficiency'].mean().sort_values()
-```
-
-*3. Hardware Requirements Planning:*
-```python
-# Find peak resource usage per model
-peak_resources = df.groupby('model').agg({
-    'memory_mb': 'max',
-    'gpu_memory_mb': 'max',
-    'time_seconds': 'mean'
-})
-```
-
-*4. Cost Optimization (Cloud Computing):*
-```python
-# Estimate cloud costs (GPU ~$0.90/hour, CPU ~$0.10/hour)
-df['cost_per_run'] = df.apply(
-    lambda row: (row['time_seconds'] / 3600) * (0.90 if row['gpu_percent'] > 0 else 0.10),
-    axis=1
-)
-```
-
-**Best Practices**:
-- Run on representative data (performance varies with dataset size)
-- Compare on same hardware (results are hardware-dependent)
-- Average multiple runs for reliable timings
-- Balance accuracy (MAD) vs. efficiency (time/resources)
-- Monitor GPU memory for deep learning models
-
-**Troubleshooting**:
-- *GPU metrics show None*: Install `GPUtil` (`pip install GPUtil==1.4.0`) or no GPU available
-- *High memory usage*: Large datasets, close other applications
-- *Inconsistent timings*: System load, background processes interfering
-- *Streamlit "inotify watch limit reached"*: Create `.streamlit/config.toml` with:
-  ```toml
-  [server]
-  fileWatcherType = "none"
-  ```
-  Or increase system limit: `sudo sysctl fs.inotify.max_user_watches=524288`
-
-**Advanced: Custom Performance Monitoring**
-
-You can use the `PerformanceMonitor` class in your own code:
-
-```python
-from utils.performance_metrics import monitor_performance, is_gpu_model
-
-# Monitor your own code
-with monitor_performance() as monitor:
-    # Your heavy computation here
-    result = heavy_computation()
-
-metrics = monitor.stop()
-print(f"Time: {metrics['time_seconds']:.2f}s")
-print(f"CPU: {metrics['cpu_cores_used']:.2f}/{metrics['cpu_cores_total']} cores")
-print(f"RAM: {metrics['memory_mb']:.1f}/{metrics['memory_total_mb']:.0f} MB")
-
-# Check if model uses GPU
-if is_gpu_model('stable_diffusion_2_gaf'):
-    print("This model will use GPU if available")
-```
-
-**Dependencies**:
-- `psutil` - Required for CPU and RAM monitoring (included in requirements.txt)
-- `GPUtil==1.4.0` - Optional for GPU monitoring (included in requirements.txt)
-
 ## 🎯 Advanced Usage
 
 ### Running Long Experiments with tmux
@@ -629,7 +522,7 @@ tmux new -s experiments
 
 # Inside tmux, activate virtual environment and run experiments
 source experiment/bin/activate
-python src/3_reconstruct_datasets.py
+python src/4_reconstruct_datasets.py
 
 # Detach from tmux session (keeps it running in background)
 # Press: Ctrl+B, then D
@@ -662,20 +555,23 @@ tmux kill-session -t experiments
 For custom parameters, use the scripts directly instead of Makefile:
 
 ```bash
+# Split with custom test samples
+python src/2_create_split.py --test-samples 200
+
 # Degrade specific datasets
-python src/2_degrade_datasets.py --dataset-files data/0_source_data/boiler.csv
+python src/3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
 
 # Use custom config
-python src/2_degrade_datasets.py --config my_config.yaml
+python src/3_degrade_datasets.py --config my_config.yaml
 
 # Override config parameters
-python src/2_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
+python src/3_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
 
 # Reconstruct with specific models
-python src/3_reconstruct_datasets.py --models interpolate_linear knn
+python src/4_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
-python src/4_calculate_mad.py --config my_config.yaml
+python src/5_calculate_mad.py --config my_config.yaml
 ```
 
 **Quick test with Makefile** (limited data for fast testing):
@@ -708,78 +604,10 @@ python src/optimization/optimize_sd_hyperparams.py \
 python src/optimization/optimize_sd_hyperparams.py \
   --method optuna \
   --n-trials 200
-
-# Robust optimization (multiple runs to avoid random sample bias)
-# Run 3-5 times with different random samples
-for i in {1..3}; do
-  python src/optimization/optimize_sd_hyperparams.py \
-    --n-trials 100 \
-    --max-files 30 \
-    --output-dir "hyperparameter_optimization/run_$i"
-done
-# Then compare results across runs to find consistent optimal values
-```
-
-**How it works:**
-- Automatically finds ALL degraded datasets in `data/2_missing_data/`
-- Dynamically discovers ALL Stable Diffusion models from `reconstruction_models/` (any model starting with `stable_diffusion_*`)
-- **Selects test files once**: When using `--max-files`, randomly selects N files at the start and uses THE SAME files across ALL trials
-  - This ensures fair comparison between hyperparameter configurations
-  - All trials are evaluated on identical data for valid optimization
-  - Random selection is done once before optimization begins, not per trial
-- For each SD model, Optuna proposes hyperparameter candidates from `--steps` and `--guidance`
-- Uses pruning (median rule) to stop bad trials early
-- Uses fixed-size encodings (512×512) to avoid RAM OOM on long time series
-- Aggregates results across datasets, techniques, rates, iterations, and models
-- Provides globally optimal recommendations for each model and overall best
-- **Extensible**: Adding new SD models to `reconstruction_models/` automatically includes them in optimization
-
-**Output:**
-- Detailed CSV with all evaluated trials (`hyperparameter_optimization/optimization_results_optuna_*.csv`)
-- Summary text report (`hyperparameter_optimization/Summary_opt_res_*.txt`)
-- Global aggregated statistics (average MAD, average time, efficiency)
-- Best configurations by:
-  - Lowest average MAD (best quality globally)
-  - Highest quality/time ratio (most efficient globally)
-- Optimal hyperparameters per model
-- Hyperparameter effect analysis with standard deviations
-- Ready-to-use `config.yaml` recommendations
-
-**Example output (Optuna):**
-```
-🔬 STABLE DIFFUSION HYPERPARAMETER OPTIMIZATION
-Method: Optuna (Bayesian Optimization with TPE)
-Trials per model: 100
-Models (4): stable_diffusion_2_gaf, stable_diffusion_2_mtf, stable_diffusion_2_rp, stable_diffusion_2_spec
-
-📂 Found 20 degraded files to test
-✓ Prepared 20 test cases
-
-🎯 Optimization Method: OPTUNA
-🎯 Using Optuna (TPE Bayesian Optimization)
-   Search space (categorical):
-     - num_inference_steps: [5, 10, 20, 30, 50, 75, 100]
-     - guidance_scale: [3.5, 5.0, 7.5, 10.0]
-
-📊 Optimizing stable_diffusion_2_gaf (1/4)
-🚀 Running 100 trials for stable_diffusion_2_gaf...
-[I ...] Trial 0 finished with value: ...
-[I ...] Trial 1 pruned ...
-...
-✓ Best for stable_diffusion_2_gaf: steps=20, guidance=7.5, MAD=...
 ```
 
 **⚠️ Important:** 
-- Run optimization AFTER generating degraded datasets with `2_degrade_datasets.py`
-- The script automatically discovers and tests ALL Stable Diffusion models from `reconstruction_models/`
-- Models are detected by naming convention: `stable_diffusion_*` (e.g., `stable_diffusion_2_gaf`)
-- Adding new SD models to the framework automatically includes them in optimization - no code changes needed!
-- Optimization may take several hours depending on hardware, number of test cases, and number of SD models
-- **Run optimization multiple times (3-5 runs)**: When using `--max-files`, random file selection may introduce bias
-  - A single run might select "lucky" files that favor certain hyperparameters
-  - Multiple runs with different random file samples provide more robust results
-  - Compare results across runs to identify consistent optimal hyperparameters
-  - If results vary significantly between runs, consider increasing `--max-files` or using all files (omit `--max-files`)
+- Run optimization AFTER generating degraded datasets with `3_degrade_datasets.py`
 
 ### Available Models
 
@@ -817,7 +645,7 @@ Models (4): stable_diffusion_2_gaf, stable_diffusion_2_mtf, stable_diffusion_2_r
 
 ## 📈 Visualization
 
-The Streamlit dashboard (`5_visualize_mad_comparison.py`) provides comprehensive analysis across **11 interactive tabs**:
+The Streamlit dashboard (`6_visualize_mad_comparison.py`) provides comprehensive analysis across **11 interactive tabs**:
 
 ### 1. 📊 By Model
 Compare reconstruction quality (MAD) across all models with:
@@ -849,26 +677,6 @@ Overall computational efficiency ranking:
 - **Ascending sort**: Lower score = more efficient (best models at top)
 - **Time vs Memory scatter**: Visual efficiency comparison with CPU usage as bubble size
 
-**How Efficiency Score is calculated**:
-```
-Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
-```
-- **Time_norm**: Normalized execution time (0 to 1)
-- **CPU_norm**: CPU cores used / total cores available
-- **Memory_norm**: Normalized RAM usage (0 to 1)
-- **GPU_norm**: GPU memory used / total GPU memory (0 for CPU-only models)
-
-**Score interpretation**:
-- **0-1**: Highly efficient (minimal resources)
-- **1-2**: Moderately efficient
-- **2-4**: Less efficient (resource-intensive, typically GPU-based models)
-
-**Use cases**:
-- Select models for edge devices and embedded systems
-- Balance reconstruction quality (MAD) vs. computational cost
-- Optimize for deployment scenarios (cloud costs, energy efficiency)
-- Quick identification of most efficient models
-
 ### 6. 🔥 Heatmap
 Matrix visualization showing:
 - Model × Technique performance
@@ -878,23 +686,8 @@ Matrix visualization showing:
 ### 7. 📊 Statistical Tests
 Pairwise statistical significance testing:
 - **Significance matrix**: n×n matrix showing which model differences are statistically significant
-- **Color-coded results**:
-  - 🟩 Dark Green `+2`: Row model significantly better (p < 0.01)
-  - 🟢 Light Green `+1`: Row model significantly better (p < 0.05)
-  - ⬜ White `0`: No significant difference
-  - 🔴 Red `-1`: Row model significantly worse (p < 0.05)
-  - 🟥 Dark Red `-2`: Row model significantly worse (p < 0.01)
+- **Color-coded results**
 - **Model statistics**: Mean, std, median, min, max for each model
-- **Significance summary**: How many models each model is significantly better/worse than
-- **P-values matrix**: Detailed p-values for all pairwise comparisons
-
-**Use cases**:
-- Determine if performance differences are statistically meaningful
-- Identify models that are consistently better/worse across experiments
-- Validate that "best" model is significantly better than alternatives
-- Scientific reporting: support conclusions with statistical evidence
-
-**Method**: Independent samples t-test on multiple iterations (each iteration = one sample)
 
 ### 8. 🏆 Best/Worst
 Quick overview of top and bottom performers:
@@ -903,57 +696,23 @@ Quick overview of top and bottom performers:
 - Model comparison bar charts
 
 ### 9. ⏱️ Computation Time
-Analyze execution time and computational complexity:
-- **Time summary**: Total, average, min, max execution time
-- **Time by model**: Average execution time with standard deviation
-- **Time distribution**: Box plots showing time variability
-- **Time by technique/rate**: How missingness affects computation time
-- **Detailed statistics**: Full breakdown per model
-
-**Use cases**:
-- Identify fast models for real-time applications
-- Compare time-quality trade-offs
-- Plan computational budgets
+Analyze execution time and computational complexity
 
 ### 10. 💻 Resource Usage
 Monitor hardware resource consumption:
-- **CPU usage**: Average and peak CPU utilization per model
-- **RAM usage**: Memory consumption per model
-- **GPU usage**: GPU utilization for deep learning models (if available)
-- **Combined CPU + GPU**: Side-by-side comparison for GPU-based models
-
-**Metrics tracked**:
-- CPU cores used / total cores available
-- RAM usage in MB / total RAM available
-- GPU utilization percentage (optional)
-- GPU memory usage in MB / total RAM available (optional)
-- Combined view showing both CPU and GPU usage for fair comparison
-
-**Use cases**:
-- Identify resource-intensive models
-- Compare CPU-only vs GPU-accelerated models
-- Optimize for limited hardware
-- Plan cloud computing costs
+- CPU usage
+- RAM usage
+- GPU usage
 
 ### 11. 📋 Raw Data
-Direct access to results:
-- Searchable table with all metrics
-- Sort by any column
-- Download filtered results as CSV
-- Full data transparency
-
-### Global vs Local Filters
-- **Global filters** (sidebar): Apply to ALL tabs
-- **Local filters** (within tabs): Tab-specific refinement
+Direct access to results with search and export
 
 ### Launch Dashboard
 
 ```bash
-streamlit run src/5_visualize_mad_comparison.py
+streamlit run src/6_visualize_mad_comparison.py
 # Open browser at http://localhost:8501
 ```
-
-**Note**: If you encounter "inotify watch limit reached" error on Linux, the project includes `.streamlit/config.toml` with `fileWatcherType = "none"` to disable file watching. This prevents the error while keeping all functionality (you'll need to manually refresh on code changes).
 
 ## 📝 Adding New Models
 
@@ -992,7 +751,7 @@ RECONSTRUCTION_MODELS = {
 3. **Use it**:
 
 ```bash
-python src/3_reconstruct_datasets.py --models my_model
+python src/4_reconstruct_datasets.py --models my_model
 ```
 
 ### Add a Missingness Technique
@@ -1040,7 +799,7 @@ MISSINGNESS_TECHNIQUES = {
 3. **Use it**:
 
 ```bash
-python src/2_degrade_datasets.py --techniques MY_TECHNIQUE
+python src/3_degrade_datasets.py --techniques MY_TECHNIQUE
 ```
 
 ## 🧹 Cleanup
@@ -1056,8 +815,8 @@ make clean-all
 ```
 
 **What gets cleaned:**
-- `make clean`: Removes `data/1_cleaned_data/`, `data/2_missing_data/`, `data/3_fixed_data/`
-- `make clean-all`: Removes all of the above + `experiments_results/*.csv`
+- `make clean`: Removes `data/1_cleaned_data/`, `data/2_splitted_data/train/*`, `data/2_splitted_data/test/*`, `data/3_missing_data/`, `data/4_fixed_data/`
+- `make clean-all`: Removes all of the above + `reconstruction_experiments_results/*.csv`
 
 ### Remove Virtual Environment
 
@@ -1131,6 +890,12 @@ You should see `(experiment)` in your terminal prompt when active.
 - We only care about how well the model reconstructed destroyed values
 - Lower MAD = better reconstruction
 
+### Train/Test Split
+The framework uses a **temporal split** for train/test data:
+- **Training data**: All samples except the last N (configured via `split.test_samples`)
+- **Test data**: Last N samples - preserved separately for prediction evaluation
+- This preserves the time series structure and is appropriate for forecasting tasks
+
 ### Stable Diffusion Models
 - Require NVIDIA GPU with 8+ GB VRAM
 - First run downloads ~20GB model from HuggingFace
@@ -1149,12 +914,12 @@ You should see `(experiment)` in your terminal prompt when active.
 If you use this framework in your research, please cite:
 
 ```bibtex
-@misc{ts_reconstruction_framework_2025,
-  title={Univariate Time Series Reconstruction Framework},
+@misc{ts_reconstruction_prediction_framework_2025,
+  title={Univariate Time Series Reconstruction and Prediction Framework (uniTS-MissRecoPred)},
   author={Dariusz Kobiela, Jarosław Kobiela, Adam Kurowski, Agnieszka Landowska},
   year={2025},
   howpublished={GitHub repository},
-  note={Framework for evaluating univariate time series reconstruction methods}
+  note={Framework for evaluating univariate time series reconstruction and prediction methods}
 }
 ```
 
@@ -1171,10 +936,9 @@ Apache License 2.0 - See [LICENSE](LICENSE) file for details.
 
 For issues, questions, or contributions:
 1. Check existing documentation
-2. Review example usage: `python example_usage.py`
-3. Open an issue on GitHub
+2. Open an issue on GitHub
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: December 2025 
+**Version**: 2.0 (with Prediction support)  
+**Last Updated**: January 2026

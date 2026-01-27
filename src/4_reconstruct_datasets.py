@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
 Dataset Reconstruction Script
-Repairs degraded univariate time series datasets using various reconstruction models.
+Repairs degraded training time series datasets using various reconstruction models.
 Uses config.yaml for configuration.
 Collects performance metrics (time, CPU, RAM, GPU usage).
+
+NOTE: This script operates on degraded TRAINING data only (from data/3_missing_data/).
+Test data is preserved separately for prediction evaluation.
 """
 
 import os
