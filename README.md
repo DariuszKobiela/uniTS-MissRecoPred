@@ -235,7 +235,8 @@ tmux new -s experiments
 python src/3_reconstruct_datasets.py
 
 # Detach: Ctrl+B then D
-# Reattach later: tmux attach -t experiments
+# Reattach later: 
+tmux attach -t experiments
 ```
 See [Running Long Experiments with tmux](#running-long-experiments-with-tmux) for details.
 
