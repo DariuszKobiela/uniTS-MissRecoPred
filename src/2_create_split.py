@@ -14,7 +14,7 @@ Usage:
     python 2_create_split.py [--input-dir DIR] [--output-dir DIR] [--test-samples N]
 
 Examples:
-    # Split all datasets from default directories using config.yaml settings
+    # Split all datasets from default directories using config/config.yaml settings
     python 2_create_split.py
 
     # Split with custom test samples count
@@ -153,7 +153,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use configuration from config.yaml
+  # Use configuration from config/config.yaml
   python 2_create_split.py
   
   # Override test samples count
@@ -166,7 +166,7 @@ Examples:
     parser.add_argument(
         '--input-dir',
         type=str,
-        help='Input directory containing cleaned datasets (default: from config.yaml)'
+        help='Input directory containing cleaned datasets (default: from config/config.yaml)'
     )
     parser.add_argument(
         '--output-dir',
@@ -181,13 +181,13 @@ Examples:
     parser.add_argument(
         '--test-samples',
         type=int,
-        help='Number of last samples for test set (default: from config.yaml)'
+        help='Number of last samples for test set (default: from config/config.yaml)'
     )
     parser.add_argument(
         '--config',
         type=str,
-        default='config.yaml',
-        help='Path to configuration file (default: config.yaml)'
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)'
     )
     
     args = parser.parse_args()

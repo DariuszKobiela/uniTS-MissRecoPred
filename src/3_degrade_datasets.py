@@ -2,7 +2,7 @@
 """
 Dataset Degradation Script
 Introduces missing values into training time series datasets.
-Uses config.yaml for configuration.
+Uses config/config.yaml for configuration.
 
 NOTE: This script operates on TRAINING data only (from data/2_splitted_data/train/).
 Test data is preserved separately for prediction evaluation.
@@ -142,14 +142,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use configuration from config.yaml
+  # Use configuration from config/config.yaml
   python 3_degrade_datasets.py
   
   # Override config with custom parameters
   python 3_degrade_datasets.py --techniques MCAR --rates 0.05 --iterations 3
   
   # Use custom config file
-  python 3_degrade_datasets.py --config my_config.yaml
+  python 3_degrade_datasets.py --config config/my_config.yaml
   
   # Specify datasets by file paths (from training split)
   python 3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
@@ -159,8 +159,8 @@ Examples:
     parser.add_argument(
         '--config',
         type=str,
-        default='config.yaml',
-        help='Path to configuration file (default: config.yaml)'
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)'
     )
     
     parser.add_argument(
@@ -209,7 +209,7 @@ Examples:
         print(f"✓ Loaded configuration from: {args.config}\n")
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {args.config}")
-        print("   Creating default config.yaml...")
+        print("   Creating default config/config.yaml...")
         # Could create default config here
         return
     

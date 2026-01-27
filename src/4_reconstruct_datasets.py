@@ -2,7 +2,7 @@
 """
 Dataset Reconstruction Script
 Repairs degraded training time series datasets using various reconstruction models.
-Uses config.yaml for configuration.
+Uses config/config.yaml for configuration.
 Collects performance metrics (time, CPU, RAM, GPU usage).
 
 NOTE: This script operates on degraded TRAINING data only (from data/3_missing_data/).
@@ -224,15 +224,15 @@ Examples:
   python reconstruct_datasets.py --models interpolate_linear knn
   
   # Use custom config file
-  python reconstruct_datasets.py --config my_config.yaml
+  python reconstruct_datasets.py --config config/my_config.yaml
         """
     )
     
     parser.add_argument(
         '--config',
         type=str,
-        default='config.yaml',
-        help='Path to configuration file (default: config.yaml)'
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)'
     )
     
     parser.add_argument(

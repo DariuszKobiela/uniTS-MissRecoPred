@@ -4,7 +4,7 @@ Calculate Reconstruction Differences
 Compares reconstructed training datasets with original training data (ground truth)
 and calculates Mean Absolute Difference (MAD).
 Results are saved to reconstruction_experiments_results/ with timestamp.
-Uses config.yaml for configuration.
+Uses config/config.yaml for configuration.
 
 NOTE: This script compares reconstructed TRAINING data with original TRAINING data.
 Test data is preserved separately for prediction evaluation.
@@ -353,15 +353,15 @@ Examples:
   python calculate_differences.py
   
   # Use custom config file
-  python calculate_differences.py --config my_config.yaml
+  python calculate_differences.py --config config/my_config.yaml
         """
     )
     
     parser.add_argument(
         '--config',
         type=str,
-        default='config.yaml',
-        help='Path to configuration file (default: config.yaml)'
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)'
     )
     
     args = parser.parse_args()

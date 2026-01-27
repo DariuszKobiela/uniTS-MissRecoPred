@@ -1,23 +1,23 @@
 """
 Configuration Loader
-Loads and manages configuration from config.yaml
+Loads and manages configuration from config/config.yaml and config/prediction_models_config.yaml
 """
 
 import yaml
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 
 class Config:
     """Configuration manager for the framework"""
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config/config.yaml"):
         """
         Load configuration from YAML file.
         
         Args:
-            config_path: Path to configuration file
+            config_path: Path to main configuration file
         """
         self.config_path = config_path
         self.config = self._load_config()
@@ -344,9 +344,218 @@ class Config:
         print("="*70)
 
 
-def load_config(config_path: str = "config.yaml") -> Config:
+class PredictionModelsConfig:
+    """Configuration manager for prediction models training parameters"""
+    
+    def __init__(self, config_path: str = "config/prediction_models_config.yaml"):
+        """
+        Load prediction models configuration from YAML file.
+        
+        Args:
+            config_path: Path to prediction models configuration file
+        """
+        self.config_path = config_path
+        self.config = self._load_config()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        if not os.path.exists(self.config_path):
+            raise FileNotFoundError(f"Prediction models config not found: {self.config_path}")
+        
+        with open(self.config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        return config
+    
+    # =========================================================================
+    # GLOBAL TRAINING SETTINGS
+    # =========================================================================
+    
+    def get_validation_split(self) -> float:
+        """Get train/validation split ratio"""
+        return self.config.get('global_training', {}).get('validation_split', 0.2)
+    
+    def get_seed(self) -> int:
+        """Get random seed"""
+        return self.config.get('global_training', {}).get('seed', 42)
+    
+    def get_max_epochs(self) -> int:
+        """Get maximum training epochs"""
+        return self.config.get('global_training', {}).get('max_epochs', 100)
+    
+    def get_batch_size(self) -> int:
+        """Get training batch size"""
+        return self.config.get('global_training', {}).get('batch_size', 32)
+    
+    def get_training_iterations(self) -> int:
+        """Get number of training iterations for non-deterministic models"""
+        return self.config.get('global_training', {}).get('training_iterations', 5)
+    
+    # =========================================================================
+    # EARLY STOPPING SETTINGS
+    # =========================================================================
+    
+    def get_early_stopping_enabled(self) -> bool:
+        """Get whether early stopping is enabled"""
+        return self.config.get('early_stopping', {}).get('enabled', True)
+    
+    def get_early_stopping_monitor(self) -> str:
+        """Get metric to monitor for early stopping"""
+        return self.config.get('early_stopping', {}).get('monitor', 'val_loss')
+    
+    def get_early_stopping_patience(self) -> int:
+        """Get early stopping patience"""
+        return self.config.get('early_stopping', {}).get('patience', 10)
+    
+    def get_early_stopping_min_delta(self) -> float:
+        """Get minimum improvement delta"""
+        return self.config.get('early_stopping', {}).get('min_delta', 0.001)
+    
+    def get_early_stopping_verbose(self) -> bool:
+        """Get early stopping verbose flag"""
+        return self.config.get('early_stopping', {}).get('verbose', False)
+    
+    # =========================================================================
+    # MODEL-SPECIFIC PARAMETERS
+    # =========================================================================
+    
+    def get_model_params(self, model_name: str) -> Dict[str, Any]:
+        """
+        Get parameters for a specific model.
+        
+        Args:
+            model_name: Name of the model (lstm, gru, tcn, etc.)
+            
+        Returns:
+            Dictionary of model parameters
+        """
+        return self.config.get(model_name, {})
+    
+    def get_lstm_params(self) -> Dict[str, Any]:
+        """Get LSTM model parameters"""
+        return self.config.get('lstm', {})
+    
+    def get_gru_params(self) -> Dict[str, Any]:
+        """Get GRU model parameters"""
+        return self.config.get('gru', {})
+    
+    def get_deepar_params(self) -> Dict[str, Any]:
+        """Get DeepAR model parameters"""
+        return self.config.get('deepar', {})
+    
+    def get_tcn_params(self) -> Dict[str, Any]:
+        """Get TCN model parameters"""
+        return self.config.get('tcn', {})
+    
+    def get_nbeats_params(self) -> Dict[str, Any]:
+        """Get N-BEATS model parameters"""
+        return self.config.get('nbeats', {})
+    
+    def get_transformer_params(self) -> Dict[str, Any]:
+        """Get Transformer/TFT model parameters"""
+        return self.config.get('transformer', {})
+    
+    def get_xgboost_params(self) -> Dict[str, Any]:
+        """Get XGBoost model parameters"""
+        return self.config.get('xgboost', {})
+    
+    def get_sarimax_params(self) -> Dict[str, Any]:
+        """Get SARIMAX model parameters"""
+        return self.config.get('sarimax', {})
+    
+    def get_holt_winters_params(self) -> Dict[str, Any]:
+        """Get Holt-Winters model parameters"""
+        return self.config.get('holt_winters', {})
+    
+    def get_prophet_params(self) -> Dict[str, Any]:
+        """Get Prophet model parameters"""
+        return self.config.get('prophet', {})
+    
+    # =========================================================================
+    # MODEL CATEGORIES
+    # =========================================================================
+    
+    def get_global_training_models(self) -> List[str]:
+        """Get list of models that support global training"""
+        return self.config.get('model_categories', {}).get('global_training_models', [])
+    
+    def get_per_file_training_models(self) -> List[str]:
+        """Get list of models that require per-file training"""
+        return self.config.get('model_categories', {}).get('per_file_training_models', [])
+    
+    def get_ml_models(self) -> List[str]:
+        """Get list of machine learning models"""
+        return self.config.get('model_categories', {}).get('ml_models', [])
+    
+    def is_global_training_model(self, model_name: str) -> bool:
+        """Check if model supports global training"""
+        return model_name in self.get_global_training_models()
+    
+    def is_per_file_training_model(self, model_name: str) -> bool:
+        """Check if model requires per-file training"""
+        return model_name in self.get_per_file_training_models()
+    
+    def get_deterministic_models(self) -> List[str]:
+        """Get list of deterministic models (no need for multiple iterations)"""
+        return self.config.get('model_categories', {}).get('deterministic_models', [])
+    
+    def get_non_deterministic_models(self) -> List[str]:
+        """Get list of non-deterministic models (need multiple iterations)"""
+        return self.config.get('model_categories', {}).get('non_deterministic_models', [])
+    
+    def is_deterministic_model(self, model_name: str) -> bool:
+        """Check if model is deterministic"""
+        return model_name in self.get_deterministic_models()
+    
+    def is_non_deterministic_model(self, model_name: str) -> bool:
+        """Check if model is non-deterministic"""
+        return model_name in self.get_non_deterministic_models()
+    
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+    
+    def print_config_summary(self):
+        """Print a summary of prediction models configuration"""
+        print("="*70)
+        print("PREDICTION MODELS CONFIGURATION SUMMARY")
+        print("="*70)
+        
+        print("\n⚙️ Global Training Settings:")
+        print(f"  Validation split:      {self.get_validation_split()*100:.0f}%")
+        print(f"  Max epochs:            {self.get_max_epochs()}")
+        print(f"  Batch size:            {self.get_batch_size()}")
+        print(f"  Random seed:           {self.get_seed()}")
+        print(f"  Training iterations:   {self.get_training_iterations()} (for non-deterministic models)")
+        
+        print("\n⏱️ Early Stopping:")
+        print(f"  Enabled:   {self.get_early_stopping_enabled()}")
+        print(f"  Monitor:   {self.get_early_stopping_monitor()}")
+        print(f"  Patience:  {self.get_early_stopping_patience()}")
+        print(f"  Min delta: {self.get_early_stopping_min_delta()}")
+        
+        print("\n🌐 Global Training Models:")
+        for m in self.get_global_training_models():
+            print(f"  - {m}")
+        
+        print("\n📄 Per-File Training Models (statistical):")
+        for m in self.get_per_file_training_models():
+            print(f"  - {m}")
+        
+        print("\n🎲 Non-Deterministic Models (trained N times):")
+        for m in self.get_non_deterministic_models():
+            print(f"  - {m}")
+        
+        print("\n📐 Deterministic Models (trained once):")
+        for m in self.get_deterministic_models():
+            print(f"  - {m}")
+        
+        print("="*70)
+
+
+def load_config(config_path: str = "config/config.yaml") -> Config:
     """
-    Load configuration from file.
+    Load main configuration from file.
     
     Args:
         config_path: Path to configuration file
@@ -357,10 +566,28 @@ def load_config(config_path: str = "config.yaml") -> Config:
     return Config(config_path)
 
 
+def load_prediction_models_config(config_path: str = "config/prediction_models_config.yaml") -> PredictionModelsConfig:
+    """
+    Load prediction models configuration from file.
+    
+    Args:
+        config_path: Path to prediction models configuration file
+        
+    Returns:
+        PredictionModelsConfig object
+    """
+    return PredictionModelsConfig(config_path)
+
+
 if __name__ == "__main__":
     # Test configuration loading
     try:
         config = load_config()
         config.print_config_summary()
+        
+        print("\n")
+        
+        pred_config = load_prediction_models_config()
+        pred_config.print_config_summary()
     except Exception as e:
         print(f"Error loading configuration: {e}")

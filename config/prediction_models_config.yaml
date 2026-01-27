@@ -1,0 +1,286 @@
+# Prediction Models Configuration
+# Framework: uniTS-MissRecoPred
+#
+# This file contains training parameters for all prediction models.
+# Separate from main config.yaml for better organization.
+
+# ============================================================================
+# GLOBAL TRAINING SETTINGS
+# ============================================================================
+global_training:
+  # Train/Validation split ratio (0.0 to 1.0)
+  # Last X% of each time series used for validation during training
+  validation_split: 0.2  # 20% for validation, 80% for training
+  
+  # Base random seed for reproducibility
+  # Each iteration uses: seed + iteration_number
+  seed: 42
+  
+  # Maximum training epochs (for deep learning models)
+  max_epochs: 100
+  
+  # Batch size for training
+  batch_size: 32
+  
+  # Number of training iterations for non-deterministic models
+  # Each iteration trains a new model with different random seed
+  # Results from all iterations are saved for statistical analysis
+  training_iterations: 5
+
+# ============================================================================
+# EARLY STOPPING SETTINGS
+# ============================================================================
+early_stopping:
+  # Enable early stopping
+  enabled: true
+  
+  # Metric to monitor
+  monitor: "val_loss"
+  
+  # Number of epochs with no improvement to wait before stopping
+  patience: 10
+  
+  # Minimum change to qualify as improvement
+  min_delta: 0.001
+  
+  # Whether to print early stopping messages
+  verbose: false
+
+# ============================================================================
+# LSTM MODEL PARAMETERS
+# ============================================================================
+lstm:
+  # Input chunk length (lookback window)
+  input_chunk_length: 100
+  
+  # Hidden layer dimension
+  hidden_dim: 32
+  
+  # Number of LSTM layers
+  n_layers: 2
+  
+  # Dropout rate (0.0 to 1.0)
+  dropout: 0.1
+  
+  # Training length (for RNN models in Darts)
+  training_length: 24
+
+# ============================================================================
+# GRU MODEL PARAMETERS
+# ============================================================================
+gru:
+  # Input chunk length (lookback window)
+  input_chunk_length: 100
+  
+  # Hidden layer dimension
+  hidden_dim: 32
+  
+  # Number of GRU layers
+  n_layers: 2
+  
+  # Dropout rate
+  dropout: 0.1
+  
+  # Training length
+  training_length: 24
+
+# ============================================================================
+# DEEPAR MODEL PARAMETERS
+# ============================================================================
+deepar:
+  # Input chunk length (context length)
+  input_chunk_length: 100
+  
+  # Hidden layer dimension
+  hidden_dim: 40
+  
+  # Number of RNN layers
+  n_layers: 2
+  
+  # Dropout rate
+  dropout: 0.1
+  
+  # Training length
+  training_length: 24
+
+# ============================================================================
+# TCN (Temporal Convolutional Network) PARAMETERS
+# ============================================================================
+tcn:
+  # Input chunk length
+  input_chunk_length: 100
+  
+  # Output chunk length (how many steps to predict at once)
+  output_chunk_length: 10
+  
+  # Kernel size for convolutions
+  kernel_size: 3
+  
+  # Number of filters in each layer
+  num_filters: 64
+  
+  # Dilation base (exponential dilation)
+  dilation_base: 2
+  
+  # Dropout rate
+  dropout: 0.1
+
+# ============================================================================
+# N-BEATS MODEL PARAMETERS
+# ============================================================================
+nbeats:
+  # Input chunk length (lookback window)
+  input_chunk_length: 24
+  
+  # Output chunk length
+  output_chunk_length: 12
+  
+  # Use generic architecture (True) or interpretable (False)
+  generic_architecture: true
+  
+  # Number of stacks
+  num_stacks: 30
+  
+  # Number of blocks per stack
+  num_blocks: 1
+  
+  # Number of fully connected layers per block
+  num_layers: 4
+  
+  # Width of fully connected layers
+  layer_widths: 256
+  
+  # Expansion coefficient dimension
+  expansion_coefficient_dim: 5
+  
+  # Trend polynomial degree (for interpretable architecture)
+  trend_polynomial_degree: 2
+  
+  # Dropout rate
+  dropout: 0.1
+  
+  # Activation function
+  activation: "ReLU"
+
+# ============================================================================
+# TRANSFORMER (TFT) MODEL PARAMETERS
+# ============================================================================
+transformer:
+  # Input chunk length (encoder length)
+  input_chunk_length: 24
+  
+  # Output chunk length (decoder length)
+  output_chunk_length: 12
+  
+  # Hidden size
+  hidden_size: 64
+  
+  # Number of LSTM layers
+  lstm_layers: 1
+  
+  # Number of attention heads
+  num_attention_heads: 4
+  
+  # Dropout rate
+  dropout: 0.1
+  
+  # Add relative time index as feature
+  add_relative_index: true
+
+# ============================================================================
+# XGBOOST MODEL PARAMETERS
+# ============================================================================
+xgboost:
+  # Number of lag features to create
+  lags: 10
+  
+  # Number of boosting rounds (trees)
+  n_estimators: 100
+  
+  # Maximum depth of each tree
+  max_depth: 6
+  
+  # Learning rate (shrinkage)
+  learning_rate: 0.1
+
+# ============================================================================
+# STATISTICAL MODELS (per-file training, no global training)
+# ============================================================================
+
+# SARIMAX parameters
+sarimax:
+  # ARIMA order (p, d, q)
+  order: [1, 1, 1]
+  
+  # Seasonal order (P, D, Q, s)
+  seasonal_order: [1, 1, 1, 12]
+
+# Holt-Winters parameters
+holt_winters:
+  # Seasonal periods (for hourly data: 168 = 7 days * 24 hours)
+  seasonal_periods: 168
+  
+  # Trend type: "add", "mul", or null
+  trend: "add"
+  
+  # Seasonal type: "add", "mul", or null
+  seasonal: "add"
+
+# Prophet parameters
+prophet:
+  # Enable yearly seasonality detection
+  yearly_seasonality: false
+  
+  # Enable weekly seasonality detection
+  weekly_seasonality: false
+  
+  # Enable daily seasonality detection
+  daily_seasonality: false
+
+# ============================================================================
+# MODEL CATEGORIES
+# ============================================================================
+# This section defines which models support global training (trained once on
+# all data) vs per-file training (trained separately for each file)
+
+model_categories:
+  # Models that support global training (one model for all data)
+  # These are deep learning models from Darts library
+  global_training_models:
+    - lstm
+    - gru
+    - deepar
+    - tcn
+    - nbeats
+    - transformer
+    - tft
+  
+  # Models that require per-file training (statistical models)
+  # These must be trained separately for each time series
+  per_file_training_models:
+    - sarimax
+    - holt_winters
+    - prophet
+  
+  # Machine learning models (can be trained globally with lag features)
+  ml_models:
+    - xgboost
+  
+  # Deterministic models (always produce same output, no need for multiple iterations)
+  # These models are trained only ONCE regardless of training_iterations setting
+  deterministic_models:
+    - sarimax
+    - holt_winters
+    - prophet
+  
+  # Non-deterministic models (produce different outputs due to random initialization)
+  # These models are trained N times (training_iterations) for statistical analysis
+  non_deterministic_models:
+    - lstm
+    - gru
+    - deepar
+    - tcn
+    - nbeats
+    - transformer
+    - tft
+    - xgboost

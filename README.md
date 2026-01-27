@@ -93,7 +93,9 @@ uniTS-MissRecoPred/
 ├── 📁 .streamlit/                          # Streamlit configuration
 │   └── ⚙️ config.toml                         # Streamlit settings (file watching disabled)
 │
-├── ⚙️ config.yaml                          # Main configuration file
+├── 📁 config/                               # Configuration files
+│   ├── ⚙️ config.yaml                       # Main configuration file
+│   └── ⚙️ prediction_models_config.yaml     # Prediction models training parameters
 ├── 📝 Makefile                             # Make commands for easy pipeline execution
 ├── 📝 requirements.txt                     # Python dependencies
 ├── 📝 setup_venv.sh                        # Setup script (Linux/Mac)
@@ -191,7 +193,7 @@ If GPU monitoring is not needed, GPUtil can be skipped (performance metrics will
 
 ### 3. Configure Experiment
 
-Edit `config.yaml` to set:
+Edit `config/config.yaml` to set:
 - Datasets to use (auto-discovers all CSVs in `data/0_source_data/`)
 - Train/test split configuration (number of test samples)
 - Reconstruction models to test
@@ -216,7 +218,7 @@ make split             # Step 2: Split into train/test sets
 make degrade           # Step 3: Create degraded training datasets
 # OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
 make optimize          # Find optimal num_inference_steps and guidance_scale
-# Then update config.yaml with recommended values
+# Then update config/config.yaml with recommended values
 make reconstruct       # Step 4: Reconstruct missing values
 make calculate         # Step 5: Calculate MAD metric
 make visualize         # Step 6: Launch Streamlit dashboard
@@ -278,7 +280,7 @@ make clean-all      # Remove everything including results
 
 ## ⚙️ Configuration
 
-The framework uses `config.yaml` for all settings:
+The framework uses `config/config.yaml` for all settings:
 
 ```yaml
 # Data directories
@@ -371,7 +373,7 @@ timestamp,value
 *   **Separators**: Use comma `,` as separator and dot `.` as decimal point.
 *   **Cleanliness**: Although `1_clean_datasets.py` attempts to fix issues, provide clean data to avoid ambiguity.
 *   **Length**: For Stable Diffusion models, ensure sufficient length (e.g., > 100 points) for meaningful patterns.
-*   **Test samples**: Ensure your time series has more samples than `test_samples` configured in config.yaml.
+*   **Test samples**: Ensure your time series has more samples than `test_samples` configured in config/config.yaml.
 
 ## 🔄 Workflow
 
@@ -392,7 +394,7 @@ This framework follows a strict data pipeline where each script transforms data 
 *   **📤 OUTPUT**: Split CSV files in `data/2_splitted_data/`
     *   `train/` - Training data (all but last N samples) - used for reconstruction experiments
     *   `test/` - Test data (last N samples) - preserved for prediction evaluation
-*   **Note**: N is configured via `split.test_samples` in config.yaml
+*   **Note**: N is configured via `split.test_samples` in config/config.yaml
 
 #### 3. Degradation (Introduction of Missing Data)
 *   **Script**: `src/3_degrade_datasets.py`
@@ -562,7 +564,7 @@ python src/2_create_split.py --test-samples 200
 python src/3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
 
 # Use custom config
-python src/3_degrade_datasets.py --config my_config.yaml
+python src/3_degrade_datasets.py --config config/my_config.yaml
 
 # Override config parameters
 python src/3_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
@@ -571,7 +573,7 @@ python src/3_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iteration
 python src/4_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
-python src/5_calculate_mad.py --config my_config.yaml
+python src/5_calculate_mad.py --config config/my_config.yaml
 ```
 
 **Quick test with Makefile** (limited data for fast testing):
@@ -900,7 +902,7 @@ The framework uses a **temporal split** for train/test data:
 - Require NVIDIA GPU with 8+ GB VRAM
 - First run downloads ~20GB model from HuggingFace
 - Cached for subsequent runs
-- Can be excluded in `config.yaml` if no GPU available
+- Can be excluded in `config/config.yaml` if no GPU available
 
 **Safety Checker**: The framework disables Stable Diffusion's safety checker (`safety_checker=None`) because:
 - We're processing **technical time series data**, not generating public images

@@ -61,6 +61,7 @@ hyperparameter_optimization/*.csv
 hyperparameter_optimization/*.txt
 
 # Keep directory structure (only .gitkeep files)
+!config/.gitkeep
 !data/0_source_data/.gitkeep
 !data/1_cleaned_data/.gitkeep
 !data/2_splitted_data/.gitkeep

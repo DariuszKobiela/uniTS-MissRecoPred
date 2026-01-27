@@ -188,7 +188,7 @@ def main():
     parser.add_argument(
         '--input-dir',
         type=str,
-        help='Input directory containing raw datasets (default: from config.yaml)'
+        help='Input directory containing raw datasets (default: from config/config.yaml)'
     )
     parser.add_argument(
         '--output-dir',
