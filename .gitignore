@@ -57,6 +57,7 @@ reconstruction_experiments_results/performance_metrics/*.csv
 prediction_experiment_results/*.csv
 prediction_experiment_results/predictions/*.csv
 prediction_experiment_results/performance_metrics/*.csv
+prediction_experiment_results/prediction_results_*.csv
 hyperparameter_optimization/*.csv
 hyperparameter_optimization/*.txt
 

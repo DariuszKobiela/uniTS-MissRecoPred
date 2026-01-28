@@ -1,4 +1,4 @@
-.PHONY: help setup install clean-datasets split degrade optimize reconstruct calculate predict visualize pipeline pipeline-full clean clean-all test
+.PHONY: help setup install clean-datasets split degrade optimize reconstruct calculate predict calculate-prediction visualize visualize-prediction pipeline pipeline-full clean clean-all test
 
 # Default target
 help:
@@ -19,12 +19,14 @@ help:
 	@echo "  make optimize-quick  - Optional: Quick optimization test"
 	@echo "  make reconstruct     - Step 4: Reconstruct missing values"
 	@echo "  make calculate       - Step 5: Calculate MAD metrics"
-	@echo "  make predict         - Step 7: Predict future values"
-	@echo "  make visualize       - Step 6: Launch Streamlit dashboard"
+	@echo "  make predict               - Step 7: Predict future values"
+	@echo "  make calculate-prediction  - Step 8: Calculate prediction error (MAPE)"
+	@echo "  make visualize             - Step 6: Launch reconstruction dashboard"
+	@echo "  make visualize-prediction  - Step 9: Launch prediction dashboard"
 	@echo ""
 	@echo "Full pipelines:"
 	@echo "  make pipeline        - Reconstruction pipeline (steps 1-5)"
-	@echo "  make pipeline-full   - Full pipeline including prediction (steps 1-5, 7)"
+	@echo "  make pipeline-full   - Full pipeline including prediction (steps 1-5, 7-8)"
 	@echo ""
 	@echo "Cleanup commands:"
 	@echo "  make clean       - Remove generated datasets (keep results)"
@@ -104,13 +106,21 @@ calculate:
 	experiment/bin/python src/5_calculate_mad.py
 	@echo "✓ MAD calculation complete"
 
-# Step 6: Visualize results
+# Step 6: Visualize reconstruction results
 visualize:
 	@echo "==================================================================="
-	@echo "Step 6: Launching Streamlit dashboard"
+	@echo "Step 6: Launching Reconstruction Streamlit dashboard"
 	@echo "==================================================================="
 	@echo "Dashboard will open at http://localhost:8501"
 	experiment/bin/streamlit run src/6_visualize_mad_comparison.py
+
+# Step 9: Visualize prediction results
+visualize-prediction:
+	@echo "==================================================================="
+	@echo "Step 9: Launching Prediction Streamlit dashboard"
+	@echo "==================================================================="
+	@echo "Dashboard will open at http://localhost:8501"
+	experiment/bin/streamlit run src/9_visualize_prediction.py
 
 # Step 7: Predict future values
 predict:
@@ -121,6 +131,14 @@ predict:
 	experiment/bin/python src/7_predict_datasets.py
 	@echo "✓ Prediction complete"
 
+# Step 8: Calculate prediction error (MAPE)
+calculate-prediction:
+	@echo "==================================================================="
+	@echo "Step 8: Calculating prediction error (MAPE)"
+	@echo "==================================================================="
+	experiment/bin/python src/8_calculate_prediction_error.py
+	@echo "✓ Prediction error calculation complete"
+
 # Run reconstruction pipeline (steps 1-5)
 pipeline: clean-datasets split degrade reconstruct calculate
 	@echo "==================================================================="
@@ -130,8 +148,8 @@ pipeline: clean-datasets split degrade reconstruct calculate
 	@echo "Run 'make visualize' to view results in dashboard"
 	@echo "Run 'make predict' to run prediction on reconstructed data"
 
-# Run full pipeline including prediction (steps 1-5, 7)
-pipeline-full: clean-datasets split degrade reconstruct calculate predict
+# Run full pipeline including prediction (steps 1-5, 7-8)
+pipeline-full: clean-datasets split degrade reconstruct calculate predict calculate-prediction
 	@echo "==================================================================="
 	@echo "✓ FULL PIPELINE COMPLETE"
 	@echo "==================================================================="
@@ -176,5 +194,6 @@ test:
 # Quick prediction test
 test-predict:
 	@echo "Running quick prediction test..."
-	experiment/bin/python src/7_predict_datasets.py --models holt_winters xgboost
+	experiment/bin/python src/7_predict_datasets.py --models holt_winters xgboost --iterations 1
+	experiment/bin/python src/8_calculate_prediction_error.py
 	@echo "✓ Quick prediction test complete"

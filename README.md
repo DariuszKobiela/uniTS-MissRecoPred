@@ -55,6 +55,9 @@ uniTS-MissRecoPred/
 │   ├── 🐍 4_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
 │   ├── 🐍 5_calculate_mad.py               # [MAIN] Calculate MAD metric
 │   ├── 🐍 6_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
+│   ├── 🐍 7_predict_datasets.py            # [MAIN] Predict future values
+│   ├── 🐍 8_calculate_prediction_error.py  # [MAIN] Calculate prediction MAPE
+│   ├── 🐍 9_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
 │   │
 │   ├── 📁 utils/                           # Utility modules
 │   │   ├── 🐍 config_loader.py                # Configuration manager
@@ -71,6 +74,18 @@ uniTS-MissRecoPred/
 │   │   ├── 🐍 sarimax.py                      # SARIMA with Kalman smoothing
 │   │   └── 🐍 stable_diffusion_2_*.py         # Stable Diffusion 2 (GAF, MTF, RP, Spectrogram)
 │   │
+│   ├── 📁 prediction_models/               # 11 prediction models
+│   │   ├── 🐍 holt_winters.py                 # Holt-Winters Exponential Smoothing
+│   │   ├── 🐍 prophet.py                      # Facebook Prophet
+│   │   ├── 🐍 sarimax.py                      # SARIMAX forecasting
+│   │   ├── 🐍 xgboost.py                      # XGBoost with lag features
+│   │   ├── 🐍 lstm.py                         # LSTM neural network
+│   │   ├── 🐍 gru.py                          # GRU neural network
+│   │   ├── 🐍 deepar.py                       # DeepAR probabilistic forecasting
+│   │   ├── 🐍 tcn.py                          # Temporal Convolutional Network
+│   │   ├── 🐍 nbeats.py                       # N-BEATS architecture
+│   │   └── 🐍 transformer.py                  # Temporal Fusion Transformer
+│   │
 │   └── 📁 missingness_techniques/          # Missingness patterns
 │       ├── 🐍 mcar.py                         # Missing Completely At Random
 │       ├── 🐍 mar.py                          # Missing At Random
@@ -85,10 +100,17 @@ uniTS-MissRecoPred/
 │   ├── 📁 3_missing_data/                  # Degraded training datasets (generated)
 │   └── 📁 4_fixed_data/                    # Reconstructed training datasets (generated)
 │
-├── 📁 reconstruction_experiments_results/                 # Experiment results
+├── 📁 reconstruction_experiments_results/  # Reconstruction experiment results
 │   ├── 📝 reconstruction_results_*.csv        # MAD + performance metrics (merged)
-│   └── 📁 performance_metrics/             # Performance metrics archive
+│   └── 📁 performance_metrics/                # Performance metrics archive
 │       └── 📝 performance_metrics_*.csv       # Individual performance logs
+│
+├── 📁 prediction_experiment_results/       # Prediction experiment results
+│   ├── 📝 prediction_results_*.csv            # MAPE + performance metrics (merged)
+│   ├── 📁 predictions/                        # Prediction output files
+│   │   └── 📝 {dataset}_{model}_iter{N}.csv   # Individual predictions per iteration
+│   └── 📁 performance_metrics/                # Prediction performance logs
+│       └── 📝 prediction_metrics_*.csv        # Timing, CPU, RAM usage
 │
 ├── 📁 .streamlit/                          # Streamlit configuration
 │   └── ⚙️ config.toml                         # Streamlit settings (file watching disabled)
@@ -221,7 +243,10 @@ make optimize          # Find optimal num_inference_steps and guidance_scale
 # Then update config/config.yaml with recommended values
 make reconstruct       # Step 4: Reconstruct missing values
 make calculate         # Step 5: Calculate MAD metric
-make visualize         # Step 6: Launch Streamlit dashboard
+make visualize             # Step 6: Launch reconstruction dashboard
+make predict               # Step 7: Predict future values (optional)
+make calculate-prediction  # Step 8: Calculate prediction error (MAPE)
+make visualize-prediction  # Step 9: Launch prediction dashboard
 
 
 ```
@@ -236,6 +261,9 @@ python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable D
 python src/4_reconstruct_datasets.py  # Reconstruct missing values
 python src/5_calculate_mad.py         # Calculate MAD metric
 streamlit run src/6_visualize_mad_comparison.py  # Visualize results
+python src/7_predict_datasets.py      # Predict future values (optional)
+python src/8_calculate_prediction_error.py  # Calculate prediction MAPE
+streamlit run src/9_visualize_prediction.py  # Visualize prediction results
 ```
 
 **💡 Tip**: For long-running experiments, use `tmux` to keep processes running in background:
@@ -268,7 +296,8 @@ make setup          # Create virtual environment
 make install        # Install dependencies
 
 # Full workflow
-make pipeline       # Run steps 1-5 automatically
+make pipeline       # Run reconstruction pipeline (steps 1-5)
+make pipeline-full  # Run full pipeline including prediction (steps 1-5, 7)
 make visualize      # View results
 
 # Cleanup
@@ -340,6 +369,45 @@ The framework supports **parallel processing** for faster experiments:
 - **`n_jobs: 1`** - Sequential processing (disable parallelization)
 
 **Smart GPU Detection**: GPU models (Stable Diffusion) automatically run sequentially even when `n_jobs > 1`, preventing GPU memory conflicts.
+
+### Prediction Models Configuration
+
+The framework uses a separate `config/prediction_models_config.yaml` for prediction model settings:
+
+```yaml
+# Global training settings
+global_training:
+  validation_split: 0.2       # 80% train, 20% validation
+  seed: 42                    # Base random seed
+  max_epochs: 100             # Maximum training epochs
+  batch_size: 32              # Training batch size
+  training_iterations: 5      # N iterations for non-deterministic models
+
+# Early stopping
+early_stopping:
+  enabled: true
+  patience: 10
+  min_delta: 0.001
+
+# Model-specific parameters (lstm, gru, tcn, nbeats, transformer, xgboost, etc.)
+lstm:
+  input_chunk_length: 100
+  hidden_dim: 32
+  n_layers: 2
+
+# Model categories
+model_categories:
+  global_training_models:      # Trained ONCE on ALL data (deep learning)
+    - lstm, gru, deepar, tcn, nbeats, transformer
+  per_file_training_models:    # Trained separately per file (statistical)
+    - sarimax, holt_winters, prophet
+  deterministic_models:        # Always same output, 1 iteration
+    - sarimax, holt_winters, prophet
+  non_deterministic_models:    # Random init, N iterations for statistics
+    - lstm, gru, deepar, tcn, nbeats, transformer, xgboost
+```
+
+**Training Iterations**: Non-deterministic models (deep learning, XGBoost) are trained N times with different random seeds for statistical analysis. Deterministic models (SARIMAX, Holt-Winters, Prophet) are trained only once.
 
 **Example speedup** (4 cores):
 - 72 degradations: 10 min → 3 min
@@ -424,6 +492,45 @@ This framework follows a strict data pipeline where each script transforms data 
 *   **📥 INPUT**: Results CSV from `reconstruction_experiments_results/`
 *   **📤 OUTPUT**: Interactive Streamlit Dashboard (Web Interface).
 
+#### 7. Prediction
+*   **Script**: `src/7_predict_datasets.py`
+*   **📥 INPUT**: 
+    1.  **Training Data** from `data/2_splitted_data/train/` (original) and/or
+    2.  **Reconstructed Data** from `data/4_fixed_data/` (reconstructed training data)
+*   **📤 OUTPUT**: Prediction files in `prediction_experiment_results/predictions/`
+    *   *Format*: `{dataset}_{model}_iter{N}.csv` (for non-deterministic models)
+    *   *Format*: `{dataset}_{model}.csv` (for deterministic models)
+    *   *Content*: `predicted` column with forecasted values, `iteration` column for statistical analysis
+*   **📝 METRICS OUTPUT**: `prediction_experiment_results/performance_metrics/*.csv`
+*   **🔄 TRAINING**:
+    *   **Global training** (deep learning): One model trained on ALL data, then predicts for each file
+    *   **Per-file training** (statistical): Separate model trained for each file
+    *   **N iterations** (non-deterministic): Models trained N times with different seeds for statistical analysis
+
+#### 8. Prediction Error Evaluation
+*   **Script**: `src/8_calculate_prediction_error.py`
+*   **📥 INPUT**: 
+    1.  **Predictions** from `prediction_experiment_results/predictions/`
+    2.  **Test Data (Ground Truth)** from `data/2_splitted_data/test/`
+*   **📤 OUTPUT**: `prediction_experiment_results/prediction_results_*.csv`
+    *   *Content*: MAPE, MAE, RMSE, and performance metrics for every prediction
+*   **📊 METRICS**:
+    *   **MAPE** - Mean Absolute Percentage Error (%)
+    *   **MAE** - Mean Absolute Error
+    *   **RMSE** - Root Mean Square Error
+
+#### 9. Prediction Visualization (Optional)
+*   **Script**: `src/9_visualize_prediction.py`
+*   **📥 INPUT**: `prediction_experiment_results/prediction_results_*.csv`
+*   **📤 OUTPUT**: Interactive Streamlit dashboard at `http://localhost:8501`
+*   **📊 FEATURES**:
+    *   MAPE comparison by prediction model, source type, reconstruction model
+    *   Heatmaps: prediction model vs reconstruction model, prediction model vs technique
+    *   Statistical significance tests (pairwise t-tests)
+    *   Iteration variance analysis (for non-deterministic models)
+    *   Performance metrics visualization
+    *   Best/worst model rankings
+
 ---
 
 ```mermaid
@@ -436,7 +543,12 @@ graph TD
     F -->|4_reconstruct_datasets.py| G[data/4_fixed_data]
     G -->|5_calculate_mad.py| H[reconstruction_experiments_results]
     D -->|Ground Truth| H
-    H -->|6_visualize...| I[Streamlit Dashboard]
+    H -->|6_visualize...| I[Reconstruction Dashboard]
+    D -->|7_predict_datasets.py| J[predictions/]
+    G -->|7_predict_datasets.py| J
+    J -->|8_calculate_prediction_error.py| K[prediction_experiment_results]
+    E -->|Ground Truth for MAPE| K
+    K -->|9_visualize_prediction.py| L[Prediction Dashboard]
 ```
 
 ## 📊 Output Files
@@ -574,6 +686,12 @@ python src/4_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
 python src/5_calculate_mad.py --config config/my_config.yaml
+
+# Prediction with specific models
+python src/7_predict_datasets.py --models holt_winters lstm xgboost
+
+# Override number of training iterations
+python src/7_predict_datasets.py --iterations 10
 ```
 
 **Quick test with Makefile** (limited data for fast testing):
@@ -644,6 +762,33 @@ python src/optimization/optimize_sd_hyperparams.py \
 - **MCAR** (Missing Completely At Random): Random uniform distribution
 - **MAR** (Missing At Random): Probability depends on deviation from median
 - **MNAR** (Missing Not At Random): Probability increases over time (sensor degradation)
+
+### Available Prediction Models
+
+#### Statistical Models (Deterministic, Per-File Training)
+- `holt_winters` - Holt-Winters Exponential Smoothing (trend + seasonality)
+- `prophet` - Facebook Prophet (Bayesian, automatic seasonality detection)
+- `sarimax` - SARIMAX (Seasonal ARIMA with configurable order)
+
+#### Machine Learning Models (Non-Deterministic, Global Training)
+- `xgboost` - XGBoost with recursive forecasting using lag features
+
+#### Deep Learning Models (Non-Deterministic, Global Training)
+- `lstm` - Long Short-Term Memory network
+- `gru` - Gated Recurrent Unit network
+- `deepar` - DeepAR probabilistic forecasting (Amazon)
+- `tcn` - Temporal Convolutional Network
+- `nbeats` - N-BEATS (Neural Basis Expansion Analysis)
+- `transformer` - Temporal Fusion Transformer (TFT)
+
+**Training Strategies:**
+- **Global Training** (LSTM, GRU, DeepAR, TCN, N-BEATS, Transformer, XGBoost): Train ONE model on ALL data (original + reconstructed), then use for prediction on each file
+- **Per-File Training** (SARIMAX, Holt-Winters, Prophet): Train separate model for each file (statistical models don't support multi-series training)
+
+**Statistical Iterations:**
+- Non-deterministic models are trained N times (default: 5) with different random seeds
+- Each iteration produces separate predictions for statistical analysis (mean, std, confidence intervals)
+- Deterministic models produce identical results, so only 1 iteration is performed
 
 ## 📈 Visualization
 
