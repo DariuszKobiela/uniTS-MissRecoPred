@@ -26,6 +26,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import config loader
 from utils.config_loader import load_config
+from utils.logger import setup_logging
+
+# Setup automatic logging to file
+setup_logging("9_calculate_prediction_error")
 
 
 def load_performance_metrics(results_dir: str) -> dict:

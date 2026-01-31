@@ -33,7 +33,8 @@ class PerformanceMonitor:
             gpus = GPUtil.getGPUs()
             if gpus:
                 self.gpu_available = True
-        except ImportError:
+        except Exception:
+            # Handle import errors, NVML failures, driver mismatches, etc.
             pass
     
     def start(self):

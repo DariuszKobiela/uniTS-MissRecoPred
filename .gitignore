@@ -58,6 +58,20 @@ prediction_experiment_results/*.csv
 prediction_experiment_results/predictions/*.csv
 prediction_experiment_results/performance_metrics/*.csv
 prediction_experiment_results/prediction_results_*.csv
+prediction_experiment_results/training_metrics_*.csv
+
+# Trained prediction models - ignore model files
+trained_prediction_models/*.pt
+trained_prediction_models/*.pkl
+trained_prediction_models/*.ckpt
+trained_prediction_models/**/*.ckpt
+!trained_prediction_models/.gitkeep
+
+# UV lock file
+uv.lock
+
+# Checkpoint files
+*.ckpt
 hyperparameter_optimization/*.csv
 hyperparameter_optimization/*.txt
 

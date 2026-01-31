@@ -23,7 +23,7 @@ split:
   # Number of last samples to use as test set for each time series
   # The remaining samples go to training set
   # This temporal split preserves time series structure for prediction tasks
-  test_samples: 100  # Last 100 samples for test, rest for training
+  test_samples: 30  # Last 100 samples for test, rest for training
 
 # ============================================================================
 # DATASETS
@@ -52,7 +52,7 @@ reconstruction_models:
   #   - "interpolate_cubic"
   #   - "knn"
   
-  selected: []  # Empty = use all available models
+  selected: ["impute_mean", "interpolate_linear"]  # Empty = use all available models
   
   # You can also exclude specific models:
   excluded:
@@ -102,7 +102,7 @@ missingness_techniques:
   #   - "MCAR"
   #   - "MAR"
   
-  selected: []  # Empty = use all available techniques
+  selected: ["MCAR", "MAR"]  # Empty = use all available techniques
   
   # Available techniques (auto-discovered from missingness_techniques/):
   # - MCAR (Missing Completely At Random)
@@ -115,22 +115,11 @@ missingness_techniques:
 missingness_rates:
   # Fractions of data to remove (0.0 to 1.0)
   rates:
-  - 0.01   # 1%
   - 0.05   # 5%
   - 0.10   # 10%
-  - 0.20   # 20%
-  - 0.30   # 30%
-  - 0.40   # 40%
-  - 0.50   # 50%
-  - 0.60   # 60%
-  - 0.70   # 70%
-  - 0.80   # 80%
-  - 0.90   # 90%
-  - 0.95   # 95%
-  - 0.99   # 99%
 
   # Number of iterations (different random patterns per configuration)
-  iterations: 10
+  iterations: 3
   
   # Random seed for reproducibility
   seed: 42

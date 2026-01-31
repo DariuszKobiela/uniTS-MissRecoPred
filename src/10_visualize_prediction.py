@@ -38,6 +38,27 @@ def get_available_results() -> list:
     return sorted(results_dir.glob("prediction_results_*.csv"), reverse=True)
 
 
+def get_available_training_metrics() -> list:
+    """Get list of available training metrics files"""
+    results_dir = Path("prediction_experiment_results")
+    if not results_dir.exists():
+        return []
+    
+    return sorted(results_dir.glob("training_metrics_*.csv"), reverse=True)
+
+
+def load_training_metrics() -> pd.DataFrame:
+    """Load the most recent training metrics file"""
+    files = get_available_training_metrics()
+    if not files:
+        return pd.DataFrame()
+    
+    try:
+        return pd.read_csv(files[0])
+    except Exception:
+        return pd.DataFrame()
+
+
 def plot_mape_by_model(df: pd.DataFrame, source_type: str = None, technique: str = None):
     """Plot MAPE comparison by prediction model"""
     df_filtered = df.copy()
@@ -583,8 +604,11 @@ def main():
     
     st.markdown("---")
     
+    # Load training metrics for new tabs
+    df_training = load_training_metrics()
+    
     # Visualization tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
         "📊 By Pred Model", 
         "🎯 By Source Type",
         "🔧 By Recon Model",
@@ -596,8 +620,10 @@ def main():
         "📊 Statistical Tests",
         "🏆 Best/Worst",
         "🔄 Iteration Analysis",
-        "⏱️ Computation Time",
+        "⏱️ Prediction Time",
         "💻 Resource Usage",
+        "🎓 Training Time",
+        "⏱️ Total Time",
         "📋 Raw Data"
     ])
     
@@ -1228,6 +1254,159 @@ def main():
                 st.plotly_chart(fig, use_container_width=True)
     
     with tab14:
+        st.header("🎓 Training Time Analysis")
+        st.caption("Time spent training prediction models (from 7_train_prediction_models.py)")
+        
+        if df_training.empty:
+            st.warning("⚠️ No training metrics available.")
+            st.info("Run `make train-models` first to collect training metrics.")
+        else:
+            st.success(f"✅ Loaded training metrics: {len(df_training)} records")
+            
+            # Filter out errors
+            df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
+            
+            if df_train_valid.empty:
+                st.warning("No valid training data")
+            else:
+                # Summary
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Training Time", f"{df_train_valid['time_seconds'].sum():.1f}s")
+                with col2:
+                    st.metric("Avg per Model", f"{df_train_valid['time_seconds'].mean():.2f}s")
+                with col3:
+                    st.metric("Fastest", f"{df_train_valid['time_seconds'].min():.2f}s")
+                with col4:
+                    st.metric("Slowest", f"{df_train_valid['time_seconds'].max():.2f}s")
+                
+                st.markdown("---")
+                
+                # Training time by model
+                st.subheader("Training Time by Model")
+                model_time = df_train_valid.groupby('model')['time_seconds'].agg(['mean', 'std', 'sum', 'count']).reset_index()
+                model_time = model_time.sort_values('mean', ascending=False)
+                
+                fig = px.bar(
+                    model_time,
+                    x='mean',
+                    y='model',
+                    orientation='h',
+                    error_x='std',
+                    title="Average Training Time by Model (with std dev)",
+                    labels={'mean': 'Avg Training Time (seconds)', 'model': 'Model'},
+                    color='mean',
+                    color_continuous_scale='Reds'
+                )
+                fig.update_layout(height=max(400, len(model_time) * 40), showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Training time by iteration
+                if 'iteration' in df_train_valid.columns and df_train_valid['iteration'].nunique() > 1:
+                    st.subheader("Training Time by Iteration")
+                    iter_time = df_train_valid.groupby(['model', 'iteration'])['time_seconds'].mean().reset_index()
+                    
+                    fig = px.line(
+                        iter_time,
+                        x='iteration',
+                        y='time_seconds',
+                        color='model',
+                        markers=True,
+                        title="Training Time per Iteration",
+                        labels={'time_seconds': 'Time (seconds)', 'iteration': 'Iteration'}
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Detailed table
+                st.subheader("Detailed Training Statistics")
+                model_time.columns = ['Model', 'Avg Time (s)', 'Std', 'Total Time (s)', 'Iterations']
+                st.dataframe(model_time.style.format({
+                    'Avg Time (s)': '{:.2f}',
+                    'Std': '{:.2f}',
+                    'Total Time (s)': '{:.2f}',
+                    'Iterations': '{:.0f}'
+                }), use_container_width=True)
+    
+    with tab15:
+        st.header("⏱️ Total Time Analysis (Training + Prediction)")
+        st.caption("Combined time: model training + prediction on all files")
+        
+        if df_training.empty:
+            st.warning("⚠️ No training metrics available.")
+        elif 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
+            st.warning("⚠️ No prediction metrics available.")
+        else:
+            # Calculate totals per model
+            df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
+            df_pred_valid = df_filtered[df_filtered['time_seconds'].notna()].copy()
+            
+            if df_train_valid.empty or df_pred_valid.empty:
+                st.warning("Insufficient data for analysis")
+            else:
+                # Aggregate training time by model
+                train_totals = df_train_valid.groupby('model')['time_seconds'].sum().reset_index()
+                train_totals.columns = ['model', 'training_time']
+                
+                # Aggregate prediction time by model
+                pred_totals = df_pred_valid.groupby('prediction_model')['time_seconds'].sum().reset_index()
+                pred_totals.columns = ['model', 'prediction_time']
+                
+                # Merge
+                total_times = train_totals.merge(pred_totals, on='model', how='outer').fillna(0)
+                total_times['total_time'] = total_times['training_time'] + total_times['prediction_time']
+                total_times = total_times.sort_values('total_time', ascending=False)
+                
+                # Summary
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Training", f"{total_times['training_time'].sum():.1f}s")
+                with col2:
+                    st.metric("Total Prediction", f"{total_times['prediction_time'].sum():.1f}s")
+                with col3:
+                    st.metric("Grand Total", f"{total_times['total_time'].sum():.1f}s")
+                
+                st.markdown("---")
+                
+                # Stacked bar chart
+                st.subheader("Training vs Prediction Time by Model")
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    y=total_times['model'],
+                    x=total_times['training_time'],
+                    name='Training',
+                    orientation='h',
+                    marker_color='#3498db'
+                ))
+                fig.add_trace(go.Bar(
+                    y=total_times['model'],
+                    x=total_times['prediction_time'],
+                    name='Prediction',
+                    orientation='h',
+                    marker_color='#e74c3c'
+                ))
+                
+                fig.update_layout(
+                    barmode='stack',
+                    title='Total Time by Model (Training + Prediction)',
+                    xaxis_title='Time (seconds)',
+                    yaxis_title='Model',
+                    height=max(400, len(total_times) * 40),
+                    legend=dict(orientation='h', yanchor='bottom', y=1.02)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Detailed table
+                st.subheader("Detailed Time Breakdown")
+                display_df = total_times.copy()
+                display_df.columns = ['Model', 'Training (s)', 'Prediction (s)', 'Total (s)']
+                st.dataframe(display_df.style.format({
+                    'Training (s)': '{:.2f}',
+                    'Prediction (s)': '{:.2f}',
+                    'Total (s)': '{:.2f}'
+                }), use_container_width=True)
+    
+    with tab16:
         st.header("Raw Data")
         
         # Search functionality

@@ -1,0 +1,68 @@
+[project]
+name = "units-missrecopred"
+version = "1.0.0"
+description = "Time Series Reconstruction & Prediction Framework - Testing how reconstructed time series data performs in prediction tasks"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+
+dependencies = [
+    # Core dependencies
+    "pandas>=2.3.3",
+    "pyarrow>=18.1.0",
+    "PyYAML>=6.0.3",
+    
+    # Machine Learning
+    "scikit-learn>=1.8.0",
+    "statsmodels>=0.14.6",
+    
+    # Deep Learning (for Stable Diffusion 2 and prediction models)
+    "torch>=2.6.0",
+    "diffusers>=0.36.0",
+    "transformers>=4.57.3",
+    "accelerate>=1.12.0",
+    
+    # Time Series Prediction (Darts)
+    "darts>=0.31.0",
+    "xgboost>=2.1.0",
+    "prophet>=1.1.6",
+    
+    # Force newer versions for Python 3.12 compatibility
+    "numba>=0.60.0",
+    "llvmlite>=0.43.0",
+    
+    # Visualization
+    "streamlit>=1.52.2",
+    "plotly>=6.5.0",
+    "matplotlib>=3.10.8",
+    
+    # Performance monitoring
+    "GPUtil>=1.4.0",
+    
+    # Hyperparameter optimization
+    "optuna>=4.1.0",
+    
+    # Statistical tests
+    "scipy>=1.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

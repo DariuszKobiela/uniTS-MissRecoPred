@@ -25,7 +25,7 @@ global_training:
   # Number of training iterations for non-deterministic models
   # Each iteration trains a new model with different random seed
   # Results from all iterations are saved for statistical analysis
-  training_iterations: 5
+  training_iterations: 3
 
 # ============================================================================
 # EARLY STOPPING SETTINGS
@@ -51,7 +51,8 @@ early_stopping:
 # ============================================================================
 lstm:
   # Input chunk length (lookback window)
-  input_chunk_length: 100
+  # Must be <= shortest series length in training data
+  input_chunk_length: 24
   
   # Hidden layer dimension
   hidden_dim: 32
@@ -63,14 +64,15 @@ lstm:
   dropout: 0.1
   
   # Training length (for RNN models in Darts)
-  training_length: 24
+  # Must be >= input_chunk_length
+  training_length: 30
 
 # ============================================================================
 # GRU MODEL PARAMETERS
 # ============================================================================
 gru:
   # Input chunk length (lookback window)
-  input_chunk_length: 100
+  input_chunk_length: 24
   
   # Hidden layer dimension
   hidden_dim: 32
@@ -81,15 +83,15 @@ gru:
   # Dropout rate
   dropout: 0.1
   
-  # Training length
-  training_length: 24
+  # Training length (must be >= input_chunk_length)
+  training_length: 30
 
 # ============================================================================
 # DEEPAR MODEL PARAMETERS
 # ============================================================================
 deepar:
   # Input chunk length (context length)
-  input_chunk_length: 100
+  input_chunk_length: 24
   
   # Hidden layer dimension
   hidden_dim: 40
@@ -100,18 +102,19 @@ deepar:
   # Dropout rate
   dropout: 0.1
   
-  # Training length
-  training_length: 24
+  # Training length (must be >= input_chunk_length)
+  training_length: 30
 
 # ============================================================================
 # TCN (Temporal Convolutional Network) PARAMETERS
 # ============================================================================
 tcn:
   # Input chunk length
-  input_chunk_length: 100
+  # input + output + 1 must be <= shortest series length
+  input_chunk_length: 20
   
   # Output chunk length (how many steps to predict at once)
-  output_chunk_length: 10
+  output_chunk_length: 6
   
   # Kernel size for convolutions
   kernel_size: 3

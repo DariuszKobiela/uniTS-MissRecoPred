@@ -1,28 +1,31 @@
 # Core dependencies
-pandas==2.3.3
-pyarrow==18.1.0  # Pre-built wheels available, avoids CMake build issues
-PyYAML==6.0.3
+pandas>=2.3.3
+pyarrow>=18.1.0  # Pre-built wheels available, avoids CMake build issues
+PyYAML>=6.0.3
+scipy>=1.14.0
 
 # Machine Learning
-scikit-learn==1.8.0
-statsmodels==0.14.6
+scikit-learn>=1.8.0
+statsmodels>=0.14.6
 
 # Deep Learning (for Stable Diffusion 2)
-torch==2.6.0 ## 2.9.1
-diffusers==0.36.0
-transformers==4.57.3
-accelerate==1.12.0
+torch>=2.6.0
+diffusers>=0.36.0
+transformers>=4.57.3
+accelerate>=1.12.0
 
-# Image processing
-
+# Time Series Prediction
+darts>=0.31.0
+xgboost>=2.1.0
+prophet>=1.1.6
 
 # Visualization
-streamlit==1.52.2
-plotly==6.5.0
-matplotlib==3.10.8
+streamlit>=1.52.2
+plotly>=6.5.0
+matplotlib>=3.10.8
 
 # Performance monitoring
-GPUtil==1.4.0
+GPUtil>=1.4.0
 
 # Hyperparameter optimization
-optuna==4.1.0 
+optuna>=4.1.0

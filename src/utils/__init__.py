@@ -13,6 +13,7 @@ from .performance_metrics import (
     format_metrics,
     is_gpu_model
 )
+from .logger import setup_logging
 
 __all__ = [
     'load_config',
@@ -20,6 +21,7 @@ __all__ = [
     'PerformanceMonitor',
     'monitor_performance',
     'format_metrics',
-    'is_gpu_model'
+    'is_gpu_model',
+    'setup_logging'
 ]
 
