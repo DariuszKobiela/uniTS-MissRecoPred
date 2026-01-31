@@ -38,50 +38,22 @@ class TeeOutput:
     
     def _should_log(self, message: str) -> bool:
         """Check if message should be written to log file."""
-        # Always log epoch information (from EpochLogger callback)
-        if 'Epoch ' in message and '/' in message and len(message) < 50:
+        # Always log messages with newlines (real output, not progress bar updates)
+        if '\n' in message:
             return True
         
-        # Skip if contains carriage return (progress bar overwrites)
-        if '\r' in message and '\n' not in message:
+        # Skip if contains carriage return without newline (progress bar overwrites)
+        if '\r' in message:
             return False
         
-        # Skip ANSI escape sequences (cursor movement, colors, etc.)
-        # [A = cursor up, [B = cursor down, [C = cursor right, [D = cursor left
-        # [K = clear line, [2K = clear entire line, [J = clear screen
-        ansi_patterns = [
-            '\x1b[',       # ESC[ - start of ANSI sequence
-            '[A', '[B', '[C', '[D',  # Cursor movement
-            '[K', '[2K', '[J',       # Clear commands
-            '[?25l', '[?25h',        # Hide/show cursor
-        ]
+        # Skip very short messages (likely progress bar fragments)
+        if len(message.strip()) < 3:
+            return False
         
-        for pattern in ansi_patterns:
-            if pattern in message:
-                # If message is ONLY ansi codes (no real content), skip it
-                clean = message.replace('\x1b', '').replace('[A', '').replace('[B', '')
-                clean = clean.replace('[C', '').replace('[D', '').replace('[K', '')
-                clean = clean.replace('[2K', '').replace('[J', '').replace('[?25l', '')
-                clean = clean.replace('[?25h', '').strip()
-                if not clean or len(clean) < 3:
-                    return False
-        
-        # Skip common progress bar patterns
-        progress_patterns = [
-            'Epoch ',      # PyTorch Lightning epochs
-            '━',           # Rich progress bars
-            '█',           # tqdm progress bars
-            '▏', '▎', '▍', '▌', '▋', '▊', '▉',  # Partial blocks
-            '%|',          # tqdm percentage
-            'it/s',        # iterations per second
-            'batch',       # batch progress
-        ]
-        
-        # If it's a short line with progress indicators, skip it
-        if len(message) < 200:
-            for pattern in progress_patterns:
-                if pattern in message and '\n' not in message:
-                    return False
+        # Skip progress bar characters
+        progress_chars = ['━', '█', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '|']
+        if any(char in message for char in progress_chars):
+            return False
         
         return True
         
