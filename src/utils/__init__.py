@@ -13,7 +13,7 @@ from .performance_metrics import (
     format_metrics,
     is_gpu_model
 )
-from .logger import setup_logging
+from .logger import setup_logging, EpochLogger
 
 __all__ = [
     'load_config',
@@ -22,6 +22,7 @@ __all__ = [
     'monitor_performance',
     'format_metrics',
     'is_gpu_model',
-    'setup_logging'
+    'setup_logging',
+    'EpochLogger'
 ]
 

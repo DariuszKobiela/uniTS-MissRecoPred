@@ -13,46 +13,84 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+# PyTorch Lightning callback for clean epoch logging
+try:
+    from pytorch_lightning.callbacks import Callback
+    
+    class EpochLogger(Callback):
+        """Custom callback to log epoch numbers (clean output for log files)."""
+        def on_train_epoch_start(self, trainer, pl_module):
+            print(f"   Epoch {trainer.current_epoch + 1}/{trainer.max_epochs}", flush=True)
+except ImportError:
+    # PyTorch Lightning not available
+    EpochLogger = None
+
 
 class TeeOutput:
     """Duplicates output to both console and log file.
     
-    Filters out progress bars from log file (they use \\r for line overwrites).
+    Captures completed progress bars (100%) but filters intermediate updates.
     """
     
     def __init__(self, log_file, original_stream):
         self.log_file = log_file
         self.original = original_stream
+        self.last_progress_line = ""
         
     def write(self, message):
         # Always write to console
         self.original.write(message)
         self.original.flush()
         
-        # Filter progress bars from log file
-        # Progress bars use \r (carriage return) to overwrite lines
-        # Also filter common progress bar patterns
+        # Handle progress bars specially
+        if self._is_progress_update(message):
+            # Store the latest progress line (might be the final one)
+            # Clean it up - remove \r and keep content
+            clean = message.replace('\r', '').strip()
+            if clean:
+                self.last_progress_line = clean
+            return
+        
+        # If this is a newline after progress bar, log the completed progress
+        if message == '\n' and self.last_progress_line:
+            self.log_file.write(self.last_progress_line + '\n')
+            self.log_file.flush()
+            self.last_progress_line = ""
+            return
+        
+        # Normal message - log if should
         if self._should_log(message):
             self.log_file.write(message)
             self.log_file.flush()
     
+    def _is_progress_update(self, message: str) -> bool:
+        """Check if this is a progress bar update."""
+        # Progress bars use \r to overwrite and contain % or progress chars
+        if '\r' in message:
+            return True
+        # Also check for tqdm-style patterns
+        if any(c in message for c in ['█', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '━', '#']):
+            if '%' in message or 'it/s' in message or 'file/s' in message:
+                return True
+        return False
+    
     def _should_log(self, message: str) -> bool:
         """Check if message should be written to log file."""
-        # Always log messages with newlines (real output, not progress bar updates)
-        if '\n' in message:
+        # Always allow newlines
+        if message == '\n' or message.endswith('\n'):
             return True
         
-        # Skip if contains carriage return without newline (progress bar overwrites)
-        if '\r' in message:
+        # Skip ANSI escape sequences (cursor movement, colors, etc.)
+        ansi_sequences = ['[A', '[B', '[C', '[D', '[K', '[2K', '[J', '[?25l', '[?25h']
+        if any(seq in message for seq in ansi_sequences):
             return False
         
-        # Skip very short messages (likely progress bar fragments)
+        # Skip if contains ESC character
+        if '\x1b' in message:
+            return False
+        
+        # Skip very short messages without newlines (likely fragments)
         if len(message.strip()) < 3:
-            return False
-        
-        # Skip progress bar characters
-        progress_chars = ['━', '█', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '|']
-        if any(char in message for char in progress_chars):
             return False
         
         return True

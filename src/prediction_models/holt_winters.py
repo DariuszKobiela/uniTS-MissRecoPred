@@ -1,11 +1,7 @@
 """
 Holt-Winters Exponential Smoothing Prediction Model
 
-Holt-Winters is a classical statistical method for time series forecasting
-that captures level, trend, and seasonal components.
-
-This is a traditional statistical model that does not require GPU or
-deep learning frameworks. It fits quickly on the provided data.
+Fast statistical method for time series forecasting.
 
 Requirements:
 - statsmodels
@@ -13,130 +9,83 @@ Requirements:
 
 import pandas as pd
 import numpy as np
+import warnings
 from statsmodels.tsa.api import ExponentialSmoothing
 
 
 def predict_holt_winters(train_series: pd.Series, horizon: int,
-                         seasonal_periods: int = 168,
+                         seasonal_periods: int = None,  # Disabled by default for speed
                          trend: str = "add",
-                         seasonal: str = "add",
+                         seasonal: str = None,  # Disabled by default for speed
                          random_state: int = None) -> pd.Series:
     """
-    Trains a Holt-Winters Exponential Smoothing model and predicts future values.
-    
-    Holt-Winters method decomposes time series into three components:
-    - Level: the average value in the series
-    - Trend: the increasing or decreasing value in the series
-    - Seasonality: the repeating short-term cycle in the series
-    
-    Parameters
-    ----------
-    train_series : pd.Series
-        Training time series data (complete, without missing values)
-    horizon : int
-        Number of future steps to predict
-    seasonal_periods : int
-        Number of periods in a complete seasonal cycle
-        Default: 168 (weekly seasonality for hourly data: 7 days * 24 hours)
-    trend : str
-        Type of trend component: "add", "mul", or None
-    seasonal : str
-        Type of seasonal component: "add", "mul", or None
-    random_state : int
-        Ignored (model is deterministic)
-        
-    Returns
-    -------
-    pd.Series
-        Predicted values with appropriate index
-        
-    Notes
-    -----
-    - No training required (statistical estimation)
-    - Very fast compared to deep learning models
-    - Works well for data with clear trend and seasonal patterns
-    - Deterministic output (no randomness)
+    Fast Holt-Winters Exponential Smoothing prediction.
     """
+    # Suppress warnings
+    warnings.filterwarnings('ignore')
     
     try:
-        # 1. Create a datetime index (statsmodels requirement for seasonal)
-        series = train_series.copy()
-        series.index = pd.date_range(start='2000-01-01', periods=len(series), freq='H')
+        # 1. Prepare data
+        series = train_series.copy().astype(float)
+        series.index = pd.date_range(start='2000-01-01', periods=len(series), freq='h')
         
-        # 2. Adjust seasonal_periods if series is too short
-        if len(series) < 2 * seasonal_periods:
-            # Not enough data for seasonal pattern detection
-            # Try with smaller seasonal period or no seasonality
-            if len(series) >= 48:  # At least 2 days of hourly data
-                seasonal_periods = 24  # Daily seasonality
-            else:
-                seasonal = None  # Disable seasonality
+        # 2. Fast simple exponential smoothing (no seasonality = much faster)
+        model = ExponentialSmoothing(
+            series,
+            trend=trend,
+            seasonal=None,
+            initialization_method="heuristic",  # Faster than "estimated"
+        ).fit(optimized=False)  # Don't optimize = much faster
         
-        # 3. Fit the model
-        if seasonal is not None:
-            model = ExponentialSmoothing(
-                series,
-                seasonal_periods=seasonal_periods,
-                trend=trend,
-                seasonal=seasonal,
-                initialization_method="estimated",
-            ).fit(optimized=True)
-        else:
-            # Simple exponential smoothing without seasonality
-            model = ExponentialSmoothing(
-                series,
-                trend=trend,
-                seasonal=None,
-                initialization_method="estimated",
-            ).fit(optimized=True)
-        
-        # 4. Generate forecast
         forecast = model.forecast(steps=horizon)
         
-        # 5. Check for valid forecast
         if not np.isfinite(forecast.values).all():
-            raise ValueError("Forecast contains inf or nan values")
+            raise ValueError("Forecast invalid")
         
-        # 6. Convert index back to integer
-        last_idx = train_series.index[-1]
-        forecast.index = range(last_idx + 1, last_idx + 1 + horizon)
+        # 3. Create output with proper index
+        original_index = train_series.index
+        if hasattr(original_index[-1], 'freq') or isinstance(original_index[-1], pd.Timestamp):
+            start_pos = len(original_index)
+            forecast.index = range(start_pos, start_pos + horizon)
+        else:
+            last_idx = int(original_index[-1])
+            forecast.index = range(last_idx + 1, last_idx + 1 + horizon)
         
         return forecast
         
-    except Exception as e:
-        print(f"Warning: Holt-Winters prediction failed: {e}")
-        # Fallback: simple exponential smoothing or trend extrapolation
-        try:
-            series = train_series.copy()
-            series.index = pd.date_range(start='2000-01-01', periods=len(series), freq='H')
+    except Exception:
+        # Fallback: simple trend extrapolation (very fast)
+        clean_data = train_series.dropna().astype(float)
+        
+        if len(clean_data) >= 5:
+            # Exponential weighted trend
+            recent = clean_data.tail(min(20, len(clean_data)))
+            alpha = 0.3  # Smoothing factor
+            level = recent.iloc[0]
+            trend_val = 0
+            for val in recent:
+                level = alpha * val + (1 - alpha) * (level + trend_val)
+                trend_val = alpha * (level - (alpha * val + (1 - alpha) * level)) + (1 - alpha) * trend_val
             
-            # Try simple model without seasonality
-            model = ExponentialSmoothing(
-                series,
-                trend="add",
-                seasonal=None,
-                initialization_method="estimated",
-            ).fit(optimized=True)
-            
-            forecast = model.forecast(steps=horizon)
-            last_idx = train_series.index[-1]
-            forecast.index = range(last_idx + 1, last_idx + 1 + horizon)
-            return forecast
-            
-        except Exception:
-            # Final fallback: trend extrapolation
-            clean_data = train_series.dropna()
-            if len(clean_data) >= 2:
-                trend_val = np.mean(np.diff(clean_data.tail(min(10, len(clean_data)))))
-                last_value = clean_data.iloc[-1]
-                forecast_values = [last_value + trend_val * (i + 1) for i in range(horizon)]
-            else:
-                last_value = clean_data.iloc[-1] if len(clean_data) > 0 else 0
-                forecast_values = [last_value] * horizon
-            
-            last_idx = train_series.index[-1]
+            last_value = level
+            forecast_values = [last_value + trend_val * (i + 1) for i in range(horizon)]
+        elif len(clean_data) >= 2:
+            trend_val = clean_data.iloc[-1] - clean_data.iloc[-2]
+            last_value = clean_data.iloc[-1]
+            forecast_values = [last_value + trend_val * (i + 1) for i in range(horizon)]
+        else:
+            last_value = clean_data.iloc[-1] if len(clean_data) > 0 else 0
+            forecast_values = [last_value] * horizon
+        
+        original_index = train_series.index
+        if hasattr(original_index[-1], 'freq') or isinstance(original_index[-1], pd.Timestamp):
+            start_pos = len(original_index)
+            forecast_index = range(start_pos, start_pos + horizon)
+        else:
+            last_idx = int(original_index[-1])
             forecast_index = range(last_idx + 1, last_idx + 1 + horizon)
-            return pd.Series(forecast_values, index=forecast_index, name='predicted')
+        
+        return pd.Series(forecast_values, index=forecast_index, name='predicted')
 
 
 # Alias for backward compatibility

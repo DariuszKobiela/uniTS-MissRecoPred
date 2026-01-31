@@ -36,20 +36,10 @@ torch.set_float32_matmul_precision('medium')
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import PyTorch Lightning Callback for epoch logging
-from pytorch_lightning.callbacks import Callback
-
-
-class EpochLogger(Callback):
-    """Custom callback to log epoch numbers (clean output for log files)."""
-    def on_train_epoch_start(self, trainer, pl_module):
-        print(f"   Epoch {trainer.current_epoch + 1}/{trainer.max_epochs}", flush=True)
-
-
 # Import config loader
 from utils.config_loader import load_config, load_prediction_models_config
 from utils.performance_metrics import PerformanceMonitor, format_metrics
-from utils.logger import setup_logging
+from utils.logger import setup_logging, EpochLogger
 
 # Setup automatic logging to file
 setup_logging("7_train_prediction_models")
@@ -163,6 +153,9 @@ def train_global_model_darts(model_name: str,
         "enable_model_summary": False,
     }
     
+    # Use multiple workers for DataLoader (speeds up training)
+    num_workers = max(0, (os.cpu_count() or 1) - 1)
+    
     if model_name in ['lstm', 'gru']:
         model = RNNModel(
             model=model_name.upper(),
@@ -175,6 +168,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -191,6 +185,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -207,6 +202,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -225,6 +221,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -244,6 +241,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -262,6 +260,7 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
+            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )

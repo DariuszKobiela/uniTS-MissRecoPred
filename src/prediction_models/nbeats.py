@@ -89,11 +89,11 @@ def predict_nbeats(train_series: pd.Series, horizon: int,
             output_chunk_length = min(horizon, NBEATS_OUTPUT_LEN)
         
         # 1. Create TimeSeries with datetime index
-        date_index = pd.date_range(start='2000-01-01', periods=len(train_series), freq='H')
+        date_index = pd.date_range(start='2000-01-01', periods=len(train_series), freq='h')
         full_ts = TimeSeries.from_times_and_values(
             times=date_index, 
             values=train_series.values, 
-            freq='H'
+            freq='h'
         )
         
         # 2. Split into training and validation sets
