@@ -26,6 +26,7 @@ dependencies = [
     "darts>=0.31.0",
     "xgboost>=2.1.0",
     "prophet>=1.1.6",
+    "statsforecast>=1.7.0",  # For AutoARIMA, AutoETS, Croston
     
     # Force newer versions for Python 3.12 compatibility
     "numba>=0.60.0",

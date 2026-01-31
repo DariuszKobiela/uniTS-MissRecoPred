@@ -74,7 +74,7 @@ uniTS-MissRecoPred/
 │   │   ├── 🐍 sarimax.py                      # SARIMA with Kalman smoothing
 │   │   └── 🐍 stable_diffusion_2_*.py         # Stable Diffusion 2 (GAF, MTF, RP, Spectrogram)
 │   │
-│   ├── 📁 prediction_models/               # 11 prediction models
+│   ├── 📁 prediction_models/               # 12 prediction models
 │   │   ├── 🐍 holt_winters.py                 # Holt-Winters Exponential Smoothing
 │   │   ├── 🐍 prophet.py                      # Facebook Prophet
 │   │   ├── 🐍 sarimax.py                      # SARIMAX forecasting
@@ -82,9 +82,10 @@ uniTS-MissRecoPred/
 │   │   ├── 🐍 lstm.py                         # LSTM neural network
 │   │   ├── 🐍 gru.py                          # GRU neural network
 │   │   ├── 🐍 deepar.py                       # DeepAR probabilistic forecasting
-│   │   ├── 🐍 tcn.py                          # Temporal Convolutional Network
+│   │   ├── 🐍 temporal_convolutional_network.py  # TCN
 │   │   ├── 🐍 nbeats.py                       # N-BEATS architecture
-│   │   └── 🐍 transformer.py                  # Temporal Fusion Transformer
+│   │   ├── 🐍 vanilla_transformer.py          # Vanilla Transformer
+│   │   └── 🐍 temporal_fusion_transformer.py  # TFT (Temporal Fusion Transformer)
 │   │
 │   └── 📁 missingness_techniques/          # Missingness patterns
 │       ├── 🐍 mcar.py                         # Missing Completely At Random
@@ -389,22 +390,32 @@ early_stopping:
   patience: 10
   min_delta: 0.001
 
-# Model-specific parameters (lstm, gru, tcn, nbeats, transformer, xgboost, etc.)
+# Model-specific parameters (lstm, gru, tcn, nbeats, vanilla_transformer, temporal_fusion_transformer, xgboost, etc.)
 lstm:
-  input_chunk_length: 100
+  input_chunk_length: 24
   hidden_dim: 32
   n_layers: 2
+
+vanilla_transformer:
+  input_chunk_length: 24
+  d_model: 64
+  nhead: 4
+
+temporal_fusion_transformer:
+  input_chunk_length: 24
+  hidden_size: 64
+  num_attention_heads: 4
 
 # Model categories
 model_categories:
   global_training_models:      # Trained ONCE on ALL data (deep learning)
-    - lstm, gru, deepar, tcn, nbeats, transformer
+    - lstm, gru, deepar, tcn, nbeats, vanilla_transformer, temporal_fusion_transformer
   per_file_training_models:    # Trained separately per file (statistical)
     - sarimax, holt_winters, prophet
   deterministic_models:        # Always same output, 1 iteration
     - sarimax, holt_winters, prophet
   non_deterministic_models:    # Random init, N iterations for statistics
-    - lstm, gru, deepar, tcn, nbeats, transformer, xgboost
+    - lstm, gru, deepar, tcn, nbeats, vanilla_transformer, temporal_fusion_transformer, xgboost
 ```
 
 **Training Iterations**: Non-deterministic models (deep learning, XGBoost) are trained N times with different random seeds for statistical analysis. Deterministic models (SARIMAX, Holt-Winters, Prophet) are trained only once.
@@ -765,24 +776,176 @@ python src/optimization/optimize_sd_hyperparams.py \
 
 ### Available Prediction Models
 
+The framework includes **12 prediction models** spanning statistical, machine learning, and deep learning approaches.
+
+---
+
 #### Statistical Models (Deterministic, Per-File Training)
-- `holt_winters` - Holt-Winters Exponential Smoothing (trend + seasonality)
-- `prophet` - Facebook Prophet (Bayesian, automatic seasonality detection)
-- `sarimax` - SARIMAX (Seasonal ARIMA with configurable order)
+
+These models are trained separately for each time series file. They are deterministic (same input → same output), so only 1 iteration is performed.
+
+##### `holt_winters` - Holt-Winters Exponential Smoothing
+- **Type**: Statistical / Exponential Smoothing
+- **Library**: `statsmodels.tsa.holtwinters.ExponentialSmoothing`
+- **Description**: Classic triple exponential smoothing method that captures **level, trend, and seasonality** components. Uses weighted averages with exponentially decreasing weights for older observations.
+- **Strengths**: Simple, fast, interpretable, works well with clear seasonal patterns
+- **Weaknesses**: Assumes single seasonal period, sensitive to outliers
+- **Parameters**: `seasonal_periods` (auto-detected), `trend` (additive), `seasonal` (additive)
+
+##### `prophet` - Facebook Prophet
+- **Type**: Statistical / Bayesian Additive Model
+- **Library**: `prophet`
+- **Description**: Developed by Facebook (Meta) for business forecasting. Uses **decomposable additive model**: `y(t) = g(t) + s(t) + h(t) + ε(t)` where g(t) is trend, s(t) is seasonality, h(t) is holiday effects. Handles missing data and outliers automatically.
+- **Strengths**: Automatic seasonality detection (daily, weekly, yearly), robust to missing data, interpretable components
+- **Weaknesses**: Slower than simple methods, designed for daily/hourly business data
+- **Parameters**: `changepoint_prior_scale`, `seasonality_prior_scale`, `yearly_seasonality`, `weekly_seasonality`
+
+##### `sarimax` - Seasonal ARIMA with Exogenous Variables
+- **Type**: Statistical / Autoregressive Model
+- **Library**: `statsmodels.tsa.statespace.sarimax.SARIMAX`
+- **Description**: **S**easonal **A**uto**R**egressive **I**ntegrated **M**oving **A**verage with e**X**ogenous variables. Combines AR (past values), I (differencing), MA (past errors), and seasonal components. The gold standard for univariate time series forecasting.
+- **Strengths**: Mathematically rigorous, well-understood theory, handles seasonality
+- **Weaknesses**: Requires stationarity, sensitive to parameter selection, can be slow for long series
+- **Parameters**: `order` (p,d,q), `seasonal_order` (P,D,Q,s), auto-selected using AIC/BIC
+
+---
 
 #### Machine Learning Models (Non-Deterministic, Global Training)
-- `xgboost` - XGBoost with recursive forecasting using lag features
+
+##### `xgboost` - Extreme Gradient Boosting
+- **Type**: Machine Learning / Gradient Boosting
+- **Library**: `xgboost`
+- **Description**: Ensemble of decision trees using **gradient boosting** framework. For time series, uses **lag features** (past N values as input features) to predict the next value. Performs **recursive forecasting**: predicts one step, adds to history, predicts next step.
+- **Strengths**: Handles non-linear patterns, feature importance, robust to overfitting, fast training
+- **Weaknesses**: No native sequence handling, requires feature engineering (lags)
+- **Parameters**: `lags` (number of lag features), `n_estimators`, `max_depth`, `learning_rate`
+- **Training**: Global (one model for all series)
+
+---
 
 #### Deep Learning Models (Non-Deterministic, Global Training)
-- `lstm` - Long Short-Term Memory network
-- `gru` - Gated Recurrent Unit network
-- `deepar` - DeepAR probabilistic forecasting (Amazon)
-- `tcn` - Temporal Convolutional Network
-- `nbeats` - N-BEATS (Neural Basis Expansion Analysis)
-- `transformer` - Temporal Fusion Transformer (TFT)
+
+These models are trained once on ALL time series data (global training), then used to predict each file. Non-deterministic models are trained N times with different random seeds for statistical analysis.
+
+##### `lstm` - Long Short-Term Memory
+- **Type**: Deep Learning / Recurrent Neural Network
+- **Library**: `darts.models.RNNModel` (PyTorch backend)
+- **Description**: Recurrent neural network with **memory cells** and **gating mechanisms** (input, forget, output gates). Designed to capture **long-range dependencies** in sequential data. Addresses vanishing gradient problem of vanilla RNNs.
+- **Architecture**: 
+  ```
+  Input → [LSTM Layer 1] → [LSTM Layer 2] → ... → Dense → Output
+  Each LSTM cell: forget gate, input gate, cell state, output gate
+  ```
+- **Strengths**: Captures long-term dependencies, handles variable-length sequences, proven in NLP/speech
+- **Weaknesses**: Sequential processing (slow training), can overfit on small datasets
+- **Parameters**: `input_chunk_length`, `training_length`, `hidden_dim`, `n_layers`, `dropout`
+
+##### `gru` - Gated Recurrent Unit
+- **Type**: Deep Learning / Recurrent Neural Network
+- **Library**: `darts.models.RNNModel` (PyTorch backend)
+- **Description**: Simplified variant of LSTM with **fewer gates** (reset and update gates only). Combines forget and input gates into single "update gate". Often performs similarly to LSTM with **fewer parameters** and **faster training**.
+- **Architecture**: 
+  ```
+  Input → [GRU Layer 1] → [GRU Layer 2] → ... → Dense → Output
+  Each GRU cell: reset gate, update gate, hidden state
+  ```
+- **Strengths**: Faster than LSTM, fewer parameters, similar performance
+- **Weaknesses**: May underperform LSTM on very long sequences
+- **Parameters**: `input_chunk_length`, `training_length`, `hidden_dim`, `n_layers`, `dropout`
+
+##### `deepar` - DeepAR Probabilistic Forecasting
+- **Type**: Deep Learning / Probabilistic RNN
+- **Library**: `darts.models.RNNModel` with `GaussianLikelihood`
+- **Description**: Developed by **Amazon** for demand forecasting. LSTM-based model that outputs **probability distributions** (not point estimates). Uses autoregressive recurrent network trained on multiple related time series.
+- **Key Feature**: Outputs mean + variance (uncertainty quantification)
+- **Architecture**: 
+  ```
+  Input → LSTM Encoder → Gaussian Likelihood Layer → μ (mean), σ (std)
+  ```
+- **Strengths**: Uncertainty quantification, handles multiple related series, robust to noise
+- **Weaknesses**: More complex, requires more data for good calibration
+- **Parameters**: `input_chunk_length`, `training_length`, `hidden_dim`, `n_layers`, `likelihood`
+
+##### `tcn` - Temporal Convolutional Network
+- **Type**: Deep Learning / Convolutional Network
+- **Library**: `darts.models.TCNModel` (PyTorch backend)
+- **Description**: Uses **1D dilated causal convolutions** instead of recurrence. **Causal**: output depends only on past inputs. **Dilated**: exponentially increasing receptive field without increasing parameters. Often outperforms RNNs with **parallel training**.
+- **Architecture**: 
+  ```
+  Input → [Dilated Conv d=1] → [Dilated Conv d=2] → [Dilated Conv d=4] → ... → Output
+  Residual connections between layers
+  ```
+- **Strengths**: Parallel training (fast), large receptive field, stable gradients
+- **Weaknesses**: Fixed receptive field, may need tuning for very long sequences
+- **Parameters**: `input_chunk_length`, `output_chunk_length`, `kernel_size`, `num_filters`, `dilation_base`
+
+##### `nbeats` - Neural Basis Expansion Analysis for Time Series
+- **Type**: Deep Learning / Pure Deep Learning
+- **Library**: `darts.models.NBEATSModel` (PyTorch backend)
+- **Description**: Developed by **Element AI** (2020). Pure deep learning architecture **without RNNs or attention**. Uses **stack of fully connected layers** with backward and forward residual links. Interpretable variant decomposes into trend and seasonality.
+- **Architecture**: 
+  ```
+  Input → Stack 1 [Blocks] → Stack 2 [Blocks] → ... → Stack N [Blocks]
+  Each Block: FC layers → Backcast (reconstruct input) + Forecast (predict future)
+  ```
+- **Strengths**: State-of-the-art accuracy, interpretable variant available, no sequence modeling assumptions
+- **Weaknesses**: Many hyperparameters, requires significant data
+- **Parameters**: `input_chunk_length`, `output_chunk_length`, `num_stacks`, `num_blocks`, `num_layers`, `layer_widths`, `generic_architecture`
+
+##### `vanilla_transformer` - Vanilla Transformer
+- **Type**: Deep Learning / Attention-based
+- **Library**: `darts.models.TransformerModel` (PyTorch backend)
+- **Description**: Original **Transformer architecture** (Vaswani et al., 2017) adapted for time series. Uses **encoder-decoder self-attention** mechanism. Each position can attend to all other positions, capturing global dependencies.
+- **Architecture**: 
+  ```
+  Input → Positional Encoding → [Encoder: Multi-Head Self-Attention + FFN] × N
+                              → [Decoder: Masked Self-Attention + Cross-Attention + FFN] × N → Output
+  ```
+- **Strengths**: Captures global dependencies, parallel training, proven in NLP
+- **Weaknesses**: Quadratic complexity O(n²), no explicit temporal bias, may need more data
+- **Parameters**: `input_chunk_length`, `output_chunk_length`, `d_model`, `nhead`, `num_encoder_layers`, `num_decoder_layers`, `dim_feedforward`
+
+##### `temporal_fusion_transformer` - Temporal Fusion Transformer (TFT)
+- **Type**: Deep Learning / Specialized Attention-based
+- **Library**: `darts.models.TFTModel` (PyTorch backend)
+- **Description**: Developed by **Google** (2019) specifically for **multi-horizon time series forecasting**. Combines LSTM encoder with **interpretable multi-head attention**. Includes specialized components not in vanilla Transformer.
+- **Key Components**:
+  - **Variable Selection Networks**: Automatically selects relevant input features
+  - **Gated Residual Networks (GRN)**: Controls information flow
+  - **Temporal Self-Attention**: Interpretable attention weights
+  - **Static Covariate Encoders**: Handles time-invariant features
+  - **Quantile Outputs**: Native probabilistic forecasting
+- **Architecture**: 
+  ```
+  Input → Variable Selection → LSTM Encoder → Temporal Self-Attention
+                            → Static Enrichment → Gated Residual Network → Output
+  ```
+- **Strengths**: State-of-the-art for forecasting, interpretable (attention visualization), handles multiple input types
+- **Weaknesses**: Complex architecture, slower training, requires more memory
+- **Parameters**: `input_chunk_length`, `output_chunk_length`, `hidden_size`, `lstm_layers`, `num_attention_heads`, `add_relative_index`
+
+---
+
+#### Model Comparison Summary
+
+| Model | Type | Training | GPU | Probabilistic | Interpretable |
+|-------|------|----------|-----|---------------|---------------|
+| `holt_winters` | Statistical | Per-file | ❌ | ❌ | ✅ |
+| `prophet` | Statistical | Per-file | ❌ | ✅ | ✅ |
+| `sarimax` | Statistical | Per-file | ❌ | ✅ | ✅ |
+| `xgboost` | ML | Global | ❌ | ❌ | ✅ (feature importance) |
+| `lstm` | Deep Learning | Global | ✅ | ❌ | ❌ |
+| `gru` | Deep Learning | Global | ✅ | ❌ | ❌ |
+| `deepar` | Deep Learning | Global | ✅ | ✅ | ❌ |
+| `tcn` | Deep Learning | Global | ✅ | ❌ | ❌ |
+| `nbeats` | Deep Learning | Global | ✅ | ❌ | ✅ (interpretable variant) |
+| `vanilla_transformer` | Deep Learning | Global | ✅ | ❌ | ❌ |
+| `temporal_fusion_transformer` | Deep Learning | Global | ✅ | ✅ | ✅ (attention weights) |
+
+---
 
 **Training Strategies:**
-- **Global Training** (LSTM, GRU, DeepAR, TCN, N-BEATS, Transformer, XGBoost): Train ONE model on ALL data (original + reconstructed), then use for prediction on each file
+- **Global Training** (LSTM, GRU, DeepAR, TCN, N-BEATS, Vanilla Transformer, TFT, XGBoost): Train ONE model on ALL data (original + reconstructed), then use for prediction on each file
 - **Per-File Training** (SARIMAX, Holt-Winters, Prophet): Train separate model for each file (statistical models don't support multi-series training)
 
 **Statistical Iterations:**

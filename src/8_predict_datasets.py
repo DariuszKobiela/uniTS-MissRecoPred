@@ -26,8 +26,7 @@ import torch
 import warnings
 import re
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
+# Keep all warnings visible (FutureWarning, DeprecationWarning, etc.)
 
 # Optimize for GPUs with Tensor Cores
 torch.set_float32_matmul_precision('medium')
@@ -112,7 +111,7 @@ def load_trained_model(model_name: str, iteration: int, models_dir: str):
     darts_path = os.path.join(models_dir, f"{model_name}_iter{iteration}.pt")
     if os.path.exists(darts_path):
         # Import appropriate model class
-        from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel
+        from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel, TransformerModel
         
         if model_name in ['lstm', 'gru', 'deepar']:
             model = RNNModel.load(darts_path)
@@ -120,7 +119,9 @@ def load_trained_model(model_name: str, iteration: int, models_dir: str):
             model = TCNModel.load(darts_path)
         elif model_name == 'nbeats':
             model = NBEATSModel.load(darts_path)
-        elif model_name in ['transformer', 'tft']:
+        elif model_name == 'vanilla_transformer':
+            model = TransformerModel.load(darts_path)
+        elif model_name == 'temporal_fusion_transformer':
             model = TFTModel.load(darts_path)
         else:
             raise ValueError(f"Unknown Darts model type: {model_name}")

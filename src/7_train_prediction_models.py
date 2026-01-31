@@ -4,7 +4,7 @@ Train Prediction Models Script
 Trains all prediction models that require training (deep learning + XGBoost).
 
 This script:
-1. Trains global models (LSTM, GRU, TCN, N-BEATS, DeepAR, Transformer, TFT, XGBoost)
+1. Trains global models (LSTM, GRU, TCN, N-BEATS, DeepAR, Vanilla Transformer, TFT, XGBoost)
 2. Trains N times for non-deterministic models (configurable)
 3. Saves trained models to trained_models/ folder
 4. Saves training metrics (time, CPU, GPU) to training_metrics_*.csv
@@ -28,14 +28,23 @@ import pickle
 import torch
 import warnings
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
+# Keep all warnings visible (FutureWarning, DeprecationWarning, etc.)
 
 # Optimize for GPUs with Tensor Cores (RTX, A100, etc.)
 torch.set_float32_matmul_precision('medium')
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Import PyTorch Lightning Callback for epoch logging
+from pytorch_lightning.callbacks import Callback
+
+
+class EpochLogger(Callback):
+    """Custom callback to log epoch numbers (clean output for log files)."""
+    def on_train_epoch_start(self, trainer, pl_module):
+        print(f"   Epoch {trainer.current_epoch + 1}/{trainer.max_epochs}", flush=True)
+
 
 # Import config loader
 from utils.config_loader import load_config, load_prediction_models_config
@@ -79,7 +88,7 @@ def train_global_model_darts(model_name: str,
     Train a global Darts model on all time series.
     
     Args:
-        model_name: Name of the model (lstm, gru, tcn, nbeats, deepar, transformer, tft)
+        model_name: Name of the model (lstm, gru, tcn, nbeats, deepar, vanilla_transformer, temporal_fusion_transformer)
         all_series: List of all training time series
         pred_config: PredictionModelsConfig object
         seed: Random seed for this training iteration
@@ -88,7 +97,7 @@ def train_global_model_darts(model_name: str,
         Trained Darts model
     """
     from darts import TimeSeries
-    from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel
+    from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel, TransformerModel
     from darts.utils.likelihood_models import GaussianLikelihood
     from pytorch_lightning.callbacks import EarlyStopping
     
@@ -128,7 +137,7 @@ def train_global_model_darts(model_name: str,
             train_series_list.append(ts)
     
     # Set up callbacks
-    callbacks = []
+    callbacks = [EpochLogger()]  # Always log epoch numbers
     if es_enabled:
         early_stopping = EarlyStopping(
             monitor="val_loss",
@@ -150,9 +159,8 @@ def train_global_model_darts(model_name: str,
     pl_trainer_kwargs = {
         "callbacks": callbacks,
         "accelerator": "auto",
-        "enable_progress_bar": True,
+        "enable_progress_bar": True,   # Show in console (filtered from log file)
         "enable_model_summary": False,
-        "log_every_n_steps": 1,
     }
     
     if model_name in ['lstm', 'gru']:
@@ -168,7 +176,7 @@ def train_global_model_darts(model_name: str,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
             force_reset=True,
-            save_checkpoints=False
+            save_checkpoints=True
         )
     elif model_name == 'deepar':
         model = RNNModel(
@@ -184,7 +192,7 @@ def train_global_model_darts(model_name: str,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
             force_reset=True,
-            save_checkpoints=False
+            save_checkpoints=True
         )
     elif model_name == 'tcn':
         output_chunk_length = min(model_params.get('output_chunk_length', 6), min_series_len // 4)
@@ -200,7 +208,7 @@ def train_global_model_darts(model_name: str,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
             force_reset=True,
-            save_checkpoints=False
+            save_checkpoints=True
         )
     elif model_name == 'nbeats':
         output_chunk_length = min(model_params.get('output_chunk_length', 12), min_series_len // 4)
@@ -218,9 +226,29 @@ def train_global_model_darts(model_name: str,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
             force_reset=True,
-            save_checkpoints=False
+            save_checkpoints=True
         )
-    elif model_name in ['transformer', 'tft']:
+    elif model_name == 'vanilla_transformer':
+        # Vanilla Transformer (encoder-decoder self-attention)
+        output_chunk_length = min(model_params.get('output_chunk_length', 12), min_series_len // 4)
+        model = TransformerModel(
+            input_chunk_length=model_params.get('input_chunk_length', 24),
+            output_chunk_length=max(1, output_chunk_length),
+            d_model=model_params.get('d_model', 64),
+            nhead=model_params.get('nhead', 4),
+            num_encoder_layers=model_params.get('num_encoder_layers', 2),
+            num_decoder_layers=model_params.get('num_decoder_layers', 2),
+            dim_feedforward=model_params.get('dim_feedforward', 128),
+            dropout=model_params.get('dropout', 0.1),
+            batch_size=batch_size,
+            n_epochs=max_epochs,
+            random_state=seed,
+            pl_trainer_kwargs=pl_trainer_kwargs,
+            force_reset=True,
+            save_checkpoints=True
+        )
+    elif model_name == 'temporal_fusion_transformer':
+        # Temporal Fusion Transformer (specialized for forecasting)
         output_chunk_length = min(model_params.get('output_chunk_length', 12), min_series_len // 4)
         model = TFTModel(
             input_chunk_length=model_params.get('input_chunk_length', 24),
@@ -235,7 +263,7 @@ def train_global_model_darts(model_name: str,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
             force_reset=True,
-            save_checkpoints=False
+            save_checkpoints=True
         )
     else:
         raise ValueError(f"Unknown global training model: {model_name}")
@@ -299,6 +327,29 @@ def train_xgboost_model(all_series: List[pd.Series], pred_config, seed: int = No
     return model, lag
 
 
+def get_model_path(model_name: str, iteration: int, output_dir: str, model_type: str = 'darts') -> str:
+    """Get the path where a model would be saved."""
+    if model_type == 'darts':
+        return os.path.join(output_dir, f"{model_name}_iter{iteration}.pt")
+    else:
+        return os.path.join(output_dir, f"{model_name}_iter{iteration}.pkl")
+
+
+def model_exists(model_name: str, iteration: int, output_dir: str) -> bool:
+    """Check if a trained model already exists."""
+    # Check for Darts model (.pt)
+    darts_path = os.path.join(output_dir, f"{model_name}_iter{iteration}.pt")
+    if os.path.exists(darts_path):
+        return True
+    
+    # Check for pickle model (.pkl)
+    pkl_path = os.path.join(output_dir, f"{model_name}_iter{iteration}.pkl")
+    if os.path.exists(pkl_path):
+        return True
+    
+    return False
+
+
 def save_model(model, model_name: str, iteration: int, output_dir: str, model_type: str = 'darts'):
     """Save trained model to file."""
     os.makedirs(output_dir, exist_ok=True)
@@ -329,11 +380,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Train all models using default config
+  # Train all models using default config (skips existing)
   python 7_train_prediction_models.py
   
   # Train specific models only
   python 7_train_prediction_models.py --models lstm gru xgboost
+  
+  # Force retrain all models (overwrite existing)
+  python 7_train_prediction_models.py --force
   
   # Train with specific number of iterations
   python 7_train_prediction_models.py --iterations 5
@@ -360,6 +414,12 @@ Examples:
         type=int,
         default=None,
         help='Override number of training iterations'
+    )
+    
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force retraining even if models already exist (overwrite)'
     )
     
     args = parser.parse_args()
@@ -413,6 +473,7 @@ Examples:
     print(f"Training iterations: {n_iterations}")
     print(f"Base seed: {base_seed}")
     print(f"Output directory: {output_dir}")
+    print(f"Force overwrite: {args.force}")
     print("="*70)
     
     # Collect all training data
@@ -465,6 +526,14 @@ Examples:
         
         for iteration in range(1, model_iterations + 1):
             seed = base_seed + iteration
+            
+            # Check if model already exists (skip unless --force)
+            if model_exists(model_name, iteration, output_dir) and not args.force:
+                existing_path = get_model_path(model_name, iteration, output_dir, 
+                                               'darts' if model_name in global_models else 'pickle')
+                print(f"\n⏭️  Skipping {model_name} iter{iteration} (already exists: {existing_path})")
+                print(f"   Use --force to overwrite")
+                continue
             
             print(f"\n🔧 Training {model_name} (iteration {iteration}/{model_iterations}, seed={seed})...")
             

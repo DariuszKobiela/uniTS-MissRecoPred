@@ -1,7 +1,10 @@
 """
-Transformer (Temporal Fusion Transformer) Prediction Model
+Vanilla Transformer Prediction Model
 
-TFT is a state-of-the-art attention-based architecture for time series forecasting.
+A general-purpose Transformer architecture adapted for time series forecasting.
+Uses encoder-decoder self-attention without the specialized components of TFT.
+
+Simpler and faster than TFT, but may not capture complex temporal patterns as well.
 
 This implementation uses the Darts library with PyTorch backend.
 The model is trained from scratch on the provided training data.
@@ -15,33 +18,36 @@ Requirements:
 import pandas as pd
 import numpy as np
 from darts import TimeSeries
-from darts.models import TFTModel
+from darts.models import TransformerModel
 from pytorch_lightning.callbacks import EarlyStopping
 
 # Model-specific parameters
-TFT_INPUT_LEN = 24
-TFT_OUTPUT_LEN = 12
-TFT_HIDDEN_SIZE = 64
-TFT_LSTM_LAYERS = 1
-TFT_NUM_ATTENTION_HEADS = 4
+TRANSFORMER_INPUT_LEN = 24
+TRANSFORMER_OUTPUT_LEN = 12
+TRANSFORMER_D_MODEL = 64
+TRANSFORMER_NHEAD = 4
+TRANSFORMER_NUM_ENCODER_LAYERS = 2
+TRANSFORMER_NUM_DECODER_LAYERS = 2
+TRANSFORMER_DIM_FEEDFORWARD = 128
 
 
 def predict_transformer(train_series: pd.Series, horizon: int,
-                        input_chunk_length: int = TFT_INPUT_LEN,
+                        input_chunk_length: int = TRANSFORMER_INPUT_LEN,
                         output_chunk_length: int = None,
-                        hidden_size: int = TFT_HIDDEN_SIZE,
-                        lstm_layers: int = TFT_LSTM_LAYERS,
-                        num_attention_heads: int = TFT_NUM_ATTENTION_HEADS,
+                        d_model: int = TRANSFORMER_D_MODEL,
+                        nhead: int = TRANSFORMER_NHEAD,
+                        num_encoder_layers: int = TRANSFORMER_NUM_ENCODER_LAYERS,
+                        num_decoder_layers: int = TRANSFORMER_NUM_DECODER_LAYERS,
+                        dim_feedforward: int = TRANSFORMER_DIM_FEEDFORWARD,
                         epochs: int = 100,
                         random_state: int = None) -> pd.Series:
     """
-    Trains a Temporal Fusion Transformer (TFT) model and predicts future values.
+    Trains a vanilla Transformer model and predicts future values.
     
-    TFT architecture features:
-    - Multi-head self-attention for capturing long-range dependencies
-    - Variable selection networks for interpretability
-    - Gated residual networks for information flow
-    - Quantile regression for probabilistic forecasts
+    Transformer architecture features:
+    - Multi-head self-attention in encoder and decoder
+    - Positional encoding for temporal information
+    - Simpler than TFT, faster training
     
     Parameters
     ----------
@@ -53,12 +59,16 @@ def predict_transformer(train_series: pd.Series, horizon: int,
         Number of past time steps to use as input (encoder length)
     output_chunk_length : int
         Number of steps to forecast in one pass. If None, uses min(horizon, 12)
-    hidden_size : int
-        Hidden state size of the model
-    lstm_layers : int
-        Number of LSTM layers in encoder/decoder
-    num_attention_heads : int
+    d_model : int
+        The number of expected features in the encoder/decoder inputs
+    nhead : int
         Number of attention heads
+    num_encoder_layers : int
+        Number of encoder layers
+    num_decoder_layers : int
+        Number of decoder layers
+    dim_feedforward : int
+        Dimension of the feedforward network
     epochs : int
         Maximum number of training epochs
     random_state : int
@@ -73,20 +83,20 @@ def predict_transformer(train_series: pd.Series, horizon: int,
     -----
     - Model is trained from scratch (no pre-trained weights required)
     - Uses early stopping to prevent overfitting
-    - State-of-the-art performance on many time series benchmarks
+    - Faster and lighter than TFT
     """
     
     try:
         # Set output_chunk_length
         if output_chunk_length is None:
-            output_chunk_length = min(horizon, TFT_OUTPUT_LEN)
+            output_chunk_length = min(horizon, TRANSFORMER_OUTPUT_LEN)
         
         # 1. Create TimeSeries with datetime index
-        date_index = pd.date_range(start='2000-01-01', periods=len(train_series), freq='H')
+        date_index = pd.date_range(start='2000-01-01', periods=len(train_series), freq='h')
         full_ts = TimeSeries.from_times_and_values(
             times=date_index, 
             values=train_series.values, 
-            freq='H'
+            freq='h'
         )
         
         # 2. Split into training and validation sets
@@ -105,17 +115,18 @@ def predict_transformer(train_series: pd.Series, horizon: int,
             verbose=False
         )
         
-        # 4. Initialize TFT model
-        model = TFTModel(
+        # 4. Initialize Transformer model
+        model = TransformerModel(
             input_chunk_length=input_chunk_length,
             output_chunk_length=output_chunk_length,
-            hidden_size=hidden_size,
-            lstm_layers=lstm_layers,
-            num_attention_heads=num_attention_heads,
+            d_model=d_model,
+            nhead=nhead,
+            num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers,
+            dim_feedforward=dim_feedforward,
             dropout=0.1,
             batch_size=32,
             n_epochs=epochs,
-            add_relative_index=True,
             random_state=random_state,
             pl_trainer_kwargs={
                 "callbacks": [early_stopper],
@@ -158,6 +169,4 @@ def predict_transformer(train_series: pd.Series, horizon: int,
 
 
 # Aliases
-train_tft = predict_transformer
 train_transformer = predict_transformer
-predict_tft = predict_transformer

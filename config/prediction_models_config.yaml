@@ -17,7 +17,7 @@ global_training:
   seed: 42
   
   # Maximum training epochs (for deep learning models)
-  max_epochs: 100
+  max_epochs: 1 #100
   
   # Batch size for training
   batch_size: 32
@@ -25,7 +25,7 @@ global_training:
   # Number of training iterations for non-deterministic models
   # Each iteration trains a new model with different random seed
   # Results from all iterations are saved for statistical analysis
-  training_iterations: 3
+  training_iterations: 1
 
 # ============================================================================
 # EARLY STOPPING SETTINGS
@@ -166,9 +166,37 @@ nbeats:
   activation: "ReLU"
 
 # ============================================================================
-# TRANSFORMER (TFT) MODEL PARAMETERS
+# VANILLA TRANSFORMER MODEL PARAMETERS
 # ============================================================================
-transformer:
+vanilla_transformer:
+  # Input chunk length (encoder length)
+  input_chunk_length: 24
+  
+  # Output chunk length (decoder length)
+  output_chunk_length: 12
+  
+  # Model dimension (d_model)
+  d_model: 64
+  
+  # Number of attention heads
+  nhead: 4
+  
+  # Number of encoder layers
+  num_encoder_layers: 2
+  
+  # Number of decoder layers
+  num_decoder_layers: 2
+  
+  # Feedforward dimension
+  dim_feedforward: 128
+  
+  # Dropout rate
+  dropout: 0.1
+
+# ============================================================================
+# TEMPORAL FUSION TRANSFORMER (TFT) MODEL PARAMETERS
+# ============================================================================
+temporal_fusion_transformer:
   # Input chunk length (encoder length)
   input_chunk_length: 24
   
@@ -255,8 +283,8 @@ model_categories:
     - deepar
     - tcn
     - nbeats
-    - transformer
-    - tft
+    - vanilla_transformer
+    - temporal_fusion_transformer
   
   # Models that require per-file training (statistical models)
   # These must be trained separately for each time series
@@ -284,6 +312,6 @@ model_categories:
     - deepar
     - tcn
     - nbeats
-    - transformer
-    - tft
+    - vanilla_transformer
+    - temporal_fusion_transformer
     - xgboost

@@ -29,7 +29,8 @@ Model Categories:
    - tcn: Temporal Convolutional Network
    - nbeats: Neural Basis Expansion Analysis
    - deepar: DeepAR probabilistic forecasting
-   - transformer: Temporal Fusion Transformer
+   - vanilla_transformer: Vanilla Transformer (encoder-decoder self-attention)
+   - temporal_fusion_transformer: Temporal Fusion Transformer (specialized for forecasting)
 
 Notes:
 ------
@@ -48,7 +49,8 @@ from .gru import predict_gru
 from .temporal_convolutional_network import predict_tcn
 from .nbeats import predict_nbeats, predict_nbeats_interpretable
 from .deepar import predict_deepar
-from .transformer import predict_transformer, predict_tft
+from .vanilla_transformer import predict_transformer
+from .temporal_fusion_transformer import predict_tft
 
 
 # Dictionary mapping model names to prediction functions
@@ -69,15 +71,15 @@ PREDICTION_MODELS = {
     'nbeats': predict_nbeats,
     'nbeats_interpretable': predict_nbeats_interpretable,
     'deepar': predict_deepar,
-    'transformer': predict_transformer,
-    'tft': predict_tft,  # Alias for transformer
+    'vanilla_transformer': predict_transformer,  # Vanilla Transformer
+    'temporal_fusion_transformer': predict_tft,  # Temporal Fusion Transformer (specialized)
 }
 
 
 # Models that benefit from GPU acceleration
 GPU_MODELS = {
     'lstm', 'gru', 'tcn', 'nbeats', 'nbeats_interpretable', 
-    'deepar', 'transformer', 'tft'
+    'deepar', 'vanilla_transformer', 'temporal_fusion_transformer'
 }
 
 
