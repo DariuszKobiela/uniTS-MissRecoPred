@@ -511,6 +511,20 @@ class PredictionModelsConfig:
         """Check if model is non-deterministic"""
         return model_name in self.get_non_deterministic_models()
     
+    def get_all_model_names(self) -> List[str]:
+        """
+        Get list of ALL known prediction model names.
+        Combines all categories: global_training + per_file + ml models.
+        
+        Returns:
+            List of all prediction model names
+        """
+        all_models = set()
+        all_models.update(self.get_global_training_models())
+        all_models.update(self.get_per_file_training_models())
+        all_models.update(self.get_ml_models())
+        return list(all_models)
+    
     # =========================================================================
     # SUMMARY
     # =========================================================================

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Streamlit Visualization App for Prediction Results
-Interactive dashboard for comparing prediction models and MAPE metrics.
+Interactive dashboard for comparing RECONSTRUCTION MODELS by prediction MAPE.
+Prediction model serves as a filter, not the main comparison axis.
 Part of uniTS-MissRecoPred framework.
 """
 
@@ -59,38 +60,39 @@ def load_training_metrics() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def plot_mape_by_model(df: pd.DataFrame, source_type: str = None, technique: str = None):
-    """Plot MAPE comparison by prediction model"""
-    df_filtered = df.copy()
+def plot_mape_by_reconstruction_model_main(df: pd.DataFrame, technique: str = None, rate: int = None):
+    """Main plot: MAPE comparison by reconstruction model (primary axis)"""
+    # Filter to only reconstructed data
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
     
     # Apply filters
-    if source_type:
-        df_filtered = df_filtered[df_filtered['source_type'] == source_type]
     if technique:
         df_filtered = df_filtered[df_filtered['technique'] == technique]
+    if rate:
+        df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
     
     if df_filtered.empty:
-        st.warning("No data available for selected filters")
+        st.warning("No reconstructed data available for selected filters")
         return
     
-    # Group by prediction_model and calculate statistics
-    df_stats = df_filtered.groupby('prediction_model')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
+    # Group by reconstruction_model and calculate statistics
+    df_stats = df_filtered.groupby('reconstruction_model')['mape'].agg(['mean', 'std', 'min', 'max', 'count']).reset_index()
     df_stats = df_stats.sort_values('mean')
     
     # Create bar plot
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        x=df_stats['prediction_model'],
+        x=df_stats['reconstruction_model'],
         y=df_stats['mean'],
         error_y=dict(type='data', array=df_stats['std']),
-        marker_color='lightblue',
+        marker_color='teal',
         name='Mean MAPE'
     ))
     
     fig.update_layout(
-        title='Mean Absolute Percentage Error by Prediction Model',
-        xaxis_title='Prediction Model',
+        title='Prediction MAPE by Reconstruction Model',
+        xaxis_title='Reconstruction Model',
         yaxis_title='MAPE (%)',
         xaxis_tickangle=-45,
         height=500
@@ -98,60 +100,128 @@ def plot_mape_by_model(df: pd.DataFrame, source_type: str = None, technique: str
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Show statistics table
+    # Show comprehensive statistics table
     st.subheader("Statistics")
-    st.dataframe(df_stats.style.format({
-        'mean': '{:.2f}%',
-        'std': '{:.2f}%',
-        'min': '{:.2f}%',
-        'max': '{:.2f}%'
-    }), use_container_width=True)
-
-
-def plot_mape_by_source_type(df: pd.DataFrame, model: str = None):
-    """Plot MAPE comparison by source type (original vs reconstructed)"""
-    df_filtered = df.copy()
     
-    # Apply filters
-    if model:
-        df_filtered = df_filtered[df_filtered['prediction_model'] == model]
+    # Calculate extended statistics
+    df_stats_extended = df_filtered.groupby('reconstruction_model').agg({
+        'mape': ['mean', 'std', 'median', 'min', 'max', 'count'],
+        'dataset_name': 'nunique',
+        'prediction_model': 'nunique'
+    }).reset_index()
+    
+    # Flatten column names
+    df_stats_extended.columns = [
+        'Reconstruction Model', 'Mean MAPE', 'Std', 'Median', 'Min', 'Max', 
+        'N Predictions', 'N Datasets', 'N Pred Models'
+    ]
+    
+    # Add derived metrics
+    df_stats_extended['CV (%)'] = (df_stats_extended['Std'] / df_stats_extended['Mean MAPE'] * 100).round(2)
+    df_stats_extended = df_stats_extended.sort_values('Mean MAPE')
+    df_stats_extended['Rank'] = range(1, len(df_stats_extended) + 1)
+    
+    # Calculate delta from best
+    best_mape = df_stats_extended['Mean MAPE'].min()
+    df_stats_extended['Δ Best'] = (df_stats_extended['Mean MAPE'] - best_mape).round(2)
+    
+    # Reorder columns
+    df_stats_extended = df_stats_extended[[
+        'Rank', 'Reconstruction Model', 'Mean MAPE', 'Median', 'Std', 'CV (%)',
+        'Min', 'Max', 'Δ Best', 'N Predictions', 'N Datasets', 'N Pred Models'
+    ]]
+    
+    # Style and display
+    st.dataframe(
+        df_stats_extended.style.format({
+            'Mean MAPE': '{:.2f}%',
+            'Median': '{:.2f}%',
+            'Std': '{:.2f}%',
+            'CV (%)': '{:.1f}%',
+            'Min': '{:.2f}%',
+            'Max': '{:.2f}%',
+            'Δ Best': '+{:.2f}%',
+            'N Predictions': '{:.0f}',
+            'N Datasets': '{:.0f}',
+            'N Pred Models': '{:.0f}',
+            'Rank': '{:.0f}'
+        }).background_gradient(subset=['Mean MAPE'], cmap='RdYlGn_r'),
+        use_container_width=True
+    )
+    
+    # Add legend/explanation
+    with st.expander("📖 Column explanations"):
+        st.markdown("""
+        - **Rank**: Position sorted by Mean MAPE (1 = best)
+        - **Mean MAPE**: Average prediction error across all predictions
+        - **Median**: Median MAPE (less sensitive to outliers)
+        - **Std**: Standard deviation of MAPE
+        - **CV (%)**: Coefficient of Variation = Std/Mean × 100 (consistency measure)
+        - **Min/Max**: Best and worst individual prediction errors
+        - **Δ Best**: Difference from the best reconstruction model
+        - **N Predictions**: Number of prediction records
+        - **N Datasets**: Number of unique datasets
+        - **N Pred Models**: Number of unique prediction models used
+        """)
+
+
+def plot_recon_by_technique(df: pd.DataFrame):
+    """Plot reconstruction model MAPE grouped by missingness technique"""
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
     
     if df_filtered.empty:
-        st.warning("No data available for selected filters")
+        st.warning("No reconstructed data available")
         return
     
-    # Group by source_type and calculate statistics
-    df_stats = df_filtered.groupby('source_type')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('mean')
+    # Group by reconstruction_model and technique
+    df_stats = df_filtered.groupby(['reconstruction_model', 'technique'])['mape'].mean().reset_index()
     
-    # Create bar plot
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_stats['source_type'],
-        y=df_stats['mean'],
-        error_y=dict(type='data', array=df_stats['std']),
-        marker_color='lightgreen',
-        name='Mean MAPE'
-    ))
+    # Create grouped bar chart
+    fig = px.bar(
+        df_stats,
+        x='reconstruction_model',
+        y='mape',
+        color='technique',
+        barmode='group',
+        title='Reconstruction Model MAPE by Missingness Technique',
+        labels={'mape': 'Mean MAPE (%)', 'reconstruction_model': 'Reconstruction Model', 'technique': 'Technique'}
+    )
     
     fig.update_layout(
-        title='Mean Absolute Percentage Error by Source Type',
-        xaxis_title='Source Type',
-        yaxis_title='MAPE (%)',
+        xaxis_tickangle=-45,
         height=500
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_recon_by_rate(df: pd.DataFrame, technique: str = None):
+    """Plot reconstruction model MAPE by missing rate"""
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
     
-    # Show statistics table
-    st.subheader("Statistics")
-    st.dataframe(df_stats.style.format({
-        'mean': '{:.2f}%',
-        'std': '{:.2f}%',
-        'min': '{:.2f}%',
-        'max': '{:.2f}%'
-    }), use_container_width=True)
+    if technique:
+        df_filtered = df_filtered[df_filtered['technique'] == technique]
+    
+    if df_filtered.empty:
+        st.warning("No reconstructed data available")
+        return
+    
+    # Group by reconstruction_model and rate
+    df_stats = df_filtered.groupby(['reconstruction_model', 'rate_percent'])['mape'].mean().reset_index()
+    
+    # Create line plot
+    fig = px.line(
+        df_stats,
+        x='rate_percent',
+        y='mape',
+        color='reconstruction_model',
+        markers=True,
+        title='Reconstruction Model MAPE by Missing Rate',
+        labels={'mape': 'Mean MAPE (%)', 'rate_percent': 'Missing Rate (%)', 'reconstruction_model': 'Reconstruction Model'}
+    )
+    
+    fig.update_layout(height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def plot_mape_by_technique(df: pd.DataFrame, model: str = None, rate: int = None):
@@ -312,6 +382,95 @@ def plot_mape_by_reconstruction_model(df: pd.DataFrame, pred_model: str = None, 
     }), use_container_width=True)
 
 
+def plot_heatmap_recon_vs_technique(df: pd.DataFrame):
+    """Plot heatmap of MAPE: reconstruction model vs technique"""
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
+    
+    if df_filtered.empty:
+        st.warning("No reconstructed data available")
+        return
+    
+    pivot_data = df_filtered.pivot_table(
+        values='mape',
+        index='reconstruction_model',
+        columns='technique',
+        aggfunc='mean'
+    )
+    
+    # Sort by mean MAPE across techniques
+    pivot_data['_mean'] = pivot_data.mean(axis=1)
+    pivot_data = pivot_data.sort_values('_mean')
+    pivot_data = pivot_data.drop('_mean', axis=1)
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_data.values,
+        x=pivot_data.columns,
+        y=pivot_data.index,
+        colorscale='RdYlGn_r',
+        text=np.round(pivot_data.values, 2),
+        texttemplate='%{text}%',
+        textfont={"size": 10},
+        colorbar=dict(title='MAPE (%)')
+    ))
+    
+    fig.update_layout(
+        title='Heatmap: Reconstruction Model vs Missingness Technique',
+        xaxis_title='Missingness Technique',
+        yaxis_title='Reconstruction Model',
+        height=max(500, len(pivot_data.index) * 35)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_heatmap_recon_vs_rate(df: pd.DataFrame, technique: str = None):
+    """Plot heatmap of MAPE: reconstruction model vs missing rate"""
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
+    
+    if technique:
+        df_filtered = df_filtered[df_filtered['technique'] == technique]
+    
+    if df_filtered.empty:
+        st.warning("No reconstructed data available")
+        return
+    
+    pivot_data = df_filtered.pivot_table(
+        values='mape',
+        index='reconstruction_model',
+        columns='rate_percent',
+        aggfunc='mean'
+    )
+    
+    # Sort by mean MAPE
+    pivot_data['_mean'] = pivot_data.mean(axis=1)
+    pivot_data = pivot_data.sort_values('_mean')
+    pivot_data = pivot_data.drop('_mean', axis=1)
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_data.values,
+        x=[f"{int(r)}%" for r in pivot_data.columns],
+        y=pivot_data.index,
+        colorscale='RdYlGn_r',
+        text=np.round(pivot_data.values, 2),
+        texttemplate='%{text}%',
+        textfont={"size": 10},
+        colorbar=dict(title='MAPE (%)')
+    ))
+    
+    title = 'Heatmap: Reconstruction Model vs Missing Rate'
+    if technique:
+        title += f' ({technique})'
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Missing Rate',
+        yaxis_title='Reconstruction Model',
+        height=max(500, len(pivot_data.index) * 35)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def plot_heatmap_pred_vs_recon(df: pd.DataFrame, sort_by_model: str = None):
     """Plot heatmap of MAPE for prediction model vs reconstruction model"""
     # Filter to only reconstructed data
@@ -430,9 +589,15 @@ def plot_dataset_comparison(df: pd.DataFrame):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
-    """Show best and worst performing prediction models"""
-    df_stats = df.groupby('prediction_model')['mape'].mean().reset_index()
+def plot_best_worst_reconstruction_models(df: pd.DataFrame, top_n: int = 10):
+    """Show best and worst performing RECONSTRUCTION models"""
+    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
+    
+    if df_filtered.empty:
+        st.warning("No reconstructed data available")
+        return
+    
+    df_stats = df_filtered.groupby('reconstruction_model')['mape'].mean().reset_index()
     df_stats = df_stats.sort_values('mape')
     
     # Calculate global MAPE range for consistent axis scaling
@@ -440,29 +605,30 @@ def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
     global_max = df_stats['mape'].max()
     axis_range = [global_min * 0.95, global_max * 1.05]
     
-    # Best models (lowest MAPE) - reverse order for display (best on top)
+    # Adjust top_n if we have fewer models
+    top_n = min(top_n, len(df_stats) // 2) if len(df_stats) > 2 else len(df_stats)
+    
+    # Best models (lowest MAPE)
     best_models = df_stats.head(top_n).iloc[::-1]
     
-    # Worst models (highest MAPE) - reverse order for display (worst on top)
+    # Worst models (highest MAPE)
     worst_models = df_stats.tail(top_n)
     
     # Create subplots
     fig = make_subplots(
         rows=1, cols=2,
-        subplot_titles=(f'Top {top_n} Best Models (Lowest MAPE)', 
-                       f'Top {top_n} Worst Models (Highest MAPE)')
+        subplot_titles=(f'Top {top_n} Best Reconstruction Models', 
+                       f'Top {top_n} Worst Reconstruction Models')
     )
     
-    # Best models
     fig.add_trace(
-        go.Bar(x=best_models['mape'], y=best_models['prediction_model'], 
+        go.Bar(x=best_models['mape'], y=best_models['reconstruction_model'], 
                orientation='h', marker_color='green', name='Best'),
         row=1, col=1
     )
     
-    # Worst models
     fig.add_trace(
-        go.Bar(x=worst_models['mape'], y=worst_models['prediction_model'], 
+        go.Bar(x=worst_models['mape'], y=worst_models['reconstruction_model'], 
                orientation='h', marker_color='red', name='Worst'),
         row=1, col=2
     )
@@ -517,12 +683,13 @@ def plot_iteration_analysis(df: pd.DataFrame):
 
 def main():
     st.set_page_config(
-        page_title="Time Series Prediction Visualization",
-        page_icon="🔮",
+        page_title="Reconstruction Model Comparison",
+        page_icon="🔧",
         layout="wide"
     )
     
-    st.title("🔮 Time Series Prediction Results Visualization")
+    st.title("🔧 Reconstruction Model Comparison by Prediction MAPE")
+    st.caption("Compare how different reconstruction methods affect prediction accuracy")
     st.markdown("---")
     
     # Sidebar for file selection
@@ -558,22 +725,29 @@ def main():
     st.sidebar.info(f"File: {selected_file_name}")
     
     # Main filters
-    st.sidebar.header("Filters")
-    st.sidebar.info("🌍 **Global filters** - apply to all tabs")
+    st.sidebar.header("🔍 Filters")
+    st.sidebar.info("Prediction model = filter, Reconstruction model = main comparison axis")
     
     # Get unique values
     all_datasets = sorted(df['dataset_name'].unique().tolist())
     all_pred_models = sorted(df['prediction_model'].unique().tolist())
-    all_source_types = sorted(df['source_type'].unique().tolist())
     
     # Get techniques and rates (may have NaN for original data)
     all_techniques = sorted([t for t in df['technique'].dropna().unique().tolist()])
     all_rates = sorted([r for r in df['rate_percent'].dropna().unique().tolist()])
     all_recon_models = sorted([m for m in df['reconstruction_model'].dropna().unique().tolist()])
     
+    # Global filters in sidebar
+    st.sidebar.subheader("🌍 Global Filters")
+    selected_pred_models = st.sidebar.multiselect(
+        "Prediction Models",
+        all_pred_models,
+        default=all_pred_models,
+        help="Select prediction models to include in analysis"
+    )
     selected_datasets = st.sidebar.multiselect("Dataset", all_datasets, default=all_datasets)
-    selected_pred_models = st.sidebar.multiselect("Prediction Model", all_pred_models, default=all_pred_models)
-    selected_source_types = st.sidebar.multiselect("Source Type", all_source_types, default=all_source_types)
+    selected_techniques = st.sidebar.multiselect("Technique", all_techniques, default=all_techniques)
+    selected_rates = st.sidebar.multiselect("Missing Rate (%)", [int(r) for r in all_rates], default=[int(r) for r in all_rates])
     
     # Apply filters to dataframe
     df_filtered = df.copy()
@@ -581,63 +755,70 @@ def main():
         df_filtered = df_filtered[df_filtered['dataset_name'].isin(selected_datasets)]
     if selected_pred_models:
         df_filtered = df_filtered[df_filtered['prediction_model'].isin(selected_pred_models)]
-    if selected_source_types:
-        df_filtered = df_filtered[df_filtered['source_type'].isin(selected_source_types)]
+    
+    # Filter reconstructed data by technique and rate
+    df_recon = df_filtered[df_filtered['source_type'] == 'reconstructed'].copy()
+    if selected_techniques:
+        df_recon = df_recon[df_recon['technique'].isin(selected_techniques)]
+    if selected_rates:
+        df_recon = df_recon[df_recon['rate_percent'].isin(selected_rates)]
     
     # Filter out NaN MAPE values
     df_filtered = df_filtered[df_filtered['mape'].notna()]
+    df_recon = df_recon[df_recon['mape'].notna()]
     
-    # Display overview metrics
-    st.header("📈 Overview")
+    # Display overview metrics for RECONSTRUCTION MODELS
+    st.header("📈 Overview: Reconstruction Models")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Total Records", len(df_filtered))
-    with col2:
-        st.metric("Mean MAPE", f"{df_filtered['mape'].mean():.2f}%")
-    with col3:
-        st.metric("Median MAPE", f"{df_filtered['mape'].median():.2f}%")
-    with col4:
-        st.metric("Best MAPE", f"{df_filtered['mape'].min():.2f}%")
-    with col5:
-        st.metric("Worst MAPE", f"{df_filtered['mape'].max():.2f}%")
+    if len(df_recon) > 0:
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Recon Models", df_recon['reconstruction_model'].nunique())
+        with col2:
+            st.metric("Mean MAPE", f"{df_recon['mape'].mean():.2f}%")
+        with col3:
+            best_model = df_recon.groupby('reconstruction_model')['mape'].mean().idxmin()
+            st.metric("Best Model", best_model)
+        with col4:
+            st.metric("Best MAPE", f"{df_recon.groupby('reconstruction_model')['mape'].mean().min():.2f}%")
+        with col5:
+            st.metric("Total Records", len(df_recon))
+    else:
+        st.warning("No reconstructed data with current filters")
     
     st.markdown("---")
     
     # Load training metrics for new tabs
     df_training = load_training_metrics()
     
-    # Visualization tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
-        "📊 By Pred Model", 
-        "🎯 By Source Type",
+    # Visualization tabs - RECONSTRUCTION MODEL focused
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "🔧 By Recon Model",
         "📉 By Technique", 
         "📈 By Missing Rate",
-        "📁 By Dataset",
-        "⚡ By Efficiency",
         "🔥 Heatmaps",
-        "📊 Statistical Tests",
         "🏆 Best/Worst",
-        "🔄 Iteration Analysis",
-        "⏱️ Prediction Time",
-        "💻 Resource Usage",
-        "🎓 Training Time",
-        "⏱️ Total Time",
+        "📊 Statistical Tests",
+        "📁 By Dataset",
+        "⏱️ Performance",
+        "💻 Resources",
         "📋 Raw Data"
     ])
     
+    # Tab 1: Main comparison - Reconstruction Models
     with tab1:
-        st.header("Comparison by Prediction Model")
-        st.caption("📍 Local filters - apply only to this tab")
+        st.header("🔧 Comparison by Reconstruction Model")
+        st.caption("Main axis: Which reconstruction method produces best prediction results?")
         
-        # Sub-filters
-        col1, col2 = st.columns(2)
+        # Local filters - 3 columns
+        col1, col2, col3 = st.columns(3)
         with col1:
-            filter_source = st.selectbox(
-                "Filter by Source Type",
-                ['All'] + all_source_types,
-                key='tab1_source'
+            filter_pred_model = st.selectbox(
+                "Filter by Prediction Model",
+                ['All'] + all_pred_models,
+                key='tab1_pred_model',
+                index=1,
+                help="Select ONE prediction model to compare reconstruction methods"
             )
         with col2:
             filter_technique = st.selectbox(
@@ -645,331 +826,252 @@ def main():
                 ['All'] + all_techniques,
                 key='tab1_technique'
             )
-        
-        plot_mape_by_model(
-            df_filtered,
-            source_type=None if filter_source == 'All' else filter_source,
-            technique=None if filter_technique == 'All' else filter_technique
-        )
-    
-    with tab2:
-        st.header("Comparison by Source Type")
-        st.caption("Original (clean training data) vs Reconstructed (fixed missing data)")
-        
-        filter_model = st.selectbox(
-            "Filter by Prediction Model",
-            ['All'] + all_pred_models,
-            key='tab2_model'
-        )
-        
-        plot_mape_by_source_type(
-            df_filtered,
-            model=None if filter_model == 'All' else filter_model
-        )
-    
-    with tab3:
-        st.header("Comparison by Reconstruction Model")
-        st.caption("Which reconstruction methods produce best data for prediction?")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_pred = st.selectbox(
-                "Filter by Prediction Model",
-                ['All'] + all_pred_models,
-                key='tab3_pred'
-            )
-        with col2:
-            filter_technique = st.selectbox(
-                "Filter by Technique",
-                ['All'] + all_techniques,
-                key='tab3_technique'
-            )
-        
-        plot_mape_by_reconstruction_model(
-            df_filtered,
-            pred_model=None if filter_pred == 'All' else filter_pred,
-            technique=None if filter_technique == 'All' else filter_technique
-        )
-    
-    with tab4:
-        st.header("Comparison by Missingness Technique")
-        st.caption("📍 Only for reconstructed data")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_model = st.selectbox(
-                "Filter by Prediction Model",
-                ['All'] + all_pred_models,
-                key='tab4_model'
-            )
-        with col2:
+        with col3:
             filter_rate = st.selectbox(
                 "Filter by Missing Rate (%)",
                 ['All'] + [int(r) for r in all_rates],
-                key='tab4_rate'
+                key='tab1_rate'
             )
         
-        plot_mape_by_technique(
-            df_filtered,
-            model=None if filter_model == 'All' else filter_model,
+        # Apply local prediction model filter
+        df_tab1 = df_recon.copy()
+        if filter_pred_model != 'All':
+            df_tab1 = df_tab1[df_tab1['prediction_model'] == filter_pred_model]
+            st.info(f"📊 Showing results for prediction model: **{filter_pred_model}**")
+        
+        plot_mape_by_reconstruction_model_main(
+            df_tab1,
+            technique=None if filter_technique == 'All' else filter_technique,
             rate=None if filter_rate == 'All' else filter_rate
         )
-    
-    with tab5:
-        st.header("Comparison by Missing Rate")
-        st.caption("📍 Only for reconstructed data")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_model = st.selectbox(
-                "Filter by Prediction Model",
-                ['All'] + all_pred_models,
-                key='tab5_model'
+        # Data for detailed stats (technique + rate only, so all prediction models)
+        df_tab1_detail = df_recon.copy()
+        if filter_technique != 'All':
+            df_tab1_detail = df_tab1_detail[df_tab1_detail['technique'] == filter_technique]
+        if filter_rate != 'All':
+            df_tab1_detail = df_tab1_detail[df_tab1_detail['rate_percent'] == filter_rate]
+        
+        st.markdown("---")
+        st.subheader("📊 Detailed Statistics: MAPE per Reconstruction × Prediction Model")
+        st.caption("Mean MAPE for each combination of reconstruction model and prediction model")
+        
+        if len(df_tab1_detail) > 0:
+            # Pivot: pred_model (rows, first column) × recon_model (columns) → mean MAPE
+            pivot_mean = df_tab1_detail.pivot_table(
+                values='mape',
+                index='prediction_model',
+                columns='reconstruction_model',
+                aggfunc='mean'
+            ).round(2)
+            pivot_count = df_tab1_detail.pivot_table(
+                values='mape',
+                index='prediction_model',
+                columns='reconstruction_model',
+                aggfunc='count'
             )
-        with col2:
-            filter_technique = st.selectbox(
-                "Filter by Technique",
-                ['All'] + all_techniques,
-                key='tab5_technique'
-            )
-        
-        plot_mape_by_rate(
-            df_filtered,
-            model=None if filter_model == 'All' else filter_model,
-            technique=None if filter_technique == 'All' else filter_technique
-        )
-    
-    with tab6:
-        st.header("Comparison by Dataset")
-        
-        if len(df_filtered) > 0:
-            plot_dataset_comparison(df_filtered)
-        else:
-            st.warning("No data available with current filters")
-    
-    with tab7:
-        st.header("⚡ Resource Efficiency Analysis")
-        st.caption("Lower values = more efficient (less time and resources)")
-        
-        # Check if performance metrics are available
-        if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
-            st.warning("⚠️ No performance metrics available. Run predictions first to collect performance data.")
-        else:
-            df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
             
-            if len(df_perf) == 0:
-                st.warning("No performance data available with current filters")
-            else:
-                # Explanation of efficiency score calculation
-                with st.expander("ℹ️ How is the Efficiency Score calculated?", expanded=False):
-                    st.markdown("""
-                    The **Efficiency Score** combines four normalized metrics to provide an overall computational efficiency rating:
-                    
-                    **Formula:**
-                    ```
-                    Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
-                    ```
-                    
-                    **Components:**
-                    - **Time_norm**: Normalized execution time (0 to 1 scale)
-                        - `(time - min_time) / (max_time - min_time)`
-                    - **CPU_norm**: CPU cores utilized relative to total available cores
-                        - `cpu_cores_used / cpu_cores_total`
-                    - **Memory_norm**: Normalized RAM usage (0 to 1 scale)
-                        - `(memory - min_memory) / (max_memory - min_memory)`
-                    - **GPU_norm**: GPU memory utilized relative to total GPU memory (0 to 1 scale)
-                        - `gpu_memory_used / gpu_memory_total` (0 for CPU-only models)
-                    
-                    **Interpretation:**
-                    - **Lower score** = more efficient (faster execution, less CPU/RAM/GPU usage)
-                    - **Higher score** = less efficient (slower, more resource-intensive)
-                    - Score typically ranges from ~0 (most efficient) to ~4 (least efficient)
-                    - GPU-based models typically have higher scores due to GPU memory usage
-                    
-                    **Use Cases:**
-                    - Select models for resource-constrained environments
-                    - Balance prediction quality (MAPE) vs. computational cost
-                    - Compare CPU-based vs. GPU-based models fairly
-                    """)
-                
-                st.divider()
-                
-                # Create efficiency score: normalize time, CPU, RAM, and GPU
-                df_perf_copy = df_perf.copy()
-                df_perf_copy['time_norm'] = (df_perf_copy['time_seconds'] - df_perf_copy['time_seconds'].min()) / (df_perf_copy['time_seconds'].max() - df_perf_copy['time_seconds'].min() + 0.001)
-                # Normalize CPU cores (divide by total available cores)
-                total_cores = df_perf_copy['cpu_cores_total'].mode()[0] if 'cpu_cores_total' in df_perf_copy.columns and df_perf_copy['cpu_cores_total'].notna().any() else 1
-                df_perf_copy['cpu_norm'] = df_perf_copy['cpu_cores_used'] / total_cores
-                df_perf_copy['mem_norm'] = (df_perf_copy['memory_mb'] - df_perf_copy['memory_mb'].min()) / (df_perf_copy['memory_mb'].max() - df_perf_copy['memory_mb'].min() + 0.001)
-                
-                # Normalize GPU memory (if available)
-                if 'gpu_memory_mb' in df_perf_copy.columns and 'gpu_memory_total_mb' in df_perf_copy.columns:
-                    df_perf_copy['gpu_norm'] = df_perf_copy.apply(
-                        lambda row: (row['gpu_memory_mb'] / row['gpu_memory_total_mb']) 
-                        if pd.notna(row['gpu_memory_mb']) and pd.notna(row['gpu_memory_total_mb']) and row['gpu_memory_total_mb'] > 0
-                        else 0.0,
-                        axis=1
-                    )
-                else:
-                    df_perf_copy['gpu_norm'] = 0.0
-                
-                # Combined efficiency score: lower = better
-                df_perf_copy['efficiency_score'] = df_perf_copy['time_norm'] + df_perf_copy['cpu_norm'] + df_perf_copy['mem_norm'] + df_perf_copy['gpu_norm']
-                
-                efficiency = df_perf_copy.groupby('prediction_model')['efficiency_score'].mean().reset_index()
-                efficiency = efficiency.sort_values('efficiency_score', ascending=False)
-                
-                # Overall efficiency score by model
-                st.subheader("Overall Efficiency Score by Prediction Model")
-                st.caption("Models sorted by efficiency (best to worst)")
-                
-                fig = px.bar(
-                    efficiency,
-                    x='efficiency_score',
-                    y='prediction_model',
-                    orientation='h',
-                    title="Overall Efficiency Score by Model (lower = better)",
-                    labels={'efficiency_score': 'Efficiency Score', 'prediction_model': 'Model'},
-                    color='efficiency_score',
-                    color_continuous_scale='RdYlGn_r'
-                )
-                fig.update_layout(height=max(400, len(efficiency) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Combined scatter plot
-                st.subheader("Time vs Memory Usage")
-                st.caption("Bubble size represents combined CPU + GPU utilization")
-                
-                # Aggregate metrics including GPU
-                agg_cols = {
-                    'time_seconds': 'mean',
-                    'memory_mb': 'mean',
-                    'cpu_cores_used': 'mean',
-                }
-                if 'gpu_memory_mb' in df_perf.columns:
-                    agg_cols['gpu_memory_mb'] = 'mean'
-                if 'gpu_memory_total_mb' in df_perf.columns:
-                    agg_cols['gpu_memory_total_mb'] = 'mean'
-                
-                model_summary = df_perf.groupby('prediction_model').agg(agg_cols).reset_index()
-                
-                # Calculate combined CPU + GPU metric for bubble size
-                if 'gpu_memory_mb' in model_summary.columns and 'gpu_memory_total_mb' in model_summary.columns:
-                    model_summary['gpu_normalized'] = model_summary.apply(
-                        lambda row: (row['gpu_memory_mb'] / row['gpu_memory_total_mb']) * 4.0
-                        if pd.notna(row['gpu_memory_mb']) and pd.notna(row['gpu_memory_total_mb']) and row['gpu_memory_total_mb'] > 0
-                        else 0.0,
-                        axis=1
-                    )
-                else:
-                    model_summary['gpu_normalized'] = 0.0
-                
-                model_summary['combined_compute'] = model_summary['cpu_cores_used'] + model_summary['gpu_normalized']
-                
-                # Determine if model uses GPU for coloring
-                model_summary['compute_type'] = model_summary['gpu_normalized'].apply(
-                    lambda x: 'CPU+GPU' if x > 0 else 'CPU only'
-                )
-                
-                fig = px.scatter(
-                    model_summary,
-                    x='time_seconds',
-                    y='memory_mb',
-                    size='combined_compute',
-                    text='prediction_model',
-                    title="Time vs Memory (bubble size = CPU + GPU utilization)",
-                    labels={'time_seconds': 'Avg Time (seconds)', 'memory_mb': 'Avg Memory (MB)'},
-                    color='compute_type',
-                    color_discrete_map={'CPU only': '#3498db', 'CPU+GPU': '#e74c3c'}
-                )
-                fig.update_traces(textposition='top center')
-                st.plotly_chart(fig, use_container_width=True)
+            # Style: per row — all cells with min MAPE = green, all with max MAPE = red (tolerance for floats)
+            def highlight_best_worst_per_row(row):
+                min_val = row.min()
+                max_val = row.max()
+                # Tolerance so that equal floats (e.g. 10.00 and 10.00) are treated the same
+                tol = 1e-6
+                is_min = lambda v: pd.notna(v) and (abs(v - min_val) <= tol or (min_val == max_val))
+                is_max = lambda v: pd.notna(v) and min_val != max_val and (abs(v - max_val) <= tol)
+                return [
+                    'background-color: #90EE90' if is_min(v)
+                    else 'background-color: #FFB6C1' if is_max(v)
+                    else ''
+                    for v in row
+                ]
+            
+            st.write("**Mean MAPE (%)** — per row: green = best reconstruction model, red = worst")
+            st.dataframe(
+                pivot_mean.style
+                .apply(highlight_best_worst_per_row, axis=1)
+                .format('{:.2f}%', na_rep='—'),
+                use_container_width=True
+            )
+            
+            with st.expander("📋 Show count of predictions per cell"):
+                st.dataframe(pivot_count.astype(int), use_container_width=True)
+            
+            # Per-reconstruction-model stats across all prediction models
+            st.write("**Summary per Reconstruction Model (across all prediction models)**")
+            recon_summary = df_tab1_detail.groupby('reconstruction_model')['mape'].agg([
+                'mean', 'std', 'median', 'min', 'max', 'count'
+            ]).round(2)
+            recon_summary.columns = ['Mean MAPE', 'Std', 'Median', 'Min', 'Max', 'N']
+            recon_summary = recon_summary.sort_values('Mean MAPE')
+            st.dataframe(
+                recon_summary.style.format({
+                    'Mean MAPE': '{:.2f}%',
+                    'Std': '{:.2f}%',
+                    'Median': '{:.2f}%',
+                    'Min': '{:.2f}%',
+                    'Max': '{:.2f}%',
+                    'N': '{:.0f}'
+                }),
+                use_container_width=True
+            )
+        else:
+            st.warning("No data for detailed statistics with current filters.")
+        
+        st.markdown("---")
+        st.subheader("📋 MAPE per Prediction (each row = one prediction)")
+        st.caption("Every prediction record: dataset, technique, rate, reconstruction model, prediction model, MAPE")
+        
+        if len(df_tab1) > 0:
+            # Columns for per-row view (MAPE only, no MAE/RMSE)
+            row_cols = [
+                'dataset_name', 'technique', 'rate_percent',
+                'reconstruction_model', 'prediction_model', 'prediction_iteration',
+                'mape'
+            ]
+            if 'n_samples' in df_tab1.columns:
+                row_cols.append('n_samples')
+            
+            df_rows = df_tab1[[c for c in row_cols if c in df_tab1.columns]].copy()
+            df_rows = df_rows.sort_values(['reconstruction_model', 'prediction_model', 'dataset_name', 'technique', 'rate_percent'])
+            df_rows = df_rows.rename(columns={
+                'dataset_name': 'Dataset',
+                'technique': 'Technique',
+                'rate_percent': 'Rate %',
+                'reconstruction_model': 'Recon Model',
+                'prediction_model': 'Pred Model',
+                'prediction_iteration': 'Pred Iter',
+                'mape': 'MAPE (%)',
+                'n_samples': 'N Samples'
+            })
+            
+            n_show = st.slider("Show first N rows", 10, 500, min(100, len(df_rows)), key='tab1_rows_slider')
+            fmt_dict = {'MAPE (%)': '{:.2f}%'}
+            if 'Rate %' in df_rows.columns:
+                fmt_dict['Rate %'] = '{:.0f}'
+            if 'N Samples' in df_rows.columns:
+                fmt_dict['N Samples'] = '{:.0f}'
+            st.dataframe(
+                df_rows.head(n_show).style.format(fmt_dict, na_rep='—'),
+                use_container_width=True,
+                height=400
+            )
+            st.caption(f"Showing {min(n_show, len(df_rows))} of {len(df_rows)} prediction rows.")
+            
+            # Download full per-row data
+            csv_rows = df_rows.to_csv(index=False)
+            st.download_button(
+                label="📥 Download full per-prediction data (CSV)",
+                data=csv_rows,
+                file_name="mape_per_prediction_tab1.csv",
+                mime="text/csv",
+                key='tab1_download_rows'
+            )
+        else:
+            st.warning("No prediction rows with current filters.")
     
-    with tab8:
-        st.header("Heatmaps")
+    # Tab 2: By Technique
+    with tab2:
+        st.header("📉 Reconstruction Models by Missingness Technique")
+        st.caption("How do reconstruction models perform across different missingness types?")
+        
+        if len(df_recon) > 0:
+            plot_recon_by_technique(df_recon)
+        else:
+            st.warning("No reconstructed data available")
+    
+    # Tab 3: By Missing Rate
+    with tab3:
+        st.header("📈 Reconstruction Models by Missing Rate")
+        st.caption("How does prediction MAPE change with increasing missing rate?")
+        
+        filter_technique = st.selectbox(
+            "Filter by Technique",
+            ['All'] + all_techniques,
+            key='tab3_technique'
+        )
+        
+        if len(df_recon) > 0:
+            plot_recon_by_rate(
+                df_recon,
+                technique=None if filter_technique == 'All' else filter_technique
+            )
+        else:
+            st.warning("No reconstructed data available")
+    
+    # Tab 4: Heatmaps
+    with tab4:
+        st.header("🔥 Heatmaps")
+        st.caption("Visual comparison matrices for reconstruction models")
         
         heatmap_type = st.radio(
             "Select heatmap type",
-            ["Prediction Model vs Reconstruction Model", "Prediction Model vs Technique"],
+            ["Recon Model vs Technique", "Recon Model vs Missing Rate", "Pred Model vs Recon Model"],
             horizontal=True
         )
         
-        if heatmap_type == "Prediction Model vs Reconstruction Model":
-            # Get available reconstruction models for sorting
-            if len(df_filtered) > 0:
-                recon_models = ['Alphabetical'] + all_recon_models
-            else:
-                recon_models = ['Alphabetical']
-            
-            sort_choice = st.selectbox(
-                "Sort prediction models by",
-                recon_models,
-                help="Sort prediction models by MAPE on selected reconstruction model"
+        if len(df_recon) == 0:
+            st.warning("No reconstructed data available")
+        elif heatmap_type == "Recon Model vs Technique":
+            plot_heatmap_recon_vs_technique(df_recon)
+        elif heatmap_type == "Recon Model vs Missing Rate":
+            filter_technique = st.selectbox(
+                "Filter by Technique",
+                ['All'] + all_techniques,
+                key='tab4_technique_filter'
             )
-            
-            if len(df_filtered) > 0:
-                sort_by = None if sort_choice == 'Alphabetical' else sort_choice
-                plot_heatmap_pred_vs_recon(df_filtered, sort_by_model=sort_by)
-            else:
-                st.warning("No data available")
+            plot_heatmap_recon_vs_rate(
+                df_recon,
+                technique=None if filter_technique == 'All' else filter_technique
+            )
         else:
-            # Get available techniques for sorting
-            if len(df_filtered) > 0:
-                techniques = ['Alphabetical'] + all_techniques
-            else:
-                techniques = ['Alphabetical']
-            
-            sort_choice = st.selectbox(
-                "Sort prediction models by",
-                techniques,
-                help="Sort prediction models by MAPE on selected technique"
-            )
-            
-            if len(df_filtered) > 0:
-                sort_by = None if sort_choice == 'Alphabetical' else sort_choice
-                plot_heatmap_pred_vs_technique(df_filtered, sort_by_technique=sort_by)
-            else:
-                st.warning("No data available")
+            plot_heatmap_pred_vs_recon(df_recon)
     
-    with tab9:
-        st.header("📊 Statistical Significance Tests")
-        st.caption("Pairwise t-tests between prediction models - which differences are statistically significant?")
+    # Tab 5: Best/Worst
+    with tab5:
+        st.header("🏆 Best and Worst Reconstruction Models")
         
-        if len(df_filtered) == 0:
-            st.warning("No data available with current filters")
+        top_n = st.slider("Number of models to show", 3, 10, min(5, len(all_recon_models)))
+        
+        if len(df_recon) > 0:
+            plot_best_worst_reconstruction_models(df_recon, top_n=top_n)
         else:
-            # Import statistical test functions
+            st.warning("No reconstructed data available")
+    
+    # Tab 6: Statistical Tests
+    with tab6:
+        st.header("📊 Statistical Significance Tests")
+        st.caption("Pairwise t-tests between RECONSTRUCTION models")
+        
+        if len(df_recon) == 0:
+            st.warning("No reconstructed data available")
+        else:
             from utils.statistical_tests import (
                 perform_pairwise_ttests, 
-                get_pairwise_pvalues,
                 get_model_statistics,
                 get_significance_summary
             )
             
-            # Info box
             with st.expander("ℹ️ How to interpret this analysis", expanded=False):
                 st.markdown("""
                 **Statistical Significance Testing**:
                 
-                This tab performs **pairwise t-tests** between all prediction models to determine if performance differences are statistically significant.
+                Pairwise t-tests between reconstruction models to determine if MAPE differences are statistically significant.
                 
                 **Legend**:
-                - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model (highly significant)
+                - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model
                 - **🟢 +1 (p<0.05)**: Row model is **significantly better** than column model
                 - **⬜ 0**: No significant difference
                 - **🔴 -1 (p<0.05)**: Row model is **significantly worse** than column model
-                - **🟥 -2 (p<0.01)**: Row model is **significantly worse** than column model (highly significant)
-                
-                **Note**: Lower MAPE = better performance.
+                - **🟥 -2 (p<0.01)**: Row model is **significantly worse** than column model
                 """)
             
             st.divider()
             
             # Rename column for statistical functions
-            df_for_stats = df_filtered.rename(columns={'prediction_model': 'model'})
+            df_for_stats = df_recon.rename(columns={'reconstruction_model': 'model'})
             
-            # Calculate statistics
-            st.subheader("Model Performance Statistics")
+            st.subheader("Reconstruction Model Statistics")
             model_stats = get_model_statistics(df_for_stats, metric='mape')
             st.dataframe(
                 model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
@@ -978,7 +1080,6 @@ def main():
             
             st.divider()
             
-            # Perform pairwise t-tests
             st.subheader("Pairwise Statistical Significance Matrix")
             significance_matrix = perform_pairwise_ttests(df_for_stats, metric='mape', alpha_01=0.01, alpha_05=0.05)
             
@@ -997,379 +1098,153 @@ def main():
                     return 'background-color: #CCCCCC; color: black'
             
             styled_matrix = significance_matrix.style.map(color_significance)
-            st.dataframe(styled_matrix, use_container_width=True, height=600)
+            st.dataframe(styled_matrix, use_container_width=True, height=500)
             
-            st.caption("""
-            **Legend**: 🟩 +2 (p<0.01 better) | 🟢 +1 (p<0.05 better) | ⬜ 0 (no diff) | 🔴 -1 (p<0.05 worse) | 🟥 -2 (p<0.01 worse)
-            """)
+            st.caption("**Legend**: 🟩 +2 (p<0.01 better) | 🟢 +1 (p<0.05 better) | ⬜ 0 (no diff) | 🔴 -1 (p<0.05 worse) | 🟥 -2 (p<0.01 worse)")
             
             st.divider()
             
-            # Summary
-            st.subheader("Significance Summary by Model")
+            st.subheader("Significance Summary")
             significance_summary = get_significance_summary(significance_matrix)
-            summary_df = pd.DataFrame(significance_summary).T
-            summary_df = summary_df.reset_index()
-            summary_df.columns = ['Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Difference', 'Worse (p<0.05)', 'Worse (p<0.01)']
+            summary_df = pd.DataFrame(significance_summary).T.reset_index()
+            summary_df.columns = ['Recon Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Diff', 'Worse (p<0.05)', 'Worse (p<0.01)']
             summary_df = summary_df.sort_values('Better (p<0.01)', ascending=False)
             st.dataframe(summary_df, use_container_width=True)
     
-    with tab10:
-        st.header("Best and Worst Performing Prediction Models")
+    # Tab 7: By Dataset
+    with tab7:
+        st.header("📁 Comparison by Dataset")
         
-        top_n = st.slider("Number of models to show", 3, 15, min(10, len(all_pred_models)))
-        
-        if len(df_filtered) > 0:
-            plot_best_worst_models(df_filtered, top_n=top_n)
-        else:
-            st.warning("No data available with current filters")
-    
-    with tab11:
-        st.header("🔄 Iteration Analysis")
-        st.caption("Analyze variance across multiple training iterations (for non-deterministic models)")
-        
-        if len(df_filtered) > 0:
-            plot_iteration_analysis(df_filtered)
-        else:
-            st.warning("No data available with current filters")
-    
-    with tab12:
-        st.header("⏱️ Computation Time Analysis")
-        st.caption("📍 Computational complexity metrics - execution time")
-        
-        if 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
-            st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `7_predict_datasets.py` again to collect performance metrics, then `8_calculate_prediction_error.py` to merge them.")
-        else:
-            df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
+        if len(df_recon) > 0:
+            df_stats = df_recon.groupby(['reconstruction_model', 'dataset_name'])['mape'].mean().reset_index()
             
-            if df_perf.empty:
-                st.warning("❌ No performance data after filtering")
-            else:
-                st.success(f"✅ Showing {len(df_perf)} records with performance metrics")
+            fig = px.bar(
+                df_stats,
+                x='dataset_name',
+                y='mape',
+                color='reconstruction_model',
+                barmode='group',
+                title='Reconstruction Model MAPE by Dataset',
+                labels={'mape': 'Mean MAPE (%)', 'dataset_name': 'Dataset', 'reconstruction_model': 'Recon Model'}
+            )
+            fig.update_layout(xaxis_tickangle=-45, height=500)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No reconstructed data available")
+    
+    # Tab 8: Performance (Time) - Training + Prediction
+    with tab8:
+        st.header("⏱️ Time Analysis (Training + Prediction)")
+        
+        # Load training metrics
+        df_training = load_training_metrics()
+        has_training = not df_training.empty and 'time_seconds' in df_training.columns
+        has_prediction = 'time_seconds' in df_filtered.columns and not df_filtered['time_seconds'].isna().all()
+        
+        if not has_training and not has_prediction:
+            st.warning("⚠️ No time metrics available.")
+        else:
+            # === TRAINING TIME SECTION ===
+            st.subheader("🎓 Training Time")
+            
+            if has_training:
+                df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
                 
-                # Summary statistics
-                st.subheader("⏱️ Execution Time Summary")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Time", f"{df_perf['time_seconds'].sum():.1f}s")
-                with col2:
-                    st.metric("Average Time", f"{df_perf['time_seconds'].mean():.2f}s")
-                with col3:
-                    st.metric("Fastest", f"{df_perf['time_seconds'].min():.2f}s")
-                with col4:
-                    st.metric("Slowest", f"{df_perf['time_seconds'].max():.2f}s")
-                
-                st.markdown("---")
-                
-                # Time by prediction model
-                st.subheader("Execution Time by Prediction Model")
-                model_time = df_perf.groupby('prediction_model')['time_seconds'].agg(['mean', 'std', 'min', 'max', 'count']).reset_index()
-                model_time = model_time.sort_values('mean', ascending=False)
-                
-                fig = px.bar(
-                    model_time,
-                    x='mean',
-                    y='prediction_model',
-                    orientation='h',
-                    error_x='std',
-                    title="Average Execution Time by Prediction Model (with std dev)",
-                    labels={'mean': 'Average Time (seconds)', 'prediction_model': 'Model'},
-                    color='mean',
-                    color_continuous_scale='Reds'
-                )
-                fig.update_layout(height=max(400, len(model_time) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Time comparison: boxplot
-                st.subheader("Time Distribution by Model")
-                fig = px.box(
-                    df_perf,
-                    x='prediction_model',
-                    y='time_seconds',
-                    title="Execution Time Distribution",
-                    labels={'time_seconds': 'Time (seconds)', 'prediction_model': 'Model'},
-                    color='prediction_model'
-                )
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Time by source type and reconstruction model
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("Average Time by Source Type")
-                    source_time = df_perf.groupby('source_type')['time_seconds'].mean().reset_index()
+                if len(df_train_valid) > 0:
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Training", f"{df_train_valid['time_seconds'].sum():.1f}s")
+                    with col2:
+                        st.metric("Avg per Model", f"{df_train_valid['time_seconds'].mean():.1f}s")
+                    with col3:
+                        st.metric("Fastest", f"{df_train_valid['time_seconds'].min():.1f}s")
+                    with col4:
+                        st.metric("Slowest", f"{df_train_valid['time_seconds'].max():.1f}s")
+                    
+                    # Training time by model
+                    train_time = df_train_valid.groupby('model')['time_seconds'].agg(['mean', 'std', 'sum']).reset_index()
+                    train_time = train_time.sort_values('mean', ascending=False)
+                    
                     fig = px.bar(
-                        source_time,
-                        x='source_type',
-                        y='time_seconds',
-                        title="Average Time by Source Type",
-                        labels={'time_seconds': 'Avg Time (seconds)', 'source_type': 'Source'},
-                        color='time_seconds',
+                        train_time,
+                        x='mean',
+                        y='model',
+                        orientation='h',
+                        error_x='std',
+                        title="Training Time by Model",
+                        labels={'mean': 'Avg Time (s)', 'model': 'Model'},
+                        color='mean',
                         color_continuous_scale='Blues'
                     )
+                    fig.update_layout(height=max(350, len(train_time) * 35), showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Time by reconstruction model (only for reconstructed data)
-                    df_recon = df_perf[df_perf['source_type'] == 'reconstructed']
-                    if len(df_recon) > 0:
-                        st.subheader("Average Time by Reconstruction Model")
-                        recon_time = df_recon.groupby('reconstruction_model')['time_seconds'].mean().reset_index()
-                        recon_time = recon_time.sort_values('time_seconds', ascending=False)
-                        fig = px.bar(
-                            recon_time,
-                            x='reconstruction_model',
-                            y='time_seconds',
-                            title="Average Time by Reconstruction Model",
-                            labels={'time_seconds': 'Avg Time (seconds)', 'reconstruction_model': 'Model'},
-                            color='time_seconds',
-                            color_continuous_scale='Greens'
-                        )
-                        fig.update_xaxes(tickangle=45)
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                # Detailed table
-                st.subheader("Detailed Statistics")
-                st.dataframe(model_time, use_container_width=True)
-    
-    with tab13:
-        st.header("💻 Resource Usage Analysis")
-        st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
-        
-        # Check if performance metrics are available in the data
-        if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
-            st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `7_predict_datasets.py` again to collect performance metrics, then `8_calculate_prediction_error.py` to merge them.")
-        else:
-            df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
-            
-            if df_perf.empty:
-                st.warning("❌ No performance data after filtering")
+                else:
+                    st.info("No training data available")
             else:
-                st.success(f"✅ Showing {len(df_perf)} records with performance metrics")
+                st.info("No training metrics file found. Run `make train-models` first.")
+            
+            st.markdown("---")
+            
+            # === PREDICTION TIME SECTION ===
+            st.subheader("🔮 Prediction Time")
+            
+            if has_prediction:
+                df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
                 
-                # Summary statistics
-                st.subheader("💻 Resource Usage Summary")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    avg_cores = df_perf['cpu_cores_used'].mean()
-                    total_cores = df_perf['cpu_cores_total'].mode()[0] if 'cpu_cores_total' in df_perf.columns and df_perf['cpu_cores_total'].notna().any() else 0
-                    st.metric("Avg CPU Cores", f"{avg_cores:.2f} / {total_cores:.0f}")
-                with col2:
-                    if 'memory_total_mb' in df_perf.columns and df_perf['memory_total_mb'].notna().any():
-                        avg_memory = df_perf['memory_mb'].mean()
-                        total_memory = df_perf['memory_total_mb'].iloc[0]
-                        st.metric("Avg RAM Usage", f"{avg_memory:.1f} / {total_memory:.0f} MB")
-                    else:
-                        st.metric("Avg RAM Usage", f"{df_perf['memory_mb'].mean():.1f} MB")
-                with col3:
-                    if 'gpu_percent' in df_perf.columns and df_perf['gpu_percent'].notna().any():
-                        st.metric("Avg GPU Usage", f"{df_perf['gpu_percent'].mean():.1f}%")
-                    else:
-                        st.metric("GPU Usage", "N/A")
-                
-                st.markdown("---")
-                
-                # CPU cores usage by model
-                st.subheader("CPU+GPU Cores Utilized by Model")
-                model_cpu = df_perf.groupby('prediction_model')['cpu_cores_used'].agg(['mean', 'std', 'max']).reset_index()
-                model_cpu = model_cpu.sort_values('mean', ascending=False)
-                
-                fig = px.bar(
-                    model_cpu,
-                    x='mean',
-                    y='prediction_model',
-                    orientation='h',
-                    title="Average CPU+GPU Cores Utilized by Prediction Model",
-                    labels={'mean': 'Avg CPU+GPU Cores', 'prediction_model': 'Model'},
-                    color='mean',
-                    color_continuous_scale='Oranges'
-                )
-                fig.update_layout(height=max(400, len(model_cpu) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Combined CPU + GPU utilization for comparison
-                if 'gpu_percent' in df_perf.columns and df_perf['gpu_percent'].notna().any():
-                    # Prepare data: for each model show CPU and GPU side by side
-                    model_compute = df_perf.groupby('prediction_model').agg({
-                        'cpu_cores_used': 'mean',
-                        'gpu_percent': 'mean'
-                    }).reset_index()
+                if len(df_perf) > 0:
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Prediction", f"{df_perf['time_seconds'].sum():.1f}s")
+                    with col2:
+                        st.metric("Avg per File", f"{df_perf['time_seconds'].mean():.2f}s")
+                    with col3:
+                        st.metric("Fastest", f"{df_perf['time_seconds'].min():.2f}s")
+                    with col4:
+                        st.metric("Slowest", f"{df_perf['time_seconds'].max():.2f}s")
                     
-                    # Fill NaN GPU values with 0 for CPU-only models
-                    model_compute['gpu_percent'] = model_compute['gpu_percent'].fillna(0)
-                    
-                    # Create grouped bar chart
-                    model_compute_melted = model_compute.melt(
-                        id_vars=['prediction_model'],
-                        value_vars=['cpu_cores_used', 'gpu_percent'],
-                        var_name='Resource Type',
-                        value_name='Usage'
-                    )
-                    
-                    # Rename for better display
-                    model_compute_melted['Resource Type'] = model_compute_melted['Resource Type'].map({
-                        'cpu_cores_used': 'CPU Cores',
-                        'gpu_percent': 'GPU Utilization (%)'
-                    })
-                    
-                    # Sort by combined usage (CPU + normalized GPU)
-                    model_compute['combined'] = model_compute['cpu_cores_used'] + (model_compute['gpu_percent'] / 100.0) * 4
-                    model_compute = model_compute.sort_values('combined', ascending=True)
-                    model_order = model_compute['prediction_model'].tolist()
+                    # Prediction time by model
+                    pred_time = df_perf.groupby('prediction_model')['time_seconds'].agg(['mean', 'std', 'sum']).reset_index()
+                    pred_time = pred_time.sort_values('mean', ascending=False)
                     
                     fig = px.bar(
-                        model_compute_melted,
-                        x='Usage',
+                        pred_time,
+                        x='mean',
                         y='prediction_model',
-                        color='Resource Type',
                         orientation='h',
-                        title="CPU vs GPU Utilization by Model",
-                        labels={'Usage': 'Utilization', 'prediction_model': 'Model'},
-                        barmode='group',
-                        category_orders={'prediction_model': model_order},
-                        color_discrete_map={'CPU Cores': '#FFA500', 'GPU Utilization (%)': '#4CAF50'}
+                        error_x='std',
+                        title="Prediction Time by Model",
+                        labels={'mean': 'Avg Time (s)', 'prediction_model': 'Model'},
+                        color='mean',
+                        color_continuous_scale='Reds'
                     )
-                    fig.update_layout(height=max(400, len(model_compute) * 40))
+                    fig.update_layout(height=max(350, len(pred_time) * 35), showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
-                
-                # RAM usage by model
-                st.subheader("Memory (RAM) Usage by Model")
-                model_mem = df_perf.groupby('prediction_model')['memory_mb'].agg(['mean', 'std', 'max']).reset_index()
-                model_mem = model_mem.sort_values('mean', ascending=False)
-                
-                fig = px.bar(
-                    model_mem,
-                    x='mean',
-                    y='prediction_model',
-                    orientation='h',
-                    title="Average Memory Usage by Prediction Model",
-                    labels={'mean': 'Avg Memory (MB)', 'prediction_model': 'Model'},
-                    color='mean',
-                    color_continuous_scale='Purples'
-                )
-                fig.update_layout(height=max(400, len(model_mem) * 30), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-    
-    with tab14:
-        st.header("🎓 Training Time Analysis")
-        st.caption("Time spent training prediction models (from 7_train_prediction_models.py)")
-        
-        if df_training.empty:
-            st.warning("⚠️ No training metrics available.")
-            st.info("Run `make train-models` first to collect training metrics.")
-        else:
-            st.success(f"✅ Loaded training metrics: {len(df_training)} records")
-            
-            # Filter out errors
-            df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
-            
-            if df_train_valid.empty:
-                st.warning("No valid training data")
+                else:
+                    st.info("No prediction time data")
             else:
-                # Summary
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Training Time", f"{df_train_valid['time_seconds'].sum():.1f}s")
-                with col2:
-                    st.metric("Avg per Model", f"{df_train_valid['time_seconds'].mean():.2f}s")
-                with col3:
-                    st.metric("Fastest", f"{df_train_valid['time_seconds'].min():.2f}s")
-                with col4:
-                    st.metric("Slowest", f"{df_train_valid['time_seconds'].max():.2f}s")
-                
-                st.markdown("---")
-                
-                # Training time by model
-                st.subheader("Training Time by Model")
-                model_time = df_train_valid.groupby('model')['time_seconds'].agg(['mean', 'std', 'sum', 'count']).reset_index()
-                model_time = model_time.sort_values('mean', ascending=False)
-                
-                fig = px.bar(
-                    model_time,
-                    x='mean',
-                    y='model',
-                    orientation='h',
-                    error_x='std',
-                    title="Average Training Time by Model (with std dev)",
-                    labels={'mean': 'Avg Training Time (seconds)', 'model': 'Model'},
-                    color='mean',
-                    color_continuous_scale='Reds'
-                )
-                fig.update_layout(height=max(400, len(model_time) * 40), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Training time by iteration
-                if 'iteration' in df_train_valid.columns and df_train_valid['iteration'].nunique() > 1:
-                    st.subheader("Training Time by Iteration")
-                    iter_time = df_train_valid.groupby(['model', 'iteration'])['time_seconds'].mean().reset_index()
-                    
-                    fig = px.line(
-                        iter_time,
-                        x='iteration',
-                        y='time_seconds',
-                        color='model',
-                        markers=True,
-                        title="Training Time per Iteration",
-                        labels={'time_seconds': 'Time (seconds)', 'iteration': 'Iteration'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Detailed table
-                st.subheader("Detailed Training Statistics")
-                model_time.columns = ['Model', 'Avg Time (s)', 'Std', 'Total Time (s)', 'Iterations']
-                st.dataframe(model_time.style.format({
-                    'Avg Time (s)': '{:.2f}',
-                    'Std': '{:.2f}',
-                    'Total Time (s)': '{:.2f}',
-                    'Iterations': '{:.0f}'
-                }), use_container_width=True)
-    
-    with tab15:
-        st.header("⏱️ Total Time Analysis (Training + Prediction)")
-        st.caption("Combined time: model training + prediction on all files")
-        
-        if df_training.empty:
-            st.warning("⚠️ No training metrics available.")
-        elif 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
-            st.warning("⚠️ No prediction metrics available.")
-        else:
-            # Calculate totals per model
-            df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
-            df_pred_valid = df_filtered[df_filtered['time_seconds'].notna()].copy()
+                st.info("No prediction metrics available.")
             
-            if df_train_valid.empty or df_pred_valid.empty:
-                st.warning("Insufficient data for analysis")
-            else:
-                # Aggregate training time by model
+            st.markdown("---")
+            
+            # === TOTAL TIME (TRAINING + PREDICTION) ===
+            st.subheader("📊 Total Time (Training + Prediction)")
+            
+            if has_training and has_prediction:
+                df_train_valid = df_training[df_training['time_seconds'].notna()].copy()
+                df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
+                
+                # Aggregate
                 train_totals = df_train_valid.groupby('model')['time_seconds'].sum().reset_index()
                 train_totals.columns = ['model', 'training_time']
                 
-                # Aggregate prediction time by model
-                pred_totals = df_pred_valid.groupby('prediction_model')['time_seconds'].sum().reset_index()
+                pred_totals = df_perf.groupby('prediction_model')['time_seconds'].sum().reset_index()
                 pred_totals.columns = ['model', 'prediction_time']
                 
-                # Merge
                 total_times = train_totals.merge(pred_totals, on='model', how='outer').fillna(0)
                 total_times['total_time'] = total_times['training_time'] + total_times['prediction_time']
-                total_times = total_times.sort_values('total_time', ascending=False)
-                
-                # Summary
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Training", f"{total_times['training_time'].sum():.1f}s")
-                with col2:
-                    st.metric("Total Prediction", f"{total_times['prediction_time'].sum():.1f}s")
-                with col3:
-                    st.metric("Grand Total", f"{total_times['total_time'].sum():.1f}s")
-                
-                st.markdown("---")
+                total_times = total_times.sort_values('total_time', ascending=True)
                 
                 # Stacked bar chart
-                st.subheader("Training vs Prediction Time by Model")
-                
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     y=total_times['model'],
@@ -1396,48 +1271,292 @@ def main():
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Detailed table
-                st.subheader("Detailed Time Breakdown")
-                display_df = total_times.copy()
-                display_df.columns = ['Model', 'Training (s)', 'Prediction (s)', 'Total (s)']
-                st.dataframe(display_df.style.format({
-                    'Training (s)': '{:.2f}',
-                    'Prediction (s)': '{:.2f}',
-                    'Total (s)': '{:.2f}'
-                }), use_container_width=True)
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Training", f"{total_times['training_time'].sum():.1f}s")
+                with col2:
+                    st.metric("Total Prediction", f"{total_times['prediction_time'].sum():.1f}s")
+                with col3:
+                    st.metric("Grand Total", f"{total_times['total_time'].sum():.1f}s")
     
-    with tab16:
-        st.header("Raw Data")
+    # Tab 9: Resources (CPU, RAM, GPU) - Training + Prediction
+    with tab9:
+        st.header("💻 Resource Usage (Training + Prediction)")
         
-        # Search functionality
-        search_term = st.text_input("Search in data", "")
+        # Load training metrics
+        df_training = load_training_metrics()
+        has_training = not df_training.empty and 'cpu_cores_used' in df_training.columns
+        has_prediction = 'cpu_cores_used' in df_filtered.columns and not df_filtered['cpu_cores_used'].isna().all()
         
-        if search_term:
-            mask = df_filtered.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
-            df_display = df_filtered[mask]
+        if not has_training and not has_prediction:
+            st.warning("⚠️ No resource metrics available.")
         else:
-            df_display = df_filtered
+            # === TRAINING RESOURCES ===
+            st.subheader("🎓 Training Resources")
+            
+            if has_training:
+                df_train = df_training[df_training['cpu_cores_used'].notna()].copy()
+                
+                if len(df_train) > 0:
+                    # Summary metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Avg CPU Cores", f"{df_train['cpu_cores_used'].mean():.2f}")
+                    with col2:
+                        st.metric("Avg RAM", f"{df_train['memory_mb'].mean():.1f} MB")
+                    with col3:
+                        if 'gpu_percent' in df_train.columns and df_train['gpu_percent'].notna().any():
+                            st.metric("Avg GPU %", f"{df_train['gpu_percent'].mean():.1f}%")
+                        else:
+                            st.metric("GPU", "N/A")
+                    with col4:
+                        if 'gpu_memory_mb' in df_train.columns and df_train['gpu_memory_mb'].notna().any():
+                            st.metric("Avg GPU Mem", f"{df_train['gpu_memory_mb'].mean():.0f} MB")
+                        else:
+                            st.metric("GPU Mem", "N/A")
+                    
+                    # Training resources by model
+                    agg_dict = {'cpu_cores_used': 'mean', 'memory_mb': 'mean'}
+                    if 'gpu_percent' in df_train.columns:
+                        agg_dict['gpu_percent'] = 'mean'
+                    if 'gpu_memory_mb' in df_train.columns:
+                        agg_dict['gpu_memory_mb'] = 'mean'
+                    
+                    train_resources = df_train.groupby('model').agg(agg_dict).reset_index()
+                    
+                    # CPU + RAM chart
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig = px.bar(
+                            train_resources.sort_values('cpu_cores_used', ascending=False),
+                            x='cpu_cores_used',
+                            y='model',
+                            orientation='h',
+                            title="Training: CPU Cores by Model",
+                            labels={'cpu_cores_used': 'CPU Cores', 'model': 'Model'},
+                            color='cpu_cores_used',
+                            color_continuous_scale='Oranges'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        fig = px.bar(
+                            train_resources.sort_values('memory_mb', ascending=False),
+                            x='memory_mb',
+                            y='model',
+                            orientation='h',
+                            title="Training: RAM by Model",
+                            labels={'memory_mb': 'RAM (MB)', 'model': 'Model'},
+                            color='memory_mb',
+                            color_continuous_scale='Purples'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # GPU chart if available
+                    if 'gpu_memory_mb' in train_resources.columns and train_resources['gpu_memory_mb'].notna().any():
+                        fig = px.bar(
+                            train_resources.sort_values('gpu_memory_mb', ascending=False),
+                            x='gpu_memory_mb',
+                            y='model',
+                            orientation='h',
+                            title="Training: GPU Memory by Model",
+                            labels={'gpu_memory_mb': 'GPU Memory (MB)', 'model': 'Model'},
+                            color='gpu_memory_mb',
+                            color_continuous_scale='Greens'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No training resource data")
+            else:
+                st.info("No training metrics file found.")
+            
+            st.markdown("---")
+            
+            # === PREDICTION RESOURCES ===
+            st.subheader("🔮 Prediction Resources")
+            
+            if has_prediction:
+                df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
+                
+                if len(df_perf) > 0:
+                    # Summary metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Avg CPU Cores", f"{df_perf['cpu_cores_used'].mean():.2f}")
+                    with col2:
+                        st.metric("Avg RAM", f"{df_perf['memory_mb'].mean():.1f} MB")
+                    with col3:
+                        if 'gpu_percent' in df_perf.columns and df_perf['gpu_percent'].notna().any():
+                            st.metric("Avg GPU %", f"{df_perf['gpu_percent'].mean():.1f}%")
+                        else:
+                            st.metric("GPU", "N/A")
+                    with col4:
+                        if 'gpu_memory_mb' in df_perf.columns and df_perf['gpu_memory_mb'].notna().any():
+                            st.metric("Avg GPU Mem", f"{df_perf['gpu_memory_mb'].mean():.0f} MB")
+                        else:
+                            st.metric("GPU Mem", "N/A")
+                    
+                    # Prediction resources by model
+                    agg_dict = {'cpu_cores_used': 'mean', 'memory_mb': 'mean'}
+                    if 'gpu_percent' in df_perf.columns:
+                        agg_dict['gpu_percent'] = 'mean'
+                    if 'gpu_memory_mb' in df_perf.columns:
+                        agg_dict['gpu_memory_mb'] = 'mean'
+                    
+                    pred_resources = df_perf.groupby('prediction_model').agg(agg_dict).reset_index()
+                    
+                    # CPU + RAM chart
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig = px.bar(
+                            pred_resources.sort_values('cpu_cores_used', ascending=False),
+                            x='cpu_cores_used',
+                            y='prediction_model',
+                            orientation='h',
+                            title="Prediction: CPU Cores by Model",
+                            labels={'cpu_cores_used': 'CPU Cores', 'prediction_model': 'Model'},
+                            color='cpu_cores_used',
+                            color_continuous_scale='Oranges'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        fig = px.bar(
+                            pred_resources.sort_values('memory_mb', ascending=False),
+                            x='memory_mb',
+                            y='prediction_model',
+                            orientation='h',
+                            title="Prediction: RAM by Model",
+                            labels={'memory_mb': 'RAM (MB)', 'prediction_model': 'Model'},
+                            color='memory_mb',
+                            color_continuous_scale='Purples'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # GPU chart if available
+                    if 'gpu_memory_mb' in pred_resources.columns and pred_resources['gpu_memory_mb'].notna().any():
+                        fig = px.bar(
+                            pred_resources.sort_values('gpu_memory_mb', ascending=False),
+                            x='gpu_memory_mb',
+                            y='prediction_model',
+                            orientation='h',
+                            title="Prediction: GPU Memory by Model",
+                            labels={'gpu_memory_mb': 'GPU Memory (MB)', 'prediction_model': 'Model'},
+                            color='gpu_memory_mb',
+                            color_continuous_scale='Greens'
+                        )
+                        fig.update_layout(height=300, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No prediction resource data")
+            else:
+                st.info("No prediction metrics available.")
+            
+            st.markdown("---")
+            
+            # === COMBINED CPU+GPU USAGE ===
+            st.subheader("🔥 Combined CPU + GPU Usage")
+            
+            if has_training or has_prediction:
+                combined_data = []
+                
+                if has_training:
+                    df_train = df_training[df_training['cpu_cores_used'].notna()].copy()
+                    for _, row in df_train.iterrows():
+                        gpu_usage = row.get('gpu_percent', 0)
+                        gpu_usage = 0 if pd.isna(gpu_usage) else gpu_usage
+                        cpu_usage = row['cpu_cores_used']
+                        cpu_usage = 0 if pd.isna(cpu_usage) else cpu_usage
+                        
+                        combined_data.append({
+                            'model': row['model'],
+                            'phase': 'Training',
+                            'cpu_cores': cpu_usage,
+                            'gpu_percent': gpu_usage,
+                            'combined_score': cpu_usage + (gpu_usage / 10)  # Weighted combination
+                        })
+                
+                if has_prediction:
+                    df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
+                    
+                    # Build aggregation dict carefully
+                    agg_dict = {'cpu_cores_used': 'mean'}
+                    if 'gpu_percent' in df_perf.columns and df_perf['gpu_percent'].notna().any():
+                        agg_dict['gpu_percent'] = 'mean'
+                    
+                    pred_agg = df_perf.groupby('prediction_model').agg(agg_dict).reset_index()
+                    
+                    for _, row in pred_agg.iterrows():
+                        gpu_usage = row.get('gpu_percent', 0)
+                        gpu_usage = 0 if pd.isna(gpu_usage) else gpu_usage
+                        cpu_usage = row['cpu_cores_used']
+                        cpu_usage = 0 if pd.isna(cpu_usage) else cpu_usage
+                        
+                        combined_data.append({
+                            'model': row['prediction_model'],
+                            'phase': 'Prediction',
+                            'cpu_cores': cpu_usage,
+                            'gpu_percent': gpu_usage,
+                            'combined_score': cpu_usage + (gpu_usage / 10)
+                        })
+                
+                if combined_data:
+                    df_combined = pd.DataFrame(combined_data)
+                    
+                    # Fill any remaining NaN values
+                    df_combined = df_combined.fillna(0)
+                    
+                    # Ensure combined_score has minimum value for visibility
+                    df_combined['combined_score'] = df_combined['combined_score'].clip(lower=0.1)
+                    
+                    fig = px.scatter(
+                        df_combined,
+                        x='cpu_cores',
+                        y='gpu_percent',
+                        color='phase',
+                        text='model',
+                        size='combined_score',
+                        title="CPU vs GPU Usage (Training & Prediction)",
+                        labels={'cpu_cores': 'CPU Cores', 'gpu_percent': 'GPU %', 'phase': 'Phase'},
+                        color_discrete_map={'Training': '#3498db', 'Prediction': '#e74c3c'}
+                    )
+                    fig.update_traces(textposition='top center')
+                    fig.update_layout(height=500)
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    # Tab 10: Raw Data
+    with tab10:
+        st.header("📋 Raw Data")
         
-        # Display options
+        data_source = st.radio("Data source", ["Reconstructed only", "All data"], horizontal=True)
+        df_display = df_recon if data_source == "Reconstructed only" else df_filtered
+        
+        search_term = st.text_input("Search", "")
+        if search_term:
+            mask = df_display.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+            df_display = df_display[mask]
+        
         col1, col2 = st.columns(2)
         with col1:
-            sort_column = st.selectbox("Sort by", df_display.columns.tolist())
+            sort_column = st.selectbox("Sort by", df_display.columns.tolist(), index=df_display.columns.tolist().index('mape') if 'mape' in df_display.columns else 0)
         with col2:
             sort_order = st.radio("Order", ['Ascending', 'Descending'])
         
-        df_display = df_display.sort_values(
-            sort_column,
-            ascending=(sort_order == 'Ascending')
-        )
+        df_display = df_display.sort_values(sort_column, ascending=(sort_order == 'Ascending'))
         
         st.dataframe(df_display, use_container_width=True)
         
-        # Download button
         csv = df_display.to_csv(index=False)
         st.download_button(
-            label="📥 Download filtered data as CSV",
+            label="📥 Download CSV",
             data=csv,
-            file_name=f"filtered_{selected_file_name}",
+            file_name=f"recon_comparison_{selected_file_name}",
             mime="text/csv"
         )
 

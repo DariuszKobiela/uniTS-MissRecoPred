@@ -25,8 +25,37 @@ import re
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import config loader
-from utils.config_loader import load_config
+from utils.config_loader import load_config, load_prediction_models_config
 from utils.logger import setup_logging
+
+# Cache for known prediction models
+_known_pred_models_cache = None
+
+def get_known_prediction_models() -> list:
+    """
+    Get list of known prediction model names from config.
+    Results are cached for performance.
+    
+    Returns:
+        List of prediction model names sorted by length (longest first)
+    """
+    global _known_pred_models_cache
+    
+    if _known_pred_models_cache is None:
+        try:
+            pred_config = load_prediction_models_config()
+            _known_pred_models_cache = pred_config.get_all_model_names()
+        except Exception:
+            # Fallback to hardcoded list if config fails
+            _known_pred_models_cache = [
+                'temporal_fusion_transformer', 'vanilla_transformer',
+                'nbeats_interpretable', 'holt_winters', 'prophet', 
+                'sarimax', 'xgboost', 'lstm', 'gru', 'deepar', 
+                'tcn', 'nbeats', 'transformer', 'tft'
+            ]
+    
+    # Sort by length descending (important: longer names must be matched first)
+    return sorted(_known_pred_models_cache, key=len, reverse=True)
 
 # Setup automatic logging to file
 setup_logging("9_calculate_prediction_error")
@@ -71,17 +100,27 @@ def load_performance_metrics(results_dir: str) -> dict:
         df = pd.read_csv(latest_file)
         
         # Convert to dictionary with composite key
+        # Normalize types to ensure matching (floats -> ints where applicable)
         metrics_dict = {}
         for _, row in df.iterrows():
+            rate = row.get('rate_percent')
+            recon_iter = row.get('reconstruction_iteration')
+            pred_iter = row.get('prediction_iteration', 1)
+            
+            # Normalize numeric types (convert float to int for matching)
+            rate = int(rate) if pd.notna(rate) else None
+            recon_iter = int(recon_iter) if pd.notna(recon_iter) else None
+            pred_iter = int(pred_iter) if pd.notna(pred_iter) else 1
+            
             key = str((
                 row.get('dataset_name', 'unknown'),
                 row.get('source_type', 'unknown'),
-                row.get('technique'),
-                row.get('rate_percent'),
-                row.get('reconstruction_iteration'),
-                row.get('reconstruction_model'),
+                row.get('technique') if pd.notna(row.get('technique')) else None,
+                rate,
+                recon_iter,
+                row.get('reconstruction_model') if pd.notna(row.get('reconstruction_model')) else None,
                 row.get('prediction_model'),
-                row.get('prediction_iteration', 1)
+                pred_iter
             ))
             
             metrics_dict[key] = {
@@ -167,18 +206,14 @@ def parse_prediction_filename(filename: str) -> dict:
         remaining = '_'.join(parts[rate_idx + 2:])
         
         # We need to identify where reconstruction_model ends and prediction_model starts
-        # Known prediction models (from config)
-        known_pred_models = [
-            'holt_winters', 'prophet', 'sarimax', 'xgboost',
-            'lstm', 'gru', 'deepar', 'tcn', 'nbeats', 'transformer', 'tft',
-            'nbeats_interpretable'
-        ]
+        # Get known prediction models from config (sorted by length, longest first)
+        known_pred_models = get_known_prediction_models()
         
         # Try to find the prediction model at the end
         reconstruction_model = None
         prediction_model = None
         
-        for pred_model in sorted(known_pred_models, key=len, reverse=True):
+        for pred_model in known_pred_models:
             if remaining.endswith(pred_model):
                 pred_start = len(remaining) - len(pred_model)
                 if pred_start > 0 and remaining[pred_start - 1] == '_':

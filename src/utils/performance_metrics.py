@@ -25,17 +25,32 @@ class PerformanceMonitor:
         self.initial_cpu_percent = None
         self.initial_memory_mb = None
         
-        # Try to import GPU monitoring
+        # Try to import GPU monitoring (GPUtil or PyTorch)
         self.gpu_available = False
+        self.gpu_method = None  # 'gputil' or 'pytorch'
+        self.GPUtil = None
+        
+        # First try GPUtil
         try:
             import GPUtil
             self.GPUtil = GPUtil
             gpus = GPUtil.getGPUs()
             if gpus:
                 self.gpu_available = True
+                self.gpu_method = 'gputil'
         except Exception:
-            # Handle import errors, NVML failures, driver mismatches, etc.
             pass
+        
+        # Fallback to PyTorch if GPUtil failed
+        if not self.gpu_available:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.gpu_available = True
+                    self.gpu_method = 'pytorch'
+                    self.torch = torch
+            except Exception:
+                pass
     
     def start(self):
         """Start monitoring"""
@@ -97,13 +112,31 @@ class PerformanceMonitor:
         # Get GPU metrics if available
         if self.gpu_available:
             try:
-                gpus = self.GPUtil.getGPUs()
-                if gpus:
-                    # Use first GPU
-                    gpu = gpus[0]
-                    metrics['gpu_percent'] = round(gpu.load * 100, 2)
-                    metrics['gpu_memory_mb'] = round(gpu.memoryUsed, 2)
-                    metrics['gpu_memory_total_mb'] = round(gpu.memoryTotal, 0)
+                if self.gpu_method == 'gputil':
+                    gpus = self.GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]
+                        metrics['gpu_percent'] = round(gpu.load * 100, 2)
+                        metrics['gpu_memory_mb'] = round(gpu.memoryUsed, 2)
+                        metrics['gpu_memory_total_mb'] = round(gpu.memoryTotal, 0)
+                        
+                elif self.gpu_method == 'pytorch':
+                    # Use PyTorch for GPU memory (can't get utilization %)
+                    if self.torch.cuda.is_available():
+                        # Memory allocated by PyTorch tensors
+                        gpu_memory_allocated = self.torch.cuda.memory_allocated(0) / (1024 * 1024)
+                        # Maximum memory allocated (peak)
+                        gpu_memory_peak = self.torch.cuda.max_memory_allocated(0) / (1024 * 1024)
+                        # Total GPU memory
+                        gpu_props = self.torch.cuda.get_device_properties(0)
+                        gpu_memory_total = gpu_props.total_memory / (1024 * 1024)
+                        
+                        # Use peak memory as the metric
+                        metrics['gpu_memory_mb'] = round(gpu_memory_peak, 2)
+                        metrics['gpu_memory_total_mb'] = round(gpu_memory_total, 0)
+                        # Estimate GPU % from memory usage (not accurate but better than nothing)
+                        if gpu_memory_total > 0:
+                            metrics['gpu_percent'] = round((gpu_memory_peak / gpu_memory_total) * 100, 2)
             except Exception:
                 pass
         
