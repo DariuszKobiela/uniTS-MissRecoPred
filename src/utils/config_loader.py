@@ -396,12 +396,56 @@ class PredictionModelsConfig:
         return self.config.get('global_training', {}).get('max_epochs', 100)
     
     def get_batch_size(self) -> int:
-        """Get training batch size"""
+        """Get global default training batch size"""
         return self.config.get('global_training', {}).get('batch_size', 32)
+    
+    def get_model_batch_size(self, model_name: str) -> int:
+        """
+        Get batch size for a specific model.
+        
+        Checks model-specific batch_size first, then falls back to global batch_size.
+        This allows heavy models (e.g. N-BEATS) to use smaller batch sizes
+        while lighter models (e.g. LSTM) can use larger ones.
+        
+        Args:
+            model_name: Name of the model (lstm, gru, nbeats, etc.)
+            
+        Returns:
+            Batch size for the model
+        """
+        model_params = self.config.get(model_name, {})
+        if 'batch_size' in model_params:
+            return model_params['batch_size']
+        return self.get_batch_size()
     
     def get_training_iterations(self) -> int:
         """Get number of training iterations for non-deterministic models"""
         return self.config.get('global_training', {}).get('training_iterations', 5)
+    
+    def get_num_workers(self) -> int:
+        """Get number of DataLoader workers for parallel batch preparation."""
+        return self.config.get('global_training', {}).get('num_workers', 0)
+    
+    def get_pin_memory(self) -> bool:
+        """Get whether to use pinned memory for faster CPU→GPU transfer."""
+        return self.config.get('global_training', {}).get('pin_memory', False)
+    
+    def get_dataloader_kwargs(self) -> Dict[str, Any]:
+        """
+        Build dataloader_kwargs dict for Darts model.fit().
+        
+        Combines num_workers and pin_memory into a single dict
+        that can be passed directly to model.fit(dataloader_kwargs=...).
+        """
+        kwargs = {}
+        num_workers = self.get_num_workers()
+        if num_workers > 0:
+            kwargs['num_workers'] = num_workers
+            kwargs['persistent_workers'] = True  # Keep workers alive between epochs
+        pin_memory = self.get_pin_memory()
+        if pin_memory:
+            kwargs['pin_memory'] = True
+        return kwargs
     
     # =========================================================================
     # EARLY STOPPING SETTINGS
@@ -550,9 +594,21 @@ class PredictionModelsConfig:
         print("\n⚙️ Global Training Settings:")
         print(f"  Validation split:      {self.get_validation_split()*100:.0f}%")
         print(f"  Max epochs:            {self.get_max_epochs()}")
-        print(f"  Batch size:            {self.get_batch_size()}")
+        print(f"  Default batch size:    {self.get_batch_size()}")
         print(f"  Random seed:           {self.get_seed()}")
         print(f"  Training iterations:   {self.get_training_iterations()} (for non-deterministic models)")
+        
+        # Show per-model batch sizes if any differ from global default
+        global_bs = self.get_batch_size()
+        per_model_bs = []
+        for model_name in self.get_all_model_names():
+            model_bs = self.get_model_batch_size(model_name)
+            if model_bs != global_bs:
+                per_model_bs.append(f"    {model_name}: {model_bs}")
+        if per_model_bs:
+            print("  Per-model batch sizes:")
+            for line in sorted(per_model_bs):
+                print(line)
         
         print("\n⏱️ Early Stopping:")
         print(f"  Enabled:   {self.get_early_stopping_enabled()}")

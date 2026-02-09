@@ -30,7 +30,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional
 from tqdm import tqdm
+import gc
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 import torch
 
 # Optimize for GPUs with Tensor Cores (RTX, A100, etc.)
@@ -64,55 +66,74 @@ def load_dataset(file_path: str) -> pd.DataFrame:
     return df
 
 
+def _load_series_from_file(file_path: str) -> Optional[pd.Series]:
+    """
+    Load a single CSV file and extract its first column as a Series.
+    Returns None if loading fails or series is too short.
+    Used by parallel CSV loader.
+    """
+    try:
+        df = load_dataset(file_path)
+        series = df.iloc[:, 0].dropna()
+        if len(series) > 10:
+            return series
+    except Exception:
+        pass
+    return None
+
+
+def load_series_parallel(file_paths: List[str], max_workers: int = 8) -> List[pd.Series]:
+    """
+    Load multiple CSV files in parallel using threads (I/O-bound).
+    
+    Args:
+        file_paths: List of CSV file paths
+        max_workers: Number of parallel threads
+        
+    Returns:
+        List of pandas Series (filtered: non-None, len > 10)
+    """
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = list(tqdm(
+            executor.map(_load_series_from_file, file_paths),
+            total=len(file_paths),
+            desc="   Loading CSVs"
+        ))
+    
+    results = [s for s in futures if s is not None]
+    return results
+
+
 def series_to_darts(series: pd.Series):
-    """Convert pandas Series to Darts TimeSeries."""
+    """Convert pandas Series to Darts TimeSeries (using float32 to save ~50% RAM)."""
     from darts import TimeSeries
     
     date_index = pd.date_range(start='2000-01-01', periods=len(series), freq='h')
-    ts = TimeSeries.from_times_and_values(times=date_index, values=series.values, freq='h')
+    ts = TimeSeries.from_times_and_values(
+        times=date_index, values=series.values.astype(np.float32), freq='h'
+    )
     return ts
 
 
-def train_global_model_darts(model_name: str,
-                              all_series: List[pd.Series],
-                              pred_config,
-                              seed: int = None):
+def prepare_darts_training_data(all_series: List[pd.Series], val_split: float):
     """
-    Train a global Darts model on all time series.
+    Pre-convert all pandas Series to Darts TimeSeries with train/val split.
+    
+    Done ONCE in main() to avoid repeated conversion per model,
+    which saves ~5 GB RAM and significant CPU time.
     
     Args:
-        model_name: Name of the model (lstm, gru, tcn, nbeats, deepar, vanilla_transformer, temporal_fusion_transformer)
-        all_series: List of all training time series
-        pred_config: PredictionModelsConfig object
-        seed: Random seed for this training iteration
+        all_series: List of pandas Series (raw time series)
+        val_split: Fraction of each series to use for validation (0.0 to 1.0)
         
     Returns:
-        Trained Darts model
+        Tuple of (train_series_list, val_series_list) as Darts TimeSeries
     """
-    from darts import TimeSeries
-    from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel, TransformerModel
-    from darts.utils.likelihood_models import GaussianLikelihood
-    from pytorch_lightning.callbacks import EarlyStopping
-    
-    # Get global training parameters
-    val_split = pred_config.get_validation_split()
-    max_epochs = pred_config.get_max_epochs()
-    batch_size = pred_config.get_batch_size()
-    
-    # Get early stopping parameters
-    es_enabled = pred_config.get_early_stopping_enabled()
-    es_patience = pred_config.get_early_stopping_patience()
-    es_min_delta = pred_config.get_early_stopping_min_delta()
-    es_verbose = pred_config.get_early_stopping_verbose()
-    
-    # Get model-specific parameters
-    model_params = pred_config.get_model_params(model_name)
-    
-    # Convert all series to Darts TimeSeries
     train_series_list = []
     val_series_list = []
     
-    for series in all_series:
+    for series in tqdm(all_series, desc="   Converting to Darts"):
         ts = series_to_darts(series)
         
         # Split into train/val
@@ -128,6 +149,46 @@ def train_global_model_darts(model_name: str,
                 train_series_list.append(ts)
         else:
             train_series_list.append(ts)
+    
+    return train_series_list, val_series_list
+
+
+def train_global_model_darts(model_name: str,
+                              train_series_list: List,
+                              val_series_list: List,
+                              pred_config,
+                              seed: int = None):
+    """
+    Train a global Darts model on all time series.
+    
+    Args:
+        model_name: Name of the model (lstm, gru, tcn, nbeats, deepar, vanilla_transformer, temporal_fusion_transformer)
+        train_series_list: Pre-converted Darts TimeSeries for training
+        val_series_list: Pre-converted Darts TimeSeries for validation
+        pred_config: PredictionModelsConfig object
+        seed: Random seed for this training iteration
+        
+    Returns:
+        Trained Darts model
+    """
+    from darts import TimeSeries
+    from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel, TransformerModel
+    from darts.utils.likelihood_models import GaussianLikelihood
+    from pytorch_lightning.callbacks import EarlyStopping
+    
+    # Get global training parameters
+    max_epochs = pred_config.get_max_epochs()
+    batch_size = pred_config.get_model_batch_size(model_name)
+    dataloader_kwargs = pred_config.get_dataloader_kwargs()
+    
+    # Get early stopping parameters
+    es_enabled = pred_config.get_early_stopping_enabled()
+    es_patience = pred_config.get_early_stopping_patience()
+    es_min_delta = pred_config.get_early_stopping_min_delta()
+    es_verbose = pred_config.get_early_stopping_verbose()
+    
+    # Get model-specific parameters
+    model_params = pred_config.get_model_params(model_name)
     
     # Set up callbacks
     callbacks = [EpochLogger()]  # Always log epoch numbers
@@ -262,21 +323,54 @@ def train_global_model_darts(model_name: str,
         raise ValueError(f"Unknown global training model: {model_name}")
     
     # Train the model on all series
-    print(f"   Starting training on {len(train_series_list)} series...", flush=True)
+    dl_info = f", dataloader: {dataloader_kwargs}" if dataloader_kwargs else ""
+    print(f"   Starting training on {len(train_series_list)} series "
+          f"(batch_size={batch_size}{dl_info})...", flush=True)
+    
+    fit_kwargs = {"verbose": True}
+    if dataloader_kwargs:
+        fit_kwargs["dataloader_kwargs"] = dataloader_kwargs
+    
     if val_series_list:
-        model.fit(train_series_list, val_series=val_series_list, verbose=True)
+        model.fit(train_series_list, val_series=val_series_list, **fit_kwargs)
     else:
-        model.fit(train_series_list, verbose=True)
+        model.fit(train_series_list, **fit_kwargs)
     
     return model
 
 
-def train_xgboost_model(all_series: List[pd.Series], pred_config, seed: int = None):
+def _create_lag_features_vectorized(values: np.ndarray, lag: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Create lag features from a single time series using numpy stride tricks.
+    
+    ~10-50x faster than the equivalent Python loop for large arrays.
+    
+    Args:
+        values: 1D numpy array of time series values
+        lag: Number of lag features
+        
+    Returns:
+        Tuple of (X, y) where X has shape (n_samples, lag) and y has shape (n_samples,)
+    """
+    n = len(values)
+    if n <= lag:
+        return np.empty((0, lag), dtype=values.dtype), np.empty(0, dtype=values.dtype)
+    
+    # Use stride tricks for zero-copy sliding window view
+    from numpy.lib.stride_tricks import sliding_window_view
+    windows = sliding_window_view(values, lag + 1)  # shape: (n - lag, lag + 1)
+    X = windows[:, :lag]   # first `lag` columns = features
+    y = windows[:, lag]    # last column = target
+    
+    return X, y
+
+
+def train_xgboost_model(all_values: List[np.ndarray], pred_config, seed: int = None):
     """
     Train a global XGBoost model using lag features.
     
     Args:
-        all_series: List of all training time series
+        all_values: List of numpy arrays (time series values, float32)
         pred_config: PredictionModelsConfig object
         seed: Random seed
         
@@ -288,30 +382,32 @@ def train_xgboost_model(all_series: List[pd.Series], pred_config, seed: int = No
     model_params = pred_config.get_model_params('xgboost')
     lag = model_params.get('lags', 10)
     
-    # Create lag features from all series
-    X_all = []
-    y_all = []
+    # CPU OPTIMIZATION: Vectorized lag feature creation with numpy stride tricks
+    # ~10-50x faster than nested Python loops for large datasets
+    X_parts = []
+    y_parts = []
     
-    for series in all_series:
-        values = series.values
-        if len(values) <= lag:
-            continue
-        
-        for i in range(lag, len(values)):
-            X_all.append(values[i-lag:i])
-            y_all.append(values[i])
+    for values in all_values:
+        X_part, y_part = _create_lag_features_vectorized(values, lag)
+        if len(X_part) > 0:
+            X_parts.append(X_part)
+            y_parts.append(y_part)
     
-    if len(X_all) == 0:
+    if len(X_parts) == 0:
         raise ValueError("Not enough data to create lag features")
     
-    X = np.array(X_all)
-    y = np.array(y_all)
+    X = np.concatenate(X_parts, axis=0)
+    y = np.concatenate(y_parts, axis=0)
     
-    # Train XGBoost
+    # Free intermediate lists
+    del X_parts, y_parts
+    
+    # Train XGBoost (n_jobs=-1 uses all CPU cores for parallel tree building)
     model = xgb.XGBRegressor(
         n_estimators=model_params.get('n_estimators', 100),
         max_depth=model_params.get('max_depth', 6),
         learning_rate=model_params.get('learning_rate', 0.1),
+        n_jobs=model_params.get('n_jobs', -1),
         random_state=seed,
         verbosity=0
     )
@@ -360,10 +456,49 @@ def save_model(model, model_name: str, iteration: int, output_dir: str, model_ty
     return model_path
 
 
-def generate_training_metrics_filename():
-    """Generate output filename with timestamp."""
+def generate_training_metrics_filename(model_name: str = None, iteration: int = None):
+    """
+    Generate output filename with timestamp, model name and iteration.
+    
+    Each trained model+iteration gets its own metrics file, saved immediately
+    after training (so metrics are not lost if the process crashes later).
+    
+    Format: training_metrics_YYYYMMDD_HHMMSS_<model>_iter<N>.csv
+    
+    Args:
+        model_name: Name of the model (e.g. 'lstm', 'nbeats')
+        iteration: Iteration number
+        
+    Returns:
+        Filename string
+    """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if model_name is not None and iteration is not None:
+        return f"training_metrics_{timestamp}_{model_name}_iter{iteration}.csv"
     return f"training_metrics_{timestamp}.csv"
+
+
+def save_training_metrics(metrics_dict: dict, metrics_dir: str, model_name: str, iteration: int):
+    """
+    Save training metrics for a single model+iteration to its own CSV file.
+    
+    Args:
+        metrics_dict: Dictionary with metric values
+        metrics_dir: Directory to save the file in
+        model_name: Name of the trained model
+        iteration: Iteration number
+        
+    Returns:
+        Path to the saved metrics file
+    """
+    os.makedirs(metrics_dir, exist_ok=True)
+    filename = generate_training_metrics_filename(model_name, iteration)
+    filepath = os.path.join(metrics_dir, filename)
+    
+    df = pd.DataFrame([metrics_dict])
+    df.to_csv(filepath, index=False)
+    
+    return filepath
 
 
 def main():
@@ -476,30 +611,24 @@ Examples:
     print("\n📋 Collecting training data...")
     
     all_series = []
+    csv_files = []
     
-    # Load original training data
-    print(f"   Loading from {train_dir}...")
+    # Gather file paths for parallel loading
     if config.get_predict_on_original_train():
-        for file in Path(train_dir).glob("*.csv"):
-            try:
-                df = load_dataset(str(file))
-                series = df.iloc[:, 0].dropna()
-                if len(series) > 10:
-                    all_series.append(series)
-            except Exception as e:
-                print(f"   ⚠️ Error loading {file.name}: {e}")
+        train_files = sorted(Path(train_dir).glob("*.csv"))
+        csv_files.extend([str(f) for f in train_files])
+        print(f"   Found {len(train_files)} files in {train_dir}")
     
-    # Load reconstructed data
-    print(f"   Loading from {fixed_dir}...")
     if config.get_predict_on_reconstructed() and os.path.exists(fixed_dir):
-        for file in Path(fixed_dir).glob("*.csv"):
-            try:
-                df = load_dataset(str(file))
-                series = df.iloc[:, 0].dropna()
-                if len(series) > 10:
-                    all_series.append(series)
-            except Exception as e:
-                print(f"   ⚠️ Error loading {file.name}: {e}")
+        fixed_files = sorted(Path(fixed_dir).glob("*.csv"))
+        csv_files.extend([str(f) for f in fixed_files])
+        print(f"   Found {len(fixed_files)} files in {fixed_dir}")
+    
+    # CPU OPTIMIZATION: Load CSV files in parallel (I/O-bound, threads work well)
+    if csv_files:
+        n_loader_threads = min(16, max(1, os.cpu_count() or 1))
+        print(f"   Loading {len(csv_files)} CSV files in parallel ({n_loader_threads} threads)...")
+        all_series = load_series_parallel(csv_files, max_workers=n_loader_threads)
     
     print(f"\n📊 Total training series: {len(all_series)}")
     
@@ -507,8 +636,47 @@ Examples:
         print("❌ No training data found")
         return
     
-    # Training metrics storage
+    # =========================================================================
+    # RAM OPTIMIZATION: Convert to float32 early to save ~50% memory on data
+    # =========================================================================
+    print("\n🔧 Converting series to float32 to reduce memory usage...")
+    for i in range(len(all_series)):
+        all_series[i] = all_series[i].astype(np.float32)
+    gc.collect()
+    print(f"   ✓ Converted {len(all_series)} series to float32")
+    
+    # Save numpy arrays for XGBoost before Darts conversion (XGBoost doesn't need Darts)
+    xgboost_values = None
+    if 'xgboost' in trainable_models:
+        xgboost_values = [s.values.copy() for s in all_series]
+    
+    # =========================================================================
+    # RAM OPTIMIZATION: Pre-convert to Darts TimeSeries ONCE (not per model)
+    # This avoids ~5 GB of duplicated Darts TimeSeries per model training
+    # =========================================================================
+    val_split = pred_config.get_validation_split()
+    
+    # Check if any Darts models need training
+    darts_models_to_train = [m for m in trainable_models if m in global_models]
+    
+    darts_train = []
+    darts_val = []
+    
+    if darts_models_to_train:
+        print("\n🔧 Pre-converting to Darts TimeSeries (one-time conversion)...")
+        darts_train, darts_val = prepare_darts_training_data(all_series, val_split)
+        print(f"   ✓ Train series: {len(darts_train)}, Val series: {len(darts_val)}")
+    
+    # =========================================================================
+    # RAM OPTIMIZATION: Free original pandas Series (~5 GB saved)
+    # =========================================================================
+    del all_series
+    gc.collect()
+    print("   ✓ Freed original pandas Series from memory")
+    
+    # Training metrics storage (for final summary)
     training_metrics = []
+    saved_metrics_files = []
     
     # Train each model
     for model_name in trainable_models:
@@ -517,7 +685,8 @@ Examples:
         
         print(f"\n{'='*70}")
         print(f"Training: {model_name.upper()}")
-        print(f"Iterations: {model_iterations}")
+        batch_size_info = pred_config.get_model_batch_size(model_name)
+        print(f"Iterations: {model_iterations}, Batch size: {batch_size_info}")
         print(f"{'='*70}")
         
         for iteration in range(1, model_iterations + 1):
@@ -539,13 +708,15 @@ Examples:
             
             try:
                 if model_name in global_models:
-                    # Darts deep learning model
-                    model = train_global_model_darts(model_name, all_series, pred_config, seed)
+                    # Darts deep learning model (using pre-converted series)
+                    model = train_global_model_darts(
+                        model_name, darts_train, darts_val, pred_config, seed
+                    )
                     model_path = save_model(model, model_name, iteration, output_dir, 'darts')
                     
                 elif model_name == 'xgboost':
-                    # XGBoost model
-                    model, lag = train_xgboost_model(all_series, pred_config, seed)
+                    # XGBoost model (using saved numpy arrays)
+                    model, lag = train_xgboost_model(xgboost_values, pred_config, seed)
                     # Save model and lag info together
                     model_data = {'model': model, 'lag': lag}
                     model_path = os.path.join(output_dir, f"{model_name}_iter{iteration}.pkl")
@@ -558,8 +729,8 @@ Examples:
                 print(f"   ✓ Saved: {model_path}")
                 print(f"   ⏱️ Time: {metrics['time_seconds']:.2f}s")
                 
-                # Store training metrics
-                training_metrics.append({
+                # Build metrics dict for this model+iteration
+                metrics_dict = {
                     'model': model_name,
                     'iteration': iteration,
                     'seed': seed,
@@ -572,35 +743,62 @@ Examples:
                     'gpu_memory_mb': metrics.get('gpu_memory_mb'),
                     'gpu_memory_total_mb': metrics.get('gpu_memory_total_mb'),
                     'model_path': model_path
-                })
+                }
+                
+                # Save metrics immediately as a separate file per model+iteration
+                metrics_file = save_training_metrics(
+                    metrics_dict, metrics_dir, model_name, iteration
+                )
+                saved_metrics_files.append(metrics_file)
+                print(f"   📊 Metrics: {metrics_file}")
+                
+                # Also keep in memory for final summary
+                training_metrics.append(metrics_dict)
+                
+                # RAM OPTIMIZATION: Free model object after saving
+                del model
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 
             except Exception as e:
                 monitor.stop()
                 print(f"   ❌ Failed to train {model_name}: {e}")
-                training_metrics.append({
+                
+                # Save error metrics as separate file too
+                error_metrics = {
                     'model': model_name,
                     'iteration': iteration,
                     'seed': seed,
                     'time_seconds': None,
                     'error': str(e)
-                })
+                }
+                metrics_file = save_training_metrics(
+                    error_metrics, metrics_dir, model_name, iteration
+                )
+                saved_metrics_files.append(metrics_file)
+                
+                training_metrics.append(error_metrics)
+                gc.collect()
     
-    # Save training metrics
-    metrics_filename = generate_training_metrics_filename()
-    metrics_path = os.path.join(metrics_dir, metrics_filename)
-    
-    df_metrics = pd.DataFrame(training_metrics)
-    df_metrics.to_csv(metrics_path, index=False)
+    # Free XGBoost data after all training
+    if xgboost_values is not None:
+        del xgboost_values
+        gc.collect()
     
     print("\n" + "="*70)
     print("TRAINING COMPLETE")
     print("="*70)
     print(f"✓ Models saved to: {output_dir}/")
-    print(f"✓ Metrics saved to: {metrics_path}")
+    print(f"✓ Metrics files saved to: {metrics_dir}/")
+    if saved_metrics_files:
+        for mf in saved_metrics_files:
+            print(f"   - {mf}")
     
     # Summary
     print(f"\n📊 Summary:")
-    if len(df_metrics) > 0 and 'time_seconds' in df_metrics.columns:
+    if training_metrics:
+        df_metrics = pd.DataFrame(training_metrics)
         successful = df_metrics[df_metrics['time_seconds'].notna()]
         print(f"   Total trained: {len(successful)}/{len(df_metrics)}")
         if len(successful) > 0:

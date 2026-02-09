@@ -19,13 +19,26 @@ global_training:
   # Maximum training epochs (for deep learning models)
   max_epochs: 100 #100
   
-  # Batch size for training
-  batch_size: 80000
+  # Default batch size for training (used if no per-model batch_size is set)
+  # Per-model batch_size overrides are in each model's section below
+  batch_size: 8000
   
   # Number of training iterations for non-deterministic models
   # Each iteration trains a new model with different random seed
   # Results from all iterations are saved for statistical analysis
   training_iterations: 5
+  
+  # Number of parallel DataLoader workers for batch preparation
+  # Higher values = faster CPU→GPU pipeline (data loading in parallel)
+  # 0 = main process only (default PyTorch behavior)
+  # Recommended: 4-8 for servers with many cores
+  # WARNING: Each worker uses additional RAM (~200-500 MB per worker)
+  num_workers: 4
+  
+  # Pin memory for faster CPU→GPU data transfer
+  # Set to true when training on GPU (recommended)
+  # Set to false when training on CPU only
+  pin_memory: true
 
 # ============================================================================
 # EARLY STOPPING SETTINGS
@@ -50,6 +63,10 @@ early_stopping:
 # LSTM MODEL PARAMETERS
 # ============================================================================
 lstm:
+  # Per-model batch size (overrides global default)
+  # LSTM is lightweight (~small VRAM), can handle large batches
+  batch_size: 64000
+  
   # Input chunk length (lookback window)
   # Must be <= shortest series length in training data
   input_chunk_length: 24
@@ -71,6 +88,10 @@ lstm:
 # GRU MODEL PARAMETERS
 # ============================================================================
 gru:
+  # Per-model batch size (overrides global default)
+  # GRU is lightweight (~small VRAM), can handle large batches
+  batch_size: 64000
+  
   # Input chunk length (lookback window)
   input_chunk_length: 24
   
@@ -90,6 +111,10 @@ gru:
 # DEEPAR MODEL PARAMETERS
 # ============================================================================
 deepar:
+  # Per-model batch size (overrides global default)
+  # DeepAR (LSTM-based) is lightweight, can handle large batches
+  batch_size: 64000
+  
   # Input chunk length (context length)
   input_chunk_length: 24
   
@@ -109,6 +134,10 @@ deepar:
 # TCN (Temporal Convolutional Network) PARAMETERS
 # ============================================================================
 tcn:
+  # Per-model batch size (overrides global default)
+  # TCN is moderately heavy, can handle large batches
+  batch_size: 64000
+  
   # Input chunk length
   # input + output + 1 must be <= shortest series length
   input_chunk_length: 20
@@ -132,6 +161,11 @@ tcn:
 # N-BEATS MODEL PARAMETERS
 # ============================================================================
 nbeats:
+  # Per-model batch size (overrides global default)
+  # N-BEATS is the heaviest model (~6.4M params, 30 stacks x 256 width)
+  # Uses ~17 GB VRAM at batch_size=32000 -- safe for 48 GB GPU
+  batch_size: 32000
+  
   # Input chunk length (lookback window)
   input_chunk_length: 24
   
@@ -169,6 +203,10 @@ nbeats:
 # VANILLA TRANSFORMER MODEL PARAMETERS
 # ============================================================================
 vanilla_transformer:
+  # Per-model batch size (overrides global default)
+  # Transformer is moderately heavy, safe at 40k with 48 GB GPU
+  batch_size: 40000
+  
   # Input chunk length (encoder length)
   input_chunk_length: 24
   
@@ -197,6 +235,10 @@ vanilla_transformer:
 # TEMPORAL FUSION TRANSFORMER (TFT) MODEL PARAMETERS
 # ============================================================================
 temporal_fusion_transformer:
+  # Per-model batch size (overrides global default)
+  # TFT is heavy (attention + LSTM), uses significant VRAM
+  batch_size: 32000
+  
   # Input chunk length (encoder length)
   input_chunk_length: 24
   
@@ -233,6 +275,10 @@ xgboost:
   
   # Learning rate (shrinkage)
   learning_rate: 0.1
+  
+  # Number of CPU threads for parallel tree building
+  # -1 = use all available cores
+  n_jobs: -1
 
 # ============================================================================
 # STATISTICAL MODELS (per-file training, no global training)
