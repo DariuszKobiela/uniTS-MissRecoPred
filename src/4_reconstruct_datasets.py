@@ -11,6 +11,12 @@ Test data is preserved separately for prediction evaluation.
 
 import os
 import sys
+import warnings
+
+# Suppress NVML warnings from PyTorch before any torch imports
+warnings.filterwarnings('ignore', message='.*NVML.*')
+warnings.filterwarnings('ignore', message='.*Can\'t initialize.*')
+
 import argparse
 import pandas as pd
 import numpy as np
@@ -22,6 +28,11 @@ from tqdm import tqdm
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+from utils.logger import setup_logging
+
+# Setup automatic logging to file
+setup_logging("4_reconstruct_datasets")
 
 # Import reconstruction models and config loader
 from reconstruction_models import RECONSTRUCTION_MODELS
@@ -393,29 +404,47 @@ Examples:
     cpu_tasks = [t for t in tasks if not is_gpu_model(t['model_name'])]
     
     n_jobs = config.get_n_jobs()
-    print(f"🚀 Processing {len(tasks)} tasks total:")
-    print(f"   - {len(cpu_tasks)} CPU model tasks (parallel with {n_jobs} jobs)")
-    print(f"   - {len(gpu_tasks)} GPU model tasks (sequential)\n")
+    
+    # Limit n_jobs to avoid memory issues (-1 means all cores, but cap at 16)
+    if n_jobs == -1:
+        import multiprocessing
+        actual_n_jobs = min(multiprocessing.cpu_count(), 16)
+        print(f"🚀 Processing {len(tasks)} tasks total:")
+        print(f"   - {len(cpu_tasks)} CPU model tasks (parallel with {actual_n_jobs} jobs, capped from {multiprocessing.cpu_count()})")
+    else:
+        actual_n_jobs = n_jobs
+        print(f"🚀 Processing {len(tasks)} tasks total:")
+        print(f"   - {len(cpu_tasks)} CPU model tasks (parallel with {actual_n_jobs} jobs)")
+    print(f"   - {len(gpu_tasks)} GPU model tasks (sequential)")
+    sys.stdout.flush()
     
     all_results = []
     
     # Process CPU models in parallel
     if cpu_tasks:
-        print(f"⚡ Processing CPU models in parallel...")
-        cpu_results = Parallel(n_jobs=n_jobs, backend='loky')(
-            delayed(process_single_reconstruction)(task) 
-            for task in tqdm(cpu_tasks, desc="⏳ CPU models", unit="task", ncols=80)
-        )
-        all_results.extend(cpu_results)
+        print(f"\n⚡ Processing CPU models in parallel...", flush=True)
+        try:
+            cpu_results = Parallel(n_jobs=actual_n_jobs, backend='loky', timeout=None)(
+                delayed(process_single_reconstruction)(task) 
+                for task in tqdm(cpu_tasks, desc="⏳ CPU models", unit="task", ncols=80)
+            )
+            all_results.extend(cpu_results)
+        except Exception as e:
+            print(f"\n❌ Parallel processing failed: {type(e).__name__}: {e}", flush=True)
+            raise
     
     # Process GPU models sequentially (n_jobs=1)
     if gpu_tasks:
-        print(f"\n🎨 Processing GPU models sequentially...")
-        gpu_results = Parallel(n_jobs=1, backend='loky')(
-            delayed(process_single_reconstruction)(task) 
-            for task in tqdm(gpu_tasks, desc="⏳ GPU models", unit="task", ncols=80)
-        )
-        all_results.extend(gpu_results)
+        print(f"\n🎨 Processing GPU models sequentially...", flush=True)
+        try:
+            gpu_results = Parallel(n_jobs=1, backend='loky')(
+                delayed(process_single_reconstruction)(task) 
+                for task in tqdm(gpu_tasks, desc="⏳ GPU models", unit="task", ncols=80)
+            )
+            all_results.extend(gpu_results)
+        except Exception as e:
+            print(f"\n❌ GPU processing failed: {type(e).__name__}: {e}", flush=True)
+            raise
     
     # Count results
     completed = sum(1 for r in all_results if r['status'] == 'success')
@@ -485,5 +514,21 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except Exception as e:
+        print(f"\n{'='*70}", flush=True)
+        print(f"❌ FATAL ERROR: {type(e).__name__}: {e}", flush=True)
+        print("="*70, flush=True)
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print(f"\n{'='*70}", flush=True)
+        print("⚠️  Interrupted by user (Ctrl+C)", flush=True)
+        print("="*70, flush=True)
+        sys.stdout.flush()
+        sys.exit(130)
 

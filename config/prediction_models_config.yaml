@@ -17,15 +17,15 @@ global_training:
   seed: 42
   
   # Maximum training epochs (for deep learning models)
-  max_epochs: 1 #100
+  max_epochs: 100 #100
   
   # Batch size for training
-  batch_size: 32
+  batch_size: 80000
   
   # Number of training iterations for non-deterministic models
   # Each iteration trains a new model with different random seed
   # Results from all iterations are saved for statistical analysis
-  training_iterations: 1
+  training_iterations: 5
 
 # ============================================================================
 # EARLY STOPPING SETTINGS
@@ -44,7 +44,7 @@ early_stopping:
   min_delta: 0.001
   
   # Whether to print early stopping messages
-  verbose: false
+  verbose: true
 
 # ============================================================================
 # LSTM MODEL PARAMETERS

@@ -52,7 +52,7 @@ reconstruction_models:
   #   - "interpolate_cubic"
   #   - "knn"
   
-  selected: ["impute_mean", "interpolate_linear"]  # Empty = use all available models
+  selected: []  # Empty = use all available models
   
   # You can also exclude specific models:
   excluded:
@@ -101,8 +101,7 @@ missingness_techniques:
   # selected:
   #   - "MCAR"
   #   - "MAR"
-  
-  selected: ["MCAR", "MAR"]  # Empty = use all available techniques
+  selected: []  # Empty = use all available techniques
   
   # Available techniques (auto-discovered from missingness_techniques/):
   # - MCAR (Missing Completely At Random)
@@ -115,11 +114,12 @@ missingness_techniques:
 missingness_rates:
   # Fractions of data to remove (0.0 to 1.0)
   rates:
-  - 0.05   # 5%
-  - 0.10   # 10%
+  - 0.03   # 5%
+  - 0.08   # 10%
+  - 0.20
 
   # Number of iterations (different random patterns per configuration)
-  iterations: 3
+  iterations: 10
   
   # Random seed for reproducibility
   seed: 42
@@ -136,14 +136,12 @@ visualization:
 # COMPUTATION SETTINGS
 # ============================================================================
 computation:
-  # File overwriting behavior
-  overwrite_existing: true  # Set to true to overwrite existing files, false to skip
-  
   # Parallel processing
-  # n_jobs: -1 uses all CPU cores
+  # n_jobs: -1 uses all CPU cores (capped at 16 to avoid memory issues)
   # n_jobs: 1 disables parallelization (sequential)
   # n_jobs: N uses N cores
   # WARNING: Set n_jobs=1 when using GPU models (Stable Diffusion, deep learning)
+  # TIP: If processes crash silently, try reducing n_jobs (e.g., 8 or 4)
   n_jobs: 16
   
   # Stable Diffusion settings (if using SD models)
@@ -151,6 +149,20 @@ computation:
     num_inference_steps: 42
     guidance_scale: 7.5
     device: "cuda"  # "cuda" or "cpu"
+
+# ============================================================================
+# OVERWRITE SETTINGS
+# ============================================================================
+overwrite:
+  # Reconstruction phase (steps 3-5: degrade, reconstruct, calculate MAD)
+  # true = overwrite existing degraded/reconstructed files
+  # false = skip if files already exist
+  reconstruction: false
+  
+  # Prediction phase (steps 7-9: train models, predict, calculate error)
+  # true = retrain models and redo predictions even if they exist
+  # false = skip existing trained models and predictions
+  prediction: true
 
 # ============================================================================
 # EXAMPLES OF PRESET CONFIGURATIONS

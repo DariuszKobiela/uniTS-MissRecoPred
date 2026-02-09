@@ -35,7 +35,8 @@ class TeeOutput:
     def __init__(self, log_file, original_stream):
         self.log_file = log_file
         self.original = original_stream
-        self.last_progress_line = ""
+        # Track progress bars by their prefix (e.g., "Epoch 0", "Validation DataLoader 0")
+        self.progress_bars = {}
         
     def write(self, message):
         # Always write to console
@@ -44,18 +45,23 @@ class TeeOutput:
         
         # Handle progress bars specially
         if self._is_progress_update(message):
-            # Store the latest progress line (might be the final one)
-            # Clean it up - remove \r and keep content
+            # Extract progress bar prefix and percentage
             clean = message.replace('\r', '').strip()
             if clean:
-                self.last_progress_line = clean
+                prefix = self._get_progress_prefix(clean)
+                percent = self._get_progress_percent(clean)
+                # Store the latest state of this progress bar
+                self.progress_bars[prefix] = {'line': clean, 'percent': percent}
             return
         
-        # If this is a newline after progress bar, log the completed progress
-        if message == '\n' and self.last_progress_line:
-            self.log_file.write(self.last_progress_line + '\n')
-            self.log_file.flush()
-            self.last_progress_line = ""
+        # If this is a newline after progress bars, check for completed ones
+        if message == '\n':
+            # Log any progress bars that reached 100%
+            for prefix, data in list(self.progress_bars.items()):
+                if data['percent'] >= 100:
+                    self.log_file.write(data['line'] + '\n')
+                    self.log_file.flush()
+            self.progress_bars.clear()
             return
         
         # Normal message - log if should
@@ -63,23 +69,54 @@ class TeeOutput:
             self.log_file.write(message)
             self.log_file.flush()
     
+    def _get_progress_prefix(self, message: str) -> str:
+        """Extract the prefix/label of a progress bar."""
+        # Format: "Label: X%|..." or "Label: |..."
+        if ':' in message:
+            return message.split(':')[0].strip()
+        return message[:20]  # Fallback: first 20 chars
+    
+    def _get_progress_percent(self, message: str) -> float:
+        """Extract percentage from progress bar message."""
+        import re
+        # Look for patterns like "100%", " 50%", etc.
+        match = re.search(r'(\d+)%', message)
+        if match:
+            return float(match.group(1))
+        # Check if it's a completed bar by looking at N/M pattern where N==M
+        match = re.search(r'\|\s*(\d+)/(\d+)\s*\[', message)
+        if match:
+            current, total = int(match.group(1)), int(match.group(2))
+            if total > 0:
+                return (current / total) * 100
+        return 0.0
+    
     def _is_progress_update(self, message: str) -> bool:
         """Check if this is a progress bar update."""
         # Progress bars use \r to overwrite and contain % or progress chars
         if '\r' in message:
             return True
-        # Also check for tqdm-style patterns
+        # Check for tqdm-style progress bar characters
         if any(c in message for c in ['█', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '━', '#']):
             if '%' in message or 'it/s' in message or 'file/s' in message:
                 return True
+        # Check for PyTorch Lightning / tqdm progress patterns
+        # Patterns like: "Validation: |          | 0/? [00:00<?, ?it/s]"
+        # or "Epoch 0:   0%|          | 38555/16195624 [02:57<20:38:23, 217.45it/s"
+        if 'it/s' in message or 'it/s]' in message:
+            return True
+        if '|' in message and ('[' in message or '%' in message):
+            # Likely a progress bar with format: "label: X%|bar| N/M [time]"
+            return True
+        if 'DataLoader' in message and ('/' in message or '%' in message):
+            return True
+        # Pattern: "Training: |" or "Validation: |" - progress bar start
+        if message.strip().endswith('|') or '| 0/?' in message:
+            return True
         return False
     
     def _should_log(self, message: str) -> bool:
         """Check if message should be written to log file."""
-        # Always allow newlines
-        if message == '\n' or message.endswith('\n'):
-            return True
-        
         # Skip ANSI escape sequences (cursor movement, colors, etc.)
         ansi_sequences = ['[A', '[B', '[C', '[D', '[K', '[2K', '[J', '[?25l', '[?25h']
         if any(seq in message for seq in ansi_sequences):
@@ -88,6 +125,18 @@ class TeeOutput:
         # Skip if contains ESC character
         if '\x1b' in message:
             return False
+        
+        # Skip progress bar patterns that might have slipped through
+        if 'it/s' in message or 'it/s]' in message:
+            return False
+        if '|' in message and '%|' in message:
+            return False
+        if 'DataLoader' in message and '/' in message and '[' in message:
+            return False
+        
+        # Always allow newlines
+        if message == '\n' or message.endswith('\n'):
+            return True
         
         # Skip very short messages without newlines (likely fragments)
         if len(message.strip()) < 3:

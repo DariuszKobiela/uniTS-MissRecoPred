@@ -392,12 +392,13 @@ def main():
     st.markdown("---")
     
     # Visualization tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
         "📊 By Model", 
         "🎯 By Technique", 
         "📉 By Missing Rate",
         "📁 By Dataset",
         "⚡ By Efficiency",
+        "🏅 Best Model (Tradeoff)",
         "🔥 Heatmap",
         "📊 Statistical Tests",
         "🏆 Best/Worst",
@@ -490,6 +491,239 @@ def main():
             st.warning("No data available with current filters")
     
     with tab6:
+        st.header("🏅 Best Model Selection (Quality vs Efficiency Tradeoff)")
+        st.caption("Find the optimal model balancing reconstruction quality (low MAD) and computational efficiency")
+        
+        # Check if performance metrics are available
+        if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
+            st.warning("⚠️ No performance metrics available. Run reconstructions first to collect performance data.")
+        else:
+            df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
+            
+            if len(df_perf) == 0:
+                st.warning("No performance data available with current filters")
+            else:
+                # Explanation
+                with st.expander("ℹ️ How is the Combined Score calculated?", expanded=False):
+                    st.markdown("""
+                    **Combined Score** balances reconstruction quality and computational efficiency:
+                    
+                    **Formula:**
+                    ```
+                    Combined Score = α × MAD_norm + β × Efficiency_norm
+                    ```
+                    
+                    Where:
+                    - **MAD_norm**: Normalized MAD (0 = best model, 1 = worst model)
+                    - **Efficiency_norm**: Normalized Efficiency Score (Time + CPU + Memory + GPU, each 0-1)
+                    - **α (alpha)**: Weight for reconstruction quality (default: 0.5)
+                    - **β (beta)**: Weight for efficiency (default: 0.5)
+                    
+                    **Interpretation:**
+                    - **Lower Combined Score** = better overall (good quality + efficient)
+                    - Use **α > β** if quality is more important
+                    - Use **α < β** if efficiency/speed is more important
+                    
+                    **Pareto Optimal Models:**
+                    Models on the Pareto front are "optimal" - you cannot improve MAD without worsening efficiency (or vice versa).
+                    """)
+                
+                st.divider()
+                
+                # Calculate normalized metrics per model
+                model_metrics = df_perf.groupby('model').agg({
+                    'mad': 'mean',
+                    'time_seconds': 'mean',
+                    'cpu_cores_used': 'mean',
+                    'cpu_cores_total': 'first',
+                    'memory_mb': 'mean',
+                    'gpu_memory_mb': 'mean',
+                    'gpu_memory_total_mb': 'first'
+                }).reset_index()
+                
+                # Normalize MAD (0 = best, 1 = worst)
+                mad_min, mad_max = model_metrics['mad'].min(), model_metrics['mad'].max()
+                model_metrics['mad_norm'] = (model_metrics['mad'] - mad_min) / (mad_max - mad_min + 1e-9)
+                
+                # Calculate Efficiency Score components
+                time_min, time_max = model_metrics['time_seconds'].min(), model_metrics['time_seconds'].max()
+                model_metrics['time_norm'] = (model_metrics['time_seconds'] - time_min) / (time_max - time_min + 1e-9)
+                
+                total_cores = model_metrics['cpu_cores_total'].mode()[0] if model_metrics['cpu_cores_total'].notna().any() else 1
+                model_metrics['cpu_norm'] = model_metrics['cpu_cores_used'] / total_cores
+                
+                mem_min, mem_max = model_metrics['memory_mb'].min(), model_metrics['memory_mb'].max()
+                model_metrics['mem_norm'] = (model_metrics['memory_mb'] - mem_min) / (mem_max - mem_min + 1e-9)
+                
+                # GPU norm (0 for CPU-only models)
+                model_metrics['gpu_norm'] = model_metrics.apply(
+                    lambda row: (row['gpu_memory_mb'] / row['gpu_memory_total_mb'])
+                    if pd.notna(row['gpu_memory_mb']) and pd.notna(row['gpu_memory_total_mb']) and row['gpu_memory_total_mb'] > 0
+                    else 0.0,
+                    axis=1
+                )
+                
+                # Total Efficiency Score
+                model_metrics['efficiency_score'] = (
+                    model_metrics['time_norm'] + 
+                    model_metrics['cpu_norm'] + 
+                    model_metrics['mem_norm'] + 
+                    model_metrics['gpu_norm']
+                )
+                
+                # Normalize efficiency score to 0-1 range
+                eff_min, eff_max = model_metrics['efficiency_score'].min(), model_metrics['efficiency_score'].max()
+                model_metrics['efficiency_norm'] = (model_metrics['efficiency_score'] - eff_min) / (eff_max - eff_min + 1e-9)
+                
+                # Weight sliders
+                st.subheader("⚖️ Adjust Tradeoff Weights")
+                col1, col2 = st.columns(2)
+                with col1:
+                    alpha = st.slider(
+                        "α (Quality weight - MAD)", 
+                        min_value=0.0, max_value=1.0, value=0.5, step=0.1,
+                        help="Higher = prioritize reconstruction quality"
+                    )
+                with col2:
+                    beta = st.slider(
+                        "β (Efficiency weight)", 
+                        min_value=0.0, max_value=1.0, value=0.5, step=0.1,
+                        help="Higher = prioritize computational efficiency"
+                    )
+                
+                # Calculate Combined Score
+                model_metrics['combined_score'] = alpha * model_metrics['mad_norm'] + beta * model_metrics['efficiency_norm']
+                model_metrics = model_metrics.sort_values('combined_score')
+                
+                st.divider()
+                
+                # Best model highlight
+                best_model = model_metrics.iloc[0]
+                st.success(f"🏆 **Best Model: {best_model['model']}** (Combined Score: {best_model['combined_score']:.4f})")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("MAD", f"{best_model['mad']:.4f}")
+                with col2:
+                    st.metric("Time", f"{best_model['time_seconds']:.2f}s")
+                with col3:
+                    st.metric("CPU Cores", f"{best_model['cpu_cores_used']:.2f}")
+                with col4:
+                    st.metric("Memory", f"{best_model['memory_mb']:.1f} MB")
+                
+                st.divider()
+                
+                # Ranking table
+                st.subheader("📊 Model Ranking (by Combined Score)")
+                
+                ranking_df = model_metrics[['model', 'mad', 'efficiency_score', 'combined_score', 
+                                            'time_seconds', 'cpu_cores_used', 'memory_mb']].copy()
+                ranking_df = ranking_df.reset_index(drop=True)
+                ranking_df.index = ranking_df.index + 1  # Start from 1
+                ranking_df.index.name = 'Rank'
+                
+                # Style the dataframe
+                def highlight_best(s):
+                    return ['background-color: #90EE90' if i == 0 else '' for i in range(len(s))]
+                
+                styled_ranking = ranking_df.style.format({
+                    'mad': '{:.4f}',
+                    'efficiency_score': '{:.3f}',
+                    'combined_score': '{:.4f}',
+                    'time_seconds': '{:.2f}s',
+                    'cpu_cores_used': '{:.2f}',
+                    'memory_mb': '{:.1f}'
+                }).apply(highlight_best)
+                
+                st.dataframe(styled_ranking, width='stretch')
+                
+                st.divider()
+                
+                # Pareto Front visualization
+                st.subheader("📈 Pareto Front: MAD vs Efficiency")
+                st.caption("Models on the Pareto front (green line) are optimal - can't improve one metric without worsening the other")
+                
+                # Find Pareto optimal points
+                def is_pareto_optimal(costs):
+                    """Find Pareto optimal points (lower is better for both dimensions)"""
+                    is_efficient = np.ones(costs.shape[0], dtype=bool)
+                    for i, c in enumerate(costs):
+                        if is_efficient[i]:
+                            # Keep points that are not dominated
+                            is_efficient[is_efficient] = np.any(costs[is_efficient] < c, axis=1) | np.all(costs[is_efficient] == c, axis=1)
+                            is_efficient[i] = True
+                    return is_efficient
+                
+                costs = model_metrics[['mad', 'efficiency_score']].values
+                pareto_mask = is_pareto_optimal(costs)
+                model_metrics['is_pareto'] = pareto_mask
+                
+                # Sort Pareto points for line
+                pareto_points = model_metrics[model_metrics['is_pareto']].sort_values('mad')
+                
+                # Create scatter plot
+                fig = go.Figure()
+                
+                # All points
+                fig.add_trace(go.Scatter(
+                    x=model_metrics['mad'],
+                    y=model_metrics['efficiency_score'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=12,
+                        color=model_metrics['combined_score'],
+                        colorscale='RdYlGn_r',
+                        showscale=True,
+                        colorbar=dict(title='Combined<br>Score')
+                    ),
+                    text=model_metrics['model'],
+                    textposition='top center',
+                    name='Models',
+                    hovertemplate='<b>%{text}</b><br>MAD: %{x:.4f}<br>Efficiency: %{y:.3f}<extra></extra>'
+                ))
+                
+                # Pareto front line
+                if len(pareto_points) > 1:
+                    fig.add_trace(go.Scatter(
+                        x=pareto_points['mad'],
+                        y=pareto_points['efficiency_score'],
+                        mode='lines',
+                        line=dict(color='green', width=2, dash='dash'),
+                        name='Pareto Front',
+                        hoverinfo='skip'
+                    ))
+                
+                # Highlight Pareto optimal points
+                fig.add_trace(go.Scatter(
+                    x=pareto_points['mad'],
+                    y=pareto_points['efficiency_score'],
+                    mode='markers',
+                    marker=dict(size=18, color='green', symbol='circle-open', line=dict(width=3)),
+                    name='Pareto Optimal',
+                    hoverinfo='skip'
+                ))
+                
+                fig.update_layout(
+                    title='Quality vs Efficiency Tradeoff (lower = better for both axes)',
+                    xaxis_title='MAD (Reconstruction Error) →',
+                    yaxis_title='Efficiency Score (Resource Usage) →',
+                    height=600,
+                    showlegend=True
+                )
+                
+                st.plotly_chart(fig, width='stretch')
+                
+                # Pareto optimal models list
+                st.subheader("🌟 Pareto Optimal Models")
+                st.caption("These models represent the best tradeoffs - choosing between them depends on your priorities")
+                
+                pareto_df = model_metrics[model_metrics['is_pareto']][['model', 'mad', 'efficiency_score', 'time_seconds']].copy()
+                pareto_df = pareto_df.sort_values('mad')
+                
+                for i, row in pareto_df.iterrows():
+                    st.write(f"• **{row['model']}**: MAD = {row['mad']:.4f}, Efficiency = {row['efficiency_score']:.3f}, Time = {row['time_seconds']:.2f}s")
+    
+    with tab7:
         st.header("Heatmap: MAD by Model vs Technique")
         
         # Get available techniques for sorting
@@ -510,7 +744,7 @@ def main():
         else:
             st.warning("No data available for heatmap with current filters")
     
-    with tab7:
+    with tab8:
         st.header("📊 Statistical Significance Tests")
         st.caption("Pairwise t-tests between models - which differences are statistically significant?")
         
@@ -636,7 +870,7 @@ def main():
                 styled_pvalues = pvalue_matrix.style.map(color_pvalue).format("{:.4f}")
                 st.dataframe(styled_pvalues, width='stretch', height=600)
     
-    with tab8:
+    with tab9:
         st.header("Best and Worst Performing Models")
         
         top_n = st.slider("Number of models to show", 5, 20, 10)
@@ -646,7 +880,7 @@ def main():
         else:
             st.warning("No data available with current filters")
     
-    with tab9:
+    with tab10:
         st.header("⏱️ Computation Time Analysis")
         st.caption("📍 Computational complexity metrics - execution time")
         
@@ -743,7 +977,7 @@ def main():
                 st.subheader("Detailed Statistics")
                 st.dataframe(model_time, width='stretch')
     
-    with tab10:
+    with tab11:
         st.header("💻 Resource Usage Analysis")
         st.caption("📍 Computational complexity metrics - CPU, RAM, GPU usage")
         
@@ -996,7 +1230,7 @@ def main():
                 fig.update_traces(textposition='top center')
                 st.plotly_chart(fig, width='stretch')
     
-    with tab11:
+    with tab12:
         st.header("Raw Data")
         
         # Search functionality

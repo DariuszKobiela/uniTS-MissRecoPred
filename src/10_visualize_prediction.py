@@ -98,7 +98,7 @@ def plot_mape_by_reconstruction_model_main(df: pd.DataFrame, technique: str = No
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show comprehensive statistics table
     st.subheader("Statistics")
@@ -146,7 +146,7 @@ def plot_mape_by_reconstruction_model_main(df: pd.DataFrame, technique: str = No
             'N Pred Models': '{:.0f}',
             'Rank': '{:.0f}'
         }).background_gradient(subset=['Mean MAPE'], cmap='RdYlGn_r'),
-        use_container_width=True
+        width='stretch'
     )
     
     # Add legend/explanation
@@ -192,7 +192,7 @@ def plot_recon_by_technique(df: pd.DataFrame):
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_recon_by_rate(df: pd.DataFrame, technique: str = None):
@@ -221,7 +221,7 @@ def plot_recon_by_rate(df: pd.DataFrame, technique: str = None):
     )
     
     fig.update_layout(height=500)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_mape_by_technique(df: pd.DataFrame, model: str = None, rate: int = None):
@@ -263,7 +263,7 @@ def plot_mape_by_technique(df: pd.DataFrame, model: str = None, rate: int = None
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show statistics table
     st.subheader("Statistics")
@@ -272,7 +272,7 @@ def plot_mape_by_technique(df: pd.DataFrame, model: str = None, rate: int = None
         'std': '{:.2f}%',
         'min': '{:.2f}%',
         'max': '{:.2f}%'
-    }), use_container_width=True)
+    }), width='stretch')
 
 
 def plot_mape_by_rate(df: pd.DataFrame, model: str = None, technique: str = None):
@@ -316,7 +316,7 @@ def plot_mape_by_rate(df: pd.DataFrame, model: str = None, technique: str = None
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show statistics table
     st.subheader("Statistics")
@@ -327,7 +327,7 @@ def plot_mape_by_rate(df: pd.DataFrame, model: str = None, technique: str = None
         'std': '{:.2f}%',
         'min': '{:.2f}%',
         'max': '{:.2f}%'
-    }), use_container_width=True)
+    }), width='stretch')
 
 
 def plot_mape_by_reconstruction_model(df: pd.DataFrame, pred_model: str = None, technique: str = None):
@@ -370,7 +370,7 @@ def plot_mape_by_reconstruction_model(df: pd.DataFrame, pred_model: str = None, 
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show statistics table
     st.subheader("Statistics")
@@ -379,7 +379,7 @@ def plot_mape_by_reconstruction_model(df: pd.DataFrame, pred_model: str = None, 
         'std': '{:.2f}%',
         'min': '{:.2f}%',
         'max': '{:.2f}%'
-    }), use_container_width=True)
+    }), width='stretch')
 
 
 def plot_heatmap_recon_vs_technique(df: pd.DataFrame):
@@ -420,7 +420,7 @@ def plot_heatmap_recon_vs_technique(df: pd.DataFrame):
         height=max(500, len(pivot_data.index) * 35)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_heatmap_recon_vs_rate(df: pd.DataFrame, technique: str = None):
@@ -468,7 +468,7 @@ def plot_heatmap_recon_vs_rate(df: pd.DataFrame, technique: str = None):
         height=max(500, len(pivot_data.index) * 35)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_heatmap_pred_vs_recon(df: pd.DataFrame, sort_by_model: str = None):
@@ -514,7 +514,7 @@ def plot_heatmap_pred_vs_recon(df: pd.DataFrame, sort_by_model: str = None):
         height=max(500, len(pivot_data.index) * 35)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_heatmap_pred_vs_technique(df: pd.DataFrame, sort_by_technique: str = None):
@@ -560,7 +560,7 @@ def plot_heatmap_pred_vs_technique(df: pd.DataFrame, sort_by_technique: str = No
         height=max(500, len(pivot_data.index) * 35)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_dataset_comparison(df: pd.DataFrame):
@@ -586,7 +586,7 @@ def plot_dataset_comparison(df: pd.DataFrame):
         height=500
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_best_worst_reconstruction_models(df: pd.DataFrame, top_n: int = 10):
@@ -637,7 +637,7 @@ def plot_best_worst_reconstruction_models(df: pd.DataFrame, top_n: int = 10):
     fig.update_xaxes(title_text="MAPE (%)", range=axis_range, row=1, col=1)
     fig.update_xaxes(title_text="MAPE (%)", range=axis_range, row=1, col=2)
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def plot_iteration_analysis(df: pd.DataFrame):
@@ -661,7 +661,7 @@ def plot_iteration_analysis(df: pd.DataFrame):
     )
     
     fig.update_layout(height=500)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show variance statistics
     st.subheader("Iteration Variance by Model")
@@ -676,7 +676,7 @@ def plot_iteration_analysis(df: pd.DataFrame):
         'Min': '{:.2f}%',
         'Max': '{:.2f}%',
         'CV (%)': '{:.2f}%'
-    }), use_container_width=True)
+    }), width='stretch')
     
     st.caption("CV (Coefficient of Variation) = Std/Mean × 100% - higher values indicate more variability")
 
@@ -891,11 +891,11 @@ def main():
                 pivot_mean.style
                 .apply(highlight_best_worst_per_row, axis=1)
                 .format('{:.2f}%', na_rep='—'),
-                use_container_width=True
+                width='stretch'
             )
             
             with st.expander("📋 Show count of predictions per cell"):
-                st.dataframe(pivot_count.astype(int), use_container_width=True)
+                st.dataframe(pivot_count.astype(int), width='stretch')
             
             # Per-reconstruction-model stats across all prediction models
             st.write("**Summary per Reconstruction Model (across all prediction models)**")
@@ -913,7 +913,7 @@ def main():
                     'Max': '{:.2f}%',
                     'N': '{:.0f}'
                 }),
-                use_container_width=True
+                width='stretch'
             )
         else:
             st.warning("No data for detailed statistics with current filters.")
@@ -953,7 +953,7 @@ def main():
                 fmt_dict['N Samples'] = '{:.0f}'
             st.dataframe(
                 df_rows.head(n_show).style.format(fmt_dict, na_rep='—'),
-                use_container_width=True,
+                width='stretch',
                 height=400
             )
             st.caption(f"Showing {min(n_show, len(df_rows))} of {len(df_rows)} prediction rows.")
@@ -1075,7 +1075,7 @@ def main():
             model_stats = get_model_statistics(df_for_stats, metric='mape')
             st.dataframe(
                 model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
-                use_container_width=True
+                width='stretch'
             )
             
             st.divider()
@@ -1098,7 +1098,7 @@ def main():
                     return 'background-color: #CCCCCC; color: black'
             
             styled_matrix = significance_matrix.style.map(color_significance)
-            st.dataframe(styled_matrix, use_container_width=True, height=500)
+            st.dataframe(styled_matrix, width='stretch', height=500)
             
             st.caption("**Legend**: 🟩 +2 (p<0.01 better) | 🟢 +1 (p<0.05 better) | ⬜ 0 (no diff) | 🔴 -1 (p<0.05 worse) | 🟥 -2 (p<0.01 worse)")
             
@@ -1109,7 +1109,43 @@ def main():
             summary_df = pd.DataFrame(significance_summary).T.reset_index()
             summary_df.columns = ['Recon Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Diff', 'Worse (p<0.05)', 'Worse (p<0.01)']
             summary_df = summary_df.sort_values('Better (p<0.01)', ascending=False)
-            st.dataframe(summary_df, use_container_width=True)
+            st.dataframe(summary_df, width='stretch')
+            
+            # ====================================================================
+            # PREDICTION MODELS T-TESTS
+            # ====================================================================
+            st.markdown("---")
+            st.header("📊 Statistical Tests: Prediction Models")
+            st.caption("Pairwise t-tests between PREDICTION models (which prediction model gives better results?)")
+            
+            # Rename column for statistical functions
+            df_pred_stats = df_recon.rename(columns={'prediction_model': 'model'})
+            
+            st.subheader("Prediction Model Statistics")
+            pred_model_stats = get_model_statistics(df_pred_stats, metric='mape')
+            st.dataframe(
+                pred_model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
+                width='stretch'
+            )
+            
+            st.divider()
+            
+            st.subheader("Pairwise Statistical Significance Matrix (Prediction Models)")
+            pred_significance_matrix = perform_pairwise_ttests(df_pred_stats, metric='mape', alpha_01=0.01, alpha_05=0.05)
+            
+            styled_pred_matrix = pred_significance_matrix.style.map(color_significance)
+            st.dataframe(styled_pred_matrix, width='stretch', height=500)
+            
+            st.caption("**Legend**: 🟩 +2 (p<0.01 better) | 🟢 +1 (p<0.05 better) | ⬜ 0 (no diff) | 🔴 -1 (p<0.05 worse) | 🟥 -2 (p<0.01 worse)")
+            
+            st.divider()
+            
+            st.subheader("Significance Summary (Prediction Models)")
+            pred_significance_summary = get_significance_summary(pred_significance_matrix)
+            pred_summary_df = pd.DataFrame(pred_significance_summary).T.reset_index()
+            pred_summary_df.columns = ['Pred Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Diff', 'Worse (p<0.05)', 'Worse (p<0.01)']
+            pred_summary_df = pred_summary_df.sort_values('Better (p<0.01)', ascending=False)
+            st.dataframe(pred_summary_df, width='stretch')
     
     # Tab 7: By Dataset
     with tab7:
@@ -1128,7 +1164,7 @@ def main():
                 labels={'mape': 'Mean MAPE (%)', 'dataset_name': 'Dataset', 'reconstruction_model': 'Recon Model'}
             )
             fig.update_layout(xaxis_tickangle=-45, height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.warning("No reconstructed data available")
     
@@ -1177,7 +1213,7 @@ def main():
                         color_continuous_scale='Blues'
                     )
                     fig.update_layout(height=max(350, len(train_time) * 35), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No training data available")
             else:
@@ -1218,7 +1254,7 @@ def main():
                         color_continuous_scale='Reds'
                     )
                     fig.update_layout(height=max(350, len(pred_time) * 35), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No prediction time data")
             else:
@@ -1269,7 +1305,7 @@ def main():
                     height=max(400, len(total_times) * 40),
                     legend=dict(orientation='h', yanchor='bottom', y=1.02)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # Summary metrics
                 col1, col2, col3 = st.columns(3)
@@ -1339,7 +1375,7 @@ def main():
                             color_continuous_scale='Oranges'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     
                     with col2:
                         fig = px.bar(
@@ -1353,7 +1389,7 @@ def main():
                             color_continuous_scale='Purples'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     
                     # GPU chart if available
                     if 'gpu_memory_mb' in train_resources.columns and train_resources['gpu_memory_mb'].notna().any():
@@ -1368,7 +1404,7 @@ def main():
                             color_continuous_scale='Greens'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No training resource data")
             else:
@@ -1423,7 +1459,7 @@ def main():
                             color_continuous_scale='Oranges'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     
                     with col2:
                         fig = px.bar(
@@ -1437,7 +1473,7 @@ def main():
                             color_continuous_scale='Purples'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     
                     # GPU chart if available
                     if 'gpu_memory_mb' in pred_resources.columns and pred_resources['gpu_memory_mb'].notna().any():
@@ -1452,7 +1488,7 @@ def main():
                             color_continuous_scale='Greens'
                         )
                         fig.update_layout(height=300, showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No prediction resource data")
             else:
@@ -1528,7 +1564,7 @@ def main():
                     )
                     fig.update_traces(textposition='top center')
                     fig.update_layout(height=500)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
     
     # Tab 10: Raw Data
     with tab10:
@@ -1550,7 +1586,7 @@ def main():
         
         df_display = df_display.sort_values(sort_column, ascending=(sort_order == 'Ascending'))
         
-        st.dataframe(df_display, use_container_width=True)
+        st.dataframe(df_display, width='stretch')
         
         csv = df_display.to_csv(index=False)
         st.download_button(

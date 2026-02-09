@@ -643,7 +643,7 @@ For long-running experiments (especially with Stable Diffusion models), use `tmu
 
 ```bash
 # Start a new tmux session
-tmux new -s experiments
+tmux new -s experiment
 
 # Inside tmux, activate virtual environment and run experiments
 source experiment/bin/activate
@@ -653,7 +653,7 @@ python src/4_reconstruct_datasets.py
 # Press: Ctrl+B, then D
 
 # Reattach to the session later
-tmux attach -t experiments
+tmux attach -t experiment
 
 # List all tmux sessions
 tmux ls

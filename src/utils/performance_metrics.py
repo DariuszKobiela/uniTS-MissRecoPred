@@ -11,24 +11,31 @@ Collects computational performance metrics during time series reconstruction:
 import time
 import psutil
 import os
+import warnings
 from typing import Dict, Optional
 from contextlib import contextmanager
+
+# Suppress NVML initialization warnings from PyTorch
+warnings.filterwarnings('ignore', message='.*NVML.*')
+warnings.filterwarnings('ignore', message='.*Can\'t initialize.*')
 
 
 class PerformanceMonitor:
     """Monitor and record performance metrics during reconstruction"""
     
-    def __init__(self):
+    def __init__(self, verbose: bool = False):
         self.start_time = None
         self.end_time = None
         self.process = psutil.Process(os.getpid())
         self.initial_cpu_percent = None
         self.initial_memory_mb = None
+        self.verbose = verbose
         
         # Try to import GPU monitoring (GPUtil or PyTorch)
         self.gpu_available = False
         self.gpu_method = None  # 'gputil' or 'pytorch'
         self.GPUtil = None
+        self.torch = None
         
         # First try GPUtil
         try:
@@ -38,6 +45,8 @@ class PerformanceMonitor:
             if gpus:
                 self.gpu_available = True
                 self.gpu_method = 'gputil'
+                if self.verbose:
+                    print(f"   GPU monitoring: GPUtil ({len(gpus)} GPU(s) found)")
         except Exception:
             pass
         
@@ -45,12 +54,20 @@ class PerformanceMonitor:
         if not self.gpu_available:
             try:
                 import torch
-                if torch.cuda.is_available():
+                cuda_available = torch.cuda.is_available()
+                
+                if cuda_available:
                     self.gpu_available = True
                     self.gpu_method = 'pytorch'
                     self.torch = torch
+                    if self.verbose:
+                        device_name = torch.cuda.get_device_name(0)
+                        print(f"   GPU monitoring: PyTorch CUDA ({device_name})")
             except Exception:
                 pass
+        
+        if not self.gpu_available and self.verbose:
+            print("   GPU monitoring: Not available")
     
     def start(self):
         """Start monitoring"""

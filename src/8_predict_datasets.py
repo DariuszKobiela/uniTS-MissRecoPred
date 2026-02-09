@@ -48,6 +48,9 @@ warnings.filterwarnings('ignore', message='.*num_workers.*')
 warnings.filterwarnings('ignore', message='.*ConvergenceWarning.*')
 warnings.filterwarnings('ignore', message='.*Maximum Likelihood.*')
 warnings.filterwarnings('ignore', message='.*optimization failed.*')
+# Suppress NVML warnings from PyTorch
+warnings.filterwarnings('ignore', message='.*NVML.*')
+warnings.filterwarnings('ignore', message='.*Can\'t initialize.*')
 
 # Optimize for GPUs with Tensor Cores
 torch.set_float32_matmul_precision('medium')

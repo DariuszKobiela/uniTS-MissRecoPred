@@ -1,4 +1,4 @@
-.PHONY: help setup clean-datasets split degrade optimize reconstruct calculate train-models predict calculate-prediction visualize visualize-prediction pipeline pipeline-full clean clean-all test
+.PHONY: help setup clean-datasets create-split degrade-datasets optimize optimize-quick reconstruct-datasets calculate-mad visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full clean clean-all test test-prediction
 
 # Default target
 help:
@@ -8,20 +8,20 @@ help:
 	@echo "==================================================================="
 	@echo ""
 	@echo "Setup commands:"
-	@echo "  make setup       - Install dependencies with uv"
+	@echo "  make setup                    - Install dependencies with uv"
 	@echo ""
 	@echo "Pipeline commands (run in order):"
-	@echo "  make clean-datasets      - Step 1: Clean and validate raw datasets"
-	@echo "  make split               - Step 2: Split data into train/test sets"
-	@echo "  make degrade             - Step 3: Create degraded training data"
-	@echo "  make optimize            - Optional: Optimize SD hyperparameters"
-	@echo "  make reconstruct         - Step 4: Reconstruct missing values"
-	@echo "  make calculate           - Step 5: Calculate MAD metrics"
-	@echo "  make visualize           - Step 6: Launch reconstruction dashboard"
-	@echo "  make train-models        - Step 7: Train prediction models"
-	@echo "  make predict             - Step 8: Predict using trained models"
-	@echo "  make calculate-prediction - Step 9: Calculate prediction MAPE"
-	@echo "  make visualize-prediction - Step 10: Launch prediction dashboard"
+	@echo "  make clean-datasets           - Step 1:  Clean and validate raw datasets"
+	@echo "  make create-split             - Step 2:  Split data into train/test sets"
+	@echo "  make degrade-datasets         - Step 3:  Create degraded training data"
+	@echo "  make optimize                 - Optional: Optimize SD hyperparameters"
+	@echo "  make reconstruct-datasets     - Step 4:  Reconstruct missing values"
+	@echo "  make calculate-mad            - Step 5:  Calculate MAD metrics"
+	@echo "  make visualize-mad            - Step 6:  Launch reconstruction dashboard"
+	@echo "  make train-prediction-models  - Step 7:  Train prediction models"
+	@echo "  make predict-datasets         - Step 8:  Predict using trained models"
+	@echo "  make calculate-prediction-error - Step 9:  Calculate prediction MAPE"
+	@echo "  make visualize-prediction     - Step 10: Launch prediction dashboard"
 	@echo ""
 	@echo "Full pipelines:"
 	@echo "  make pipeline            - Reconstruction pipeline (steps 1-5)"
@@ -47,16 +47,16 @@ clean-datasets:
 	uv run python src/1_clean_datasets.py
 	@echo "✓ Datasets cleaned"
 
-# Step 2: Split datasets into train/test
-split:
+# Step 2: Split datasets into train/test (2_create_split.py)
+create-split:
 	@echo "==================================================================="
 	@echo "Step 2: Splitting datasets into train/test sets"
 	@echo "==================================================================="
 	uv run python src/2_create_split.py
 	@echo "✓ Datasets split into train/test"
 
-# Step 3: Degrade training datasets
-degrade:
+# Step 3: Degrade training datasets (3_degrade_datasets.py)
+degrade-datasets:
 	@echo "==================================================================="
 	@echo "Step 3: Creating degraded training datasets with missing data"
 	@echo "==================================================================="
@@ -80,8 +80,8 @@ optimize-quick:
 	uv run python src/optimization/optimize_sd_hyperparams.py --n-trials 20 --max-files 5
 	@echo "✓ Quick optimization complete"
 
-# Step 4: Reconstruct datasets
-reconstruct:
+# Step 4: Reconstruct datasets (4_reconstruct_datasets.py)
+reconstruct-datasets:
 	@echo "==================================================================="
 	@echo "Step 4: Reconstructing missing values"
 	@echo "==================================================================="
@@ -89,24 +89,24 @@ reconstruct:
 	uv run python src/4_reconstruct_datasets.py
 	@echo "✓ Reconstruction complete"
 
-# Step 5: Calculate MAD
-calculate:
+# Step 5: Calculate MAD (5_calculate_mad.py)
+calculate-mad:
 	@echo "==================================================================="
 	@echo "Step 5: Calculating MAD metrics"
 	@echo "==================================================================="
 	uv run python src/5_calculate_mad.py
 	@echo "✓ MAD calculation complete"
 
-# Step 6: Visualize reconstruction results
-visualize:
+# Step 6: Visualize reconstruction results (6_visualize_mad_comparison.py)
+visualize-mad:
 	@echo "==================================================================="
 	@echo "Step 6: Launching Reconstruction Streamlit dashboard"
 	@echo "==================================================================="
 	@echo "Dashboard will open at http://localhost:8501"
 	uv run streamlit run src/6_visualize_mad_comparison.py
 
-# Step 7: Train prediction models
-train-models:
+# Step 7: Train prediction models (7_train_prediction_models.py)
+train-prediction-models:
 	@echo "==================================================================="
 	@echo "Step 7: Training prediction models"
 	@echo "==================================================================="
@@ -114,16 +114,16 @@ train-models:
 	uv run python src/7_train_prediction_models.py
 	@echo "✓ Model training complete"
 
-# Step 8: Predict datasets
-predict:
+# Step 8: Predict datasets (8_predict_datasets.py)
+predict-datasets:
 	@echo "==================================================================="
 	@echo "Step 8: Predicting with trained models"
 	@echo "==================================================================="
 	uv run python src/8_predict_datasets.py
 	@echo "✓ Prediction complete"
 
-# Step 9: Calculate prediction error (MAPE)
-calculate-prediction:
+# Step 9: Calculate prediction error (9_calculate_prediction_error.py)
+calculate-prediction-error:
 	@echo "==================================================================="
 	@echo "Step 9: Calculating prediction error (MAPE)"
 	@echo "==================================================================="
@@ -139,16 +139,16 @@ visualize-prediction:
 	uv run streamlit run src/10_visualize_prediction.py
 
 # Run reconstruction pipeline (steps 1-5)
-pipeline: clean-datasets split degrade reconstruct calculate
+pipeline: clean-datasets create-split degrade-datasets reconstruct-datasets calculate-mad
 	@echo "==================================================================="
 	@echo "✓ RECONSTRUCTION PIPELINE COMPLETE"
 	@echo "==================================================================="
 	@echo "Results saved to: reconstruction_experiments_results/"
-	@echo "Run 'make visualize' to view results in dashboard"
-	@echo "Run 'make train-models' to train prediction models"
+	@echo "Run 'make visualize-mad' to view results in dashboard"
+	@echo "Run 'make train-prediction-models' to train prediction models"
 
 # Run full pipeline including prediction (steps 1-5, 7-9)
-pipeline-full: clean-datasets split degrade reconstruct calculate train-models predict calculate-prediction
+pipeline-full: clean-datasets create-split degrade-datasets reconstruct-datasets calculate-mad train-prediction-models predict-datasets calculate-prediction-error
 	@echo "==================================================================="
 	@echo "✓ FULL PIPELINE COMPLETE"
 	@echo "==================================================================="
@@ -193,7 +193,7 @@ test:
 	@echo "✓ Quick test complete"
 
 # Quick prediction test
-test-predict:
+test-prediction:
 	@echo "Running quick prediction test..."
 	uv run python src/7_train_prediction_models.py --models xgboost --iterations 1
 	uv run python src/8_predict_datasets.py --models xgboost holt_winters

@@ -269,8 +269,20 @@ class Config:
         return self.config['computation']['stable_diffusion']
     
     def get_overwrite_existing(self) -> bool:
-        """Get overwrite existing files flag"""
-        return self.config['computation'].get('overwrite_existing', False)
+        """Get overwrite existing files flag (backward compatible - returns reconstruction setting)"""
+        # Check new structure first
+        if 'overwrite' in self.config:
+            return self.config['overwrite'].get('reconstruction', False)
+        # Fallback to old structure
+        return self.config.get('computation', {}).get('overwrite_existing', False)
+    
+    def get_overwrite_reconstruction(self) -> bool:
+        """Get overwrite flag for reconstruction phase (steps 3-5)"""
+        return self.config.get('overwrite', {}).get('reconstruction', False)
+    
+    def get_overwrite_prediction(self) -> bool:
+        """Get overwrite flag for prediction phase (steps 7-9)"""
+        return self.config.get('overwrite', {}).get('prediction', False)
     
     def get_n_jobs(self) -> int:
         """Get number of parallel jobs"""

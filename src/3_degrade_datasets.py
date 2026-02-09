@@ -22,6 +22,11 @@ from tqdm import tqdm
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+from utils.logger import setup_logging
+
+# Setup automatic logging to file
+setup_logging("3_degrade_datasets")
+
 # Import missingness techniques and config loader
 from missingness_techniques import MISSINGNESS_TECHNIQUES
 from utils.config_loader import load_config

@@ -28,6 +28,14 @@ Examples:
 
 import os
 import sys
+
+# Add src directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from utils.logger import setup_logging
+
+# Setup automatic logging to file
+setup_logging("1_clean_datasets")
 import argparse
 import pandas as pd
 import numpy as np

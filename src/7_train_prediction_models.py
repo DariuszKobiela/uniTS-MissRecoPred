@@ -17,6 +17,12 @@ Uses config/config.yaml and config/prediction_models_config.yaml for configurati
 
 import os
 import sys
+import warnings
+
+# Suppress NVML warnings from PyTorch before any torch imports
+warnings.filterwarnings('ignore', message='.*NVML.*')
+warnings.filterwarnings('ignore', message='.*Can\'t initialize.*')
+
 import argparse
 import pandas as pd
 import numpy as np
@@ -26,9 +32,6 @@ from typing import List, Dict, Any, Tuple, Optional
 from tqdm import tqdm
 import pickle
 import torch
-import warnings
-
-# Keep all warnings visible (FutureWarning, DeprecationWarning, etc.)
 
 # Optimize for GPUs with Tensor Cores (RTX, A100, etc.)
 torch.set_float32_matmul_precision('medium')
@@ -153,9 +156,6 @@ def train_global_model_darts(model_name: str,
         "enable_model_summary": False,
     }
     
-    # Use multiple workers for DataLoader (speeds up training)
-    num_workers = max(0, (os.cpu_count() or 1) - 1)
-    
     if model_name in ['lstm', 'gru']:
         model = RNNModel(
             model=model_name.upper(),
@@ -168,7 +168,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -185,7 +184,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -202,7 +200,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -221,7 +218,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -241,7 +237,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -260,7 +255,6 @@ def train_global_model_darts(model_name: str,
             n_epochs=max_epochs,
             random_state=seed,
             pl_trainer_kwargs=pl_trainer_kwargs,
-            num_loader_workers=num_workers,
             force_reset=True,
             save_checkpoints=True
         )
@@ -465,6 +459,9 @@ Examples:
     # Determine which models are deterministic
     deterministic_models = set(pred_config.get_deterministic_models())
     
+    # Determine overwrite setting (--force arg takes priority over config)
+    overwrite = args.force or config.get_overwrite_prediction()
+    
     print("="*70)
     print("TRAIN PREDICTION MODELS")
     print("="*70)
@@ -472,7 +469,7 @@ Examples:
     print(f"Training iterations: {n_iterations}")
     print(f"Base seed: {base_seed}")
     print(f"Output directory: {output_dir}")
-    print(f"Force overwrite: {args.force}")
+    print(f"Overwrite existing: {overwrite} (config: {config.get_overwrite_prediction()}, --force: {args.force})")
     print("="*70)
     
     # Collect all training data
@@ -526,12 +523,12 @@ Examples:
         for iteration in range(1, model_iterations + 1):
             seed = base_seed + iteration
             
-            # Check if model already exists (skip unless --force)
-            if model_exists(model_name, iteration, output_dir) and not args.force:
+            # Check if model already exists (skip unless overwrite=True)
+            if model_exists(model_name, iteration, output_dir) and not overwrite:
                 existing_path = get_model_path(model_name, iteration, output_dir, 
                                                'darts' if model_name in global_models else 'pickle')
                 print(f"\n⏭️  Skipping {model_name} iter{iteration} (already exists: {existing_path})")
-                print(f"   Use --force to overwrite")
+                print(f"   Set overwrite.prediction=true in config or use --force to retrain")
                 continue
             
             print(f"\n🔧 Training {model_name} (iteration {iteration}/{model_iterations}, seed={seed})...")
@@ -602,12 +599,15 @@ Examples:
     print(f"✓ Metrics saved to: {metrics_path}")
     
     # Summary
-    successful = df_metrics[df_metrics['time_seconds'].notna()]
     print(f"\n📊 Summary:")
-    print(f"   Total trained: {len(successful)}/{len(df_metrics)}")
-    if len(successful) > 0:
-        print(f"   Total time: {successful['time_seconds'].sum():.2f}s")
-        print(f"   Avg time per model: {successful['time_seconds'].mean():.2f}s")
+    if len(df_metrics) > 0 and 'time_seconds' in df_metrics.columns:
+        successful = df_metrics[df_metrics['time_seconds'].notna()]
+        print(f"   Total trained: {len(successful)}/{len(df_metrics)}")
+        if len(successful) > 0:
+            print(f"   Total time: {successful['time_seconds'].sum():.2f}s")
+            print(f"   Avg time per model: {successful['time_seconds'].mean():.2f}s")
+    else:
+        print(f"   No models were trained (all models may have been skipped or already exist)")
     print("="*70)
 
 
