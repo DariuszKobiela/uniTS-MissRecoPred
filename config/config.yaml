@@ -162,7 +162,7 @@ overwrite:
   # Prediction phase (steps 7-9: train models, predict, calculate error)
   # true = retrain models and redo predictions even if they exist
   # false = skip existing trained models and predictions
-  prediction: true
+  prediction: false
 
 # ============================================================================
 # EXAMPLES OF PRESET CONFIGURATIONS

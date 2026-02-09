@@ -13,14 +13,45 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-# PyTorch Lightning callback for clean epoch logging
+# PyTorch Lightning callback for clean epoch logging + tracking
 try:
     from pytorch_lightning.callbacks import Callback
     
     class EpochLogger(Callback):
-        """Custom callback to log epoch numbers (clean output for log files)."""
+        """
+        Custom callback to log epoch numbers and track training progress.
+        
+        After training, access:
+            - epochs_trained: total number of epochs completed
+            - best_val_loss: lowest validation loss seen (if val set used)
+            - final_train_loss: training loss at last epoch
+        """
+        def __init__(self):
+            super().__init__()
+            self.epochs_trained = 0
+            self.best_val_loss = None
+            self.final_train_loss = None
+        
         def on_train_epoch_start(self, trainer, pl_module):
             print(f"   Epoch {trainer.current_epoch + 1}/{trainer.max_epochs}", flush=True)
+        
+        def on_train_epoch_end(self, trainer, pl_module):
+            self.epochs_trained = trainer.current_epoch + 1
+            
+            # Capture losses from callback_metrics
+            metrics = trainer.callback_metrics
+            if metrics:
+                # Val loss
+                val_loss = metrics.get('val_loss')
+                if val_loss is not None:
+                    val_loss_val = val_loss.item() if hasattr(val_loss, 'item') else float(val_loss)
+                    if self.best_val_loss is None or val_loss_val < self.best_val_loss:
+                        self.best_val_loss = val_loss_val
+                
+                # Train loss
+                train_loss = metrics.get('train_loss')
+                if train_loss is not None:
+                    self.final_train_loss = train_loss.item() if hasattr(train_loss, 'item') else float(train_loss)
 except ImportError:
     # PyTorch Lightning not available
     EpochLogger = None

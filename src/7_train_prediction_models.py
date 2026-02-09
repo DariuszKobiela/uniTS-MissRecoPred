@@ -169,7 +169,10 @@ def train_global_model_darts(model_name: str,
         seed: Random seed for this training iteration
         
     Returns:
-        Trained Darts model
+        Tuple of (trained_model, training_info) where training_info is a dict with:
+            - epochs_trained: actual number of epochs completed
+            - best_val_loss: lowest validation loss (or None)
+            - final_train_loss: training loss at last epoch (or None)
     """
     from darts import TimeSeries
     from darts.models import RNNModel, TCNModel, NBEATSModel, TFTModel, TransformerModel
@@ -190,8 +193,9 @@ def train_global_model_darts(model_name: str,
     # Get model-specific parameters
     model_params = pred_config.get_model_params(model_name)
     
-    # Set up callbacks
-    callbacks = [EpochLogger()]  # Always log epoch numbers
+    # Set up callbacks (keep reference to epoch_logger for post-training stats)
+    epoch_logger = EpochLogger()
+    callbacks = [epoch_logger]
     if es_enabled:
         early_stopping = EarlyStopping(
             monitor="val_loss",
@@ -336,7 +340,14 @@ def train_global_model_darts(model_name: str,
     else:
         model.fit(train_series_list, **fit_kwargs)
     
-    return model
+    # Collect training info from EpochLogger
+    training_info = {
+        'epochs_trained': epoch_logger.epochs_trained,
+        'best_val_loss': epoch_logger.best_val_loss,
+        'final_train_loss': epoch_logger.final_train_loss,
+    }
+    
+    return model, training_info
 
 
 def _create_lag_features_vectorized(values: np.ndarray, lag: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -707,9 +718,11 @@ Examples:
             monitor.start()
             
             try:
+                training_info = {}
+                
                 if model_name in global_models:
                     # Darts deep learning model (using pre-converted series)
-                    model = train_global_model_darts(
+                    model, training_info = train_global_model_darts(
                         model_name, darts_train, darts_val, pred_config, seed
                     )
                     model_path = save_model(model, model_name, iteration, output_dir, 'darts')
@@ -728,12 +741,20 @@ Examples:
                 
                 print(f"   ✓ Saved: {model_path}")
                 print(f"   ⏱️ Time: {metrics['time_seconds']:.2f}s")
+                if training_info.get('epochs_trained'):
+                    epochs = training_info['epochs_trained']
+                    val_loss_str = (f", best_val_loss={training_info['best_val_loss']:.6f}" 
+                                    if training_info.get('best_val_loss') is not None else "")
+                    print(f"   📈 Epochs: {epochs}{val_loss_str}")
                 
                 # Build metrics dict for this model+iteration
                 metrics_dict = {
                     'model': model_name,
                     'iteration': iteration,
                     'seed': seed,
+                    'epochs_trained': training_info.get('epochs_trained'),
+                    'best_val_loss': training_info.get('best_val_loss'),
+                    'final_train_loss': training_info.get('final_train_loss'),
                     'time_seconds': metrics['time_seconds'],
                     'cpu_cores_used': metrics['cpu_cores_used'],
                     'cpu_cores_total': metrics['cpu_cores_total'],
