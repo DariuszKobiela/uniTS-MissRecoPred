@@ -41,7 +41,8 @@ A modular framework for evaluating time series reconstruction methods on univari
 - **Configuration-Based**: YAML config for easy experiment management
 - **Interactive Visualization**: Streamlit dashboard for result analysis
 - **Modular Design**: Easy to add new models and techniques
-- **Reconstruction metrics** (MAD, MAE, RMSE, R², SMAPE, …): quality only on missing values; extensible in `src/utils/reconstruction_metrics.py`
+- **Reconstruction metrics** (MAD, MAE, RMSE, R², SMAPE, …): quality only on missing values; extensible in `src/reconstruction_metrics/`
+- **Prediction error metrics** (MAPE, SMAPE, MASE, MAE, RMSE, …): test-set forecast quality; extensible in `src/prediction_metrics/`; **MASE** uses the naive one-step scale from `data/2_splitted_data/train/{dataset}.csv` (same stem as the test file)
 
 ## 📁 Project Structure
 
@@ -56,8 +57,16 @@ uniTS-MissRecoPred/
 │   ├── 🐍 5_calculate_reconstruction_error.py   # [MAIN] Reconstruction error metrics (CSV)
 │   ├── 🐍 6_visualize_reconstruction_error.py   # [MAIN] Streamlit dashboard
 │   ├── 🐍 7_predict_datasets.py            # [MAIN] Predict future values
-│   ├── 🐍 8_calculate_prediction_error.py  # [MAIN] Calculate prediction MAPE
-│   ├── 🐍 9_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
+│   ├── 🐍 9_calculate_prediction_error.py   # [MAIN] Prediction error metrics → CSV
+│   ├── 🐍 10_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
+│   │
+│   ├── 📁 reconstruction_metrics/        # Reconstruction error metrics (script 5 → reconstruction_results)
+│   │   ├── 🐍 _registry.py                   # ReconstructionMetricSpec, register_builtin_metric, compute_*
+│   │   └── 🐍 mad.py, mae.py, rmse.py, r2.py, smape.py, __init__.py  # One module per built-in metric
+│   │
+│   ├── 📁 prediction_metrics/              # Prediction error metrics (script 9 → prediction_results)
+│   │   ├── 🐍 _registry.py                   # PredictionMetricSpec, register_builtin_metric, compute_*
+│   │   └── 🐍 mape.py, smape.py, mase.py, mae.py, rmse.py, __init__.py  # One module per built-in metric
 │   │
 │   ├── 📁 utils/                           # Utility modules
 │   │   ├── 🐍 config_loader.py                # Configuration manager
@@ -107,7 +116,7 @@ uniTS-MissRecoPred/
 │       └── 📝 performance_metrics_*.csv       # Individual performance logs
 │
 ├── 📁 prediction_experiment_results/       # Prediction experiment results
-│   ├── 📝 prediction_results_*.csv            # MAPE + performance metrics (merged)
+│   ├── 📝 prediction_results_*.csv            # Configurable error metrics + performance (merged)
 │   ├── 📁 predictions/                        # Prediction output files
 │   │   └── 📝 {dataset}_{model}_iter{N}.csv   # Individual predictions per iteration
 │   └── 📁 performance_metrics/                # Prediction performance logs
@@ -491,15 +500,16 @@ This framework follows a strict data pipeline where each script transforms data 
 *   **📝 METRICS OUTPUT**: `reconstruction_experiments_results/performance_metrics/*.csv` (Time, CPU, RAM usage logs).
 
 #### 5. Evaluation
-*   **Script**: `src/5_calculate_mad.py`
+*   **Script**: `src/5_calculate_reconstruction_error.py`
 *   **📥 INPUT**: 
     1.  **Reconstructed Data** from `data/4_fixed_data/` (The solution)
     2.  **Ground Truth Data** from `data/2_splitted_data/train/` (The original training data)
 *   **📤 OUTPUT**: `reconstruction_experiments_results/reconstruction_results_*.csv`
-    *   *Content*: A comprehensive summary CSV containing MAD scores (quality) and performance metrics (efficiency) for every test case.
+    *   *Content*: Metrics listed in `reconstruction.error_metrics.compute` in `config/config.yaml` (empty = all built-ins from `src/reconstruction_metrics/`), plus auxiliary columns (`max_diff`, `min_diff`, `std_diff`, `n_missing`, `n_total`) and performance fields when available.
+*   **⚙️ CONFIG**: `reconstruction.error_metrics` — `compute`, `primary_metric`, `primary_metric_objective` (same idea as prediction error metrics).
 
 #### 6. Visualization
-*   **Script**: `src/6_visualize_mad_comparison.py`
+*   **Script**: `src/6_visualize_reconstruction_error.py`
 *   **📥 INPUT**: Results CSV from `reconstruction_experiments_results/`
 *   **📤 OUTPUT**: Interactive Streamlit Dashboard (Web Interface).
 
@@ -519,24 +529,25 @@ This framework follows a strict data pipeline where each script transforms data 
     *   **N iterations** (non-deterministic): Models trained N times with different seeds for statistical analysis
 
 #### 8. Prediction Error Evaluation
-*   **Script**: `src/8_calculate_prediction_error.py`
+*   **Script**: `src/9_calculate_prediction_error.py`
 *   **📥 INPUT**: 
     1.  **Predictions** from `prediction_experiment_results/predictions/`
     2.  **Test Data (Ground Truth)** from `data/2_splitted_data/test/`
+    3.  **Train split** from `data/2_splitted_data/train/` (for **MASE** scaling only)
 *   **📤 OUTPUT**: `prediction_experiment_results/prediction_results_*.csv`
-    *   *Content*: MAPE, MAE, RMSE, and performance metrics for every prediction
-*   **📊 METRICS**:
-    *   **MAPE** - Mean Absolute Percentage Error (%)
-    *   **MAE** - Mean Absolute Error
-    *   **RMSE** - Root Mean Square Error
+    *   *Content*: metrics selected under `prediction.error_metrics` in `config/config.yaml`, plus auxiliary columns (`max_error`, `min_error`, `std_error`, `n_samples`) and performance fields
+*   **📊 METRICS** (built-ins in `src/prediction_metrics/`):
+    *   **MAPE**, **SMAPE** (percent-scale); **MAE**, **RMSE**, **MASE** (MASE = test MAE divided by mean one-step naive absolute change on the **train** series)
+*   **⚙️ CONFIG**: `prediction.error_metrics.compute` (empty = all built-ins), `primary_metric`, `primary_metric_objective`
 
 #### 9. Prediction Visualization (Optional)
-*   **Script**: `src/9_visualize_prediction.py`
+*   **Script**: `src/10_visualize_prediction.py`
 *   **📥 INPUT**: `prediction_experiment_results/prediction_results_*.csv`
 *   **📤 OUTPUT**: Interactive Streamlit dashboard at `http://localhost:8501`
 *   **📊 FEATURES**:
-    *   MAPE comparison by prediction model, source type, reconstruction model
-    *   Heatmaps: prediction model vs reconstruction model, prediction model vs technique
+    *   Sidebar **metric** selector (defaults from config); charts and tests follow “lower is better” per metric
+    *   Comparison by prediction model, source type, reconstruction model
+    *   Heatmaps: reconstruction model vs technique/rate; prediction vs reconstruction model
     *   Statistical significance tests (pairwise t-tests)
     *   Iteration variance analysis (for non-deterministic models)
     *   Performance metrics visualization
@@ -557,9 +568,9 @@ graph TD
     H -->|6_visualize...| I[Reconstruction Dashboard]
     D -->|7_predict_datasets.py| J[predictions/]
     G -->|7_predict_datasets.py| J
-    J -->|8_calculate_prediction_error.py| K[prediction_experiment_results]
-    E -->|Ground Truth for MAPE| K
-    K -->|9_visualize_prediction.py| L[Prediction Dashboard]
+    J -->|9_calculate_prediction_error.py| K[prediction_experiment_results]
+    E -->|Ground truth for metrics| K
+    K -->|10_visualize_prediction.py| L[Prediction Dashboard]
 ```
 
 ## 📊 Output Files

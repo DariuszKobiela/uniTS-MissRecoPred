@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Streamlit Visualization App for Prediction Results
-Interactive dashboard for comparing RECONSTRUCTION MODELS by prediction MAPE.
+Interactive dashboard for comparing RECONSTRUCTION MODELS by a selectable prediction error metric.
 Prediction model serves as a filter, not the main comparison axis.
 Part of uniTS-MissRecoPred framework.
 """
@@ -14,9 +14,71 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+from typing import NamedTuple
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+from prediction_metrics import (
+    PredictionMetricSpec,
+    get_metric_spec,
+    list_metric_specs_ordered,
+)
+from utils.config_loader import load_config
+
+
+def _heatmap_texttemplate(value_is_percent: bool) -> str:
+    return "%{text}%" if value_is_percent else "%{text}"
+
+
+class PredictionMetricView(NamedTuple):
+    """Selected prediction error metric (CSV column = key)."""
+
+    key: str
+    label: str
+    lower_is_better: bool
+    value_is_percent: bool
+
+    @staticmethod
+    def from_spec(spec: PredictionMetricSpec) -> PredictionMetricView:
+        return PredictionMetricView(
+            spec.key, spec.label, spec.lower_is_better, spec.value_is_percent
+        )
+
+
+def _metric_cmap(lower_is_better: bool) -> str:
+    return "RdYlGn_r" if lower_is_better else "RdYlGn"
+
+
+def _heatmap_text_decimals(value_is_percent: bool) -> int:
+    return 2 if value_is_percent else 4
+
+
+def _style_row_best_worst(row, lower_is_better: bool):
+    min_val = row.min()
+    max_val = row.max()
+    tol = 1e-6
+
+    def is_best(v):
+        if pd.isna(v):
+            return False
+        if lower_is_better:
+            return abs(v - min_val) <= tol or min_val == max_val
+        return abs(v - max_val) <= tol or min_val == max_val
+
+    def is_worst(v):
+        if pd.isna(v) or min_val == max_val:
+            return False
+        if lower_is_better:
+            return abs(v - max_val) <= tol
+        return abs(v - min_val) <= tol
+
+    return [
+        "background-color: #90EE90" if is_best(v)
+        else "background-color: #FFB6C1" if is_worst(v)
+        else ""
+        for v in row
+    ]
 
 
 def load_results(file_path: str) -> pd.DataFrame:
@@ -60,625 +122,677 @@ def load_training_metrics() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def plot_mape_by_reconstruction_model_main(df: pd.DataFrame, technique: str = None, rate: int = None):
-    """Main plot: MAPE comparison by reconstruction model (primary axis)"""
-    # Filter to only reconstructed data
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
-    # Apply filters
+def plot_mape_by_reconstruction_model_main(
+    df: pd.DataFrame,
+    m: PredictionMetricView,
+    technique: str = None,
+    rate: int = None,
+):
+    """Main plot: selected metric by reconstruction model (primary axis)."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if technique:
-        df_filtered = df_filtered[df_filtered['technique'] == technique]
+        df_filtered = df_filtered[df_filtered["technique"] == technique]
     if rate:
-        df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
-    
+        df_filtered = df_filtered[df_filtered["rate_percent"] == rate]
+
     if df_filtered.empty:
         st.warning("No reconstructed data available for selected filters")
         return
-    
-    # Group by reconstruction_model and calculate statistics
-    df_stats = df_filtered.groupby('reconstruction_model')['mape'].agg(['mean', 'std', 'min', 'max', 'count']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
-    # Create bar plot
+
+    df_stats = (
+        df_filtered.groupby("reconstruction_model")[m.key]
+        .agg(["mean", "std", "min", "max", "count"])
+        .reset_index()
+    )
+    df_stats = df_stats.sort_values("mean", ascending=m.lower_is_better)
+
     fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_stats['reconstruction_model'],
-        y=df_stats['mean'],
-        error_y=dict(type='data', array=df_stats['std']),
-        marker_color='teal',
-        name='Mean MAPE'
-    ))
-    
+    fig.add_trace(
+        go.Bar(
+            x=df_stats["reconstruction_model"],
+            y=df_stats["mean"],
+            error_y=dict(type="data", array=df_stats["std"]),
+            marker_color="teal",
+            name=f"Mean {m.label}",
+        )
+    )
     fig.update_layout(
-        title='Prediction MAPE by Reconstruction Model',
-        xaxis_title='Reconstruction Model',
-        yaxis_title='MAPE (%)',
+        title=f"Prediction {m.label} by Reconstruction Model",
+        xaxis_title="Reconstruction Model",
+        yaxis_title=m.label,
         xaxis_tickangle=-45,
-        height=500
+        height=500,
     )
-    
-    st.plotly_chart(fig, width='stretch')
-    
-    # Show comprehensive statistics table
+    st.plotly_chart(fig, width="stretch")
+
     st.subheader("Statistics")
-    
-    # Calculate extended statistics
-    df_stats_extended = df_filtered.groupby('reconstruction_model').agg({
-        'mape': ['mean', 'std', 'median', 'min', 'max', 'count'],
-        'dataset_name': 'nunique',
-        'prediction_model': 'nunique'
-    }).reset_index()
-    
-    # Flatten column names
+    mean_col = "Mean"
+    df_stats_extended = df_filtered.groupby("reconstruction_model").agg(
+        {
+            m.key: ["mean", "std", "median", "min", "max", "count"],
+            "dataset_name": "nunique",
+            "prediction_model": "nunique",
+        }
+    ).reset_index()
     df_stats_extended.columns = [
-        'Reconstruction Model', 'Mean MAPE', 'Std', 'Median', 'Min', 'Max', 
-        'N Predictions', 'N Datasets', 'N Pred Models'
+        "Reconstruction Model",
+        mean_col,
+        "Std",
+        "Median",
+        "Min",
+        "Max",
+        "N Predictions",
+        "N Datasets",
+        "N Pred Models",
     ]
-    
-    # Add derived metrics
-    df_stats_extended['CV (%)'] = (df_stats_extended['Std'] / df_stats_extended['Mean MAPE'] * 100).round(2)
-    df_stats_extended = df_stats_extended.sort_values('Mean MAPE')
-    df_stats_extended['Rank'] = range(1, len(df_stats_extended) + 1)
-    
-    # Calculate delta from best
-    best_mape = df_stats_extended['Mean MAPE'].min()
-    df_stats_extended['Δ Best'] = (df_stats_extended['Mean MAPE'] - best_mape).round(2)
-    
-    # Reorder columns
-    df_stats_extended = df_stats_extended[[
-        'Rank', 'Reconstruction Model', 'Mean MAPE', 'Median', 'Std', 'CV (%)',
-        'Min', 'Max', 'Δ Best', 'N Predictions', 'N Datasets', 'N Pred Models'
-    ]]
-    
-    # Style and display
-    st.dataframe(
-        df_stats_extended.style.format({
-            'Mean MAPE': '{:.2f}%',
-            'Median': '{:.2f}%',
-            'Std': '{:.2f}%',
-            'CV (%)': '{:.1f}%',
-            'Min': '{:.2f}%',
-            'Max': '{:.2f}%',
-            'Δ Best': '+{:.2f}%',
-            'N Predictions': '{:.0f}',
-            'N Datasets': '{:.0f}',
-            'N Pred Models': '{:.0f}',
-            'Rank': '{:.0f}'
-        }).background_gradient(subset=['Mean MAPE'], cmap='RdYlGn_r'),
-        width='stretch'
+    df_stats_extended["CV (%)"] = (
+        df_stats_extended["Std"] / df_stats_extended[mean_col].replace(0, np.nan) * 100
+    ).round(2)
+    df_stats_extended = df_stats_extended.sort_values(
+        mean_col, ascending=m.lower_is_better
     )
-    
-    # Add legend/explanation
+    df_stats_extended["Rank"] = range(1, len(df_stats_extended) + 1)
+    if m.lower_is_better:
+        best_v = df_stats_extended[mean_col].min()
+        df_stats_extended["Δ Best"] = (df_stats_extended[mean_col] - best_v).round(4)
+    else:
+        best_v = df_stats_extended[mean_col].max()
+        df_stats_extended["Δ Best"] = (best_v - df_stats_extended[mean_col]).round(4)
+
+    df_stats_extended = df_stats_extended[
+        [
+            "Rank",
+            "Reconstruction Model",
+            mean_col,
+            "Median",
+            "Std",
+            "CV (%)",
+            "Min",
+            "Max",
+            "Δ Best",
+            "N Predictions",
+            "N Datasets",
+            "N Pred Models",
+        ]
+    ]
+
+    mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
+    st.dataframe(
+        df_stats_extended.style.format(
+            {
+                mean_col: mfmt,
+                "Median": mfmt,
+                "Std": mfmt,
+                "CV (%)": "{:.1f}%",
+                "Min": mfmt,
+                "Max": mfmt,
+                "Δ Best": mfmt,
+                "N Predictions": "{:.0f}",
+                "N Datasets": "{:.0f}",
+                "N Pred Models": "{:.0f}",
+                "Rank": "{:.0f}",
+            }
+        ).background_gradient(subset=[mean_col], cmap=_metric_cmap(m.lower_is_better)),
+        width="stretch",
+    )
+
     with st.expander("📖 Column explanations"):
-        st.markdown("""
-        - **Rank**: Position sorted by Mean MAPE (1 = best)
-        - **Mean MAPE**: Average prediction error across all predictions
-        - **Median**: Median MAPE (less sensitive to outliers)
-        - **Std**: Standard deviation of MAPE
-        - **CV (%)**: Coefficient of Variation = Std/Mean × 100 (consistency measure)
-        - **Min/Max**: Best and worst individual prediction errors
-        - **Δ Best**: Difference from the best reconstruction model
-        - **N Predictions**: Number of prediction records
-        - **N Datasets**: Number of unique datasets
-        - **N Pred Models**: Number of unique prediction models used
-        """)
+        st.markdown(
+            f"""
+        - **Rank**: Sorted by mean {m.label} (1 = best for current direction)
+        - **Mean**: Average {m.label} across predictions
+        - **Median / Std / Min / Max**: Distribution of {m.label}
+        - **CV (%)**: Std/Mean × 100 (watch for near-zero mean)
+        - **Δ Best**: Gap vs best model (lower is better for this column when error metrics)
+        """
+        )
 
 
-def plot_recon_by_technique(df: pd.DataFrame):
-    """Plot reconstruction model MAPE grouped by missingness technique"""
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_recon_by_technique(df: pd.DataFrame, m: PredictionMetricView):
+    """Plot reconstruction model metric grouped by missingness technique."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
-    # Group by reconstruction_model and technique
-    df_stats = df_filtered.groupby(['reconstruction_model', 'technique'])['mape'].mean().reset_index()
-    
-    # Create grouped bar chart
+
+    df_stats = (
+        df_filtered.groupby(["reconstruction_model", "technique"])[m.key].mean().reset_index()
+    )
+
     fig = px.bar(
         df_stats,
-        x='reconstruction_model',
-        y='mape',
-        color='technique',
-        barmode='group',
-        title='Reconstruction Model MAPE by Missingness Technique',
-        labels={'mape': 'Mean MAPE (%)', 'reconstruction_model': 'Reconstruction Model', 'technique': 'Technique'}
+        x="reconstruction_model",
+        y=m.key,
+        color="technique",
+        barmode="group",
+        title=f"Reconstruction Model {m.label} by Missingness Technique",
+        labels={
+            m.key: f"Mean {m.label}",
+            "reconstruction_model": "Reconstruction Model",
+            "technique": "Technique",
+        },
     )
-    
-    fig.update_layout(
-        xaxis_tickangle=-45,
-        height=500
-    )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    fig.update_layout(xaxis_tickangle=-45, height=500)
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_recon_by_rate(df: pd.DataFrame, technique: str = None):
-    """Plot reconstruction model MAPE by missing rate"""
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_recon_by_rate(df: pd.DataFrame, m: PredictionMetricView, technique: str = None):
+    """Plot reconstruction model metric by missing rate."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if technique:
-        df_filtered = df_filtered[df_filtered['technique'] == technique]
-    
+        df_filtered = df_filtered[df_filtered["technique"] == technique]
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
-    # Group by reconstruction_model and rate
-    df_stats = df_filtered.groupby(['reconstruction_model', 'rate_percent'])['mape'].mean().reset_index()
-    
-    # Create line plot
+
+    df_stats = (
+        df_filtered.groupby(["reconstruction_model", "rate_percent"])[m.key].mean().reset_index()
+    )
+
     fig = px.line(
         df_stats,
-        x='rate_percent',
-        y='mape',
-        color='reconstruction_model',
+        x="rate_percent",
+        y=m.key,
+        color="reconstruction_model",
         markers=True,
-        title='Reconstruction Model MAPE by Missing Rate',
-        labels={'mape': 'Mean MAPE (%)', 'rate_percent': 'Missing Rate (%)', 'reconstruction_model': 'Reconstruction Model'}
+        title=f"Reconstruction Model {m.label} by Missing Rate",
+        labels={
+            m.key: f"Mean {m.label}",
+            "rate_percent": "Missing Rate (%)",
+            "reconstruction_model": "Reconstruction Model",
+        },
     )
-    
+
     fig.update_layout(height=500)
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_mape_by_technique(df: pd.DataFrame, model: str = None, rate: int = None):
-    """Plot MAPE comparison by missingness technique (for reconstructed data only)"""
-    df_filtered = df.copy()
-    
-    # Filter to only reconstructed data (technique is null for original)
-    df_filtered = df_filtered[df_filtered['source_type'] == 'reconstructed']
-    
-    # Apply filters
+def plot_mape_by_technique(
+    df: pd.DataFrame, m: PredictionMetricView, model: str = None, rate: int = None
+):
+    """Plot metric by missingness technique (reconstructed data only)."""
+    df_filtered = df[df["source_type"] == "reconstructed"]
+
     if model:
-        df_filtered = df_filtered[df_filtered['prediction_model'] == model]
+        df_filtered = df_filtered[df_filtered["prediction_model"] == model]
     if rate:
-        df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
-    
+        df_filtered = df_filtered[df_filtered["rate_percent"] == rate]
+
     if df_filtered.empty:
-        st.warning("No data available for selected filters (only reconstructed data has techniques)")
+        st.warning(
+            "No data available for selected filters (only reconstructed data has techniques)"
+        )
         return
-    
-    # Group by technique and calculate statistics
-    df_stats = df_filtered.groupby('technique')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
-    # Create bar plot
+
+    df_stats = df_filtered.groupby("technique")[m.key].agg(["mean", "std", "min", "max"]).reset_index()
+    df_stats = df_stats.sort_values("mean", ascending=m.lower_is_better)
+
     fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_stats['technique'],
-        y=df_stats['mean'],
-        error_y=dict(type='data', array=df_stats['std']),
-        marker_color='coral',
-        name='Mean MAPE'
-    ))
-    
-    fig.update_layout(
-        title='Mean Absolute Percentage Error by Missingness Technique (Reconstructed Data)',
-        xaxis_title='Missingness Technique',
-        yaxis_title='MAPE (%)',
-        height=500
+
+    fig.add_trace(
+        go.Bar(
+            x=df_stats["technique"],
+            y=df_stats["mean"],
+            error_y=dict(type="data", array=df_stats["std"]),
+            marker_color="coral",
+            name=f"Mean {m.label}",
+        )
     )
-    
-    st.plotly_chart(fig, width='stretch')
-    
-    # Show statistics table
+
+    fig.update_layout(
+        title=f"{m.label} by Missingness Technique (Reconstructed Data)",
+        xaxis_title="Missingness Technique",
+        yaxis_title=m.label,
+        height=500,
+    )
+
+    st.plotly_chart(fig, width="stretch")
+
     st.subheader("Statistics")
-    st.dataframe(df_stats.style.format({
-        'mean': '{:.2f}%',
-        'std': '{:.2f}%',
-        'min': '{:.2f}%',
-        'max': '{:.2f}%'
-    }), width='stretch')
+    mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
+    st.dataframe(
+        df_stats.style.format(
+            {"mean": mfmt, "std": mfmt, "min": mfmt, "max": mfmt}
+        ),
+        width="stretch",
+    )
 
 
-def plot_mape_by_rate(df: pd.DataFrame, model: str = None, technique: str = None):
-    """Plot MAPE comparison by missing rate (for reconstructed data only)"""
-    df_filtered = df.copy()
-    
-    # Filter to only reconstructed data
-    df_filtered = df_filtered[df_filtered['source_type'] == 'reconstructed']
-    
-    # Apply filters
+def plot_mape_by_rate(
+    df: pd.DataFrame, m: PredictionMetricView, model: str = None, technique: str = None
+):
+    """Plot metric by missing rate (reconstructed data only)."""
+    df_filtered = df[df["source_type"] == "reconstructed"]
+
     if model:
-        df_filtered = df_filtered[df_filtered['prediction_model'] == model]
+        df_filtered = df_filtered[df_filtered["prediction_model"] == model]
     if technique:
-        df_filtered = df_filtered[df_filtered['technique'] == technique]
-    
+        df_filtered = df_filtered[df_filtered["technique"] == technique]
+
     if df_filtered.empty:
         st.warning("No data available for selected filters")
         return
-    
-    # Group by rate and calculate statistics
-    df_stats = df_filtered.groupby('rate_percent')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('rate_percent')
-    
-    # Create line plot
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=df_stats['rate_percent'],
-        y=df_stats['mean'],
-        mode='lines+markers',
-        error_y=dict(type='data', array=df_stats['std']),
-        marker=dict(size=10, color='mediumpurple'),
-        line=dict(width=2),
-        name='Mean MAPE'
-    ))
-    
-    fig.update_layout(
-        title='Mean Absolute Percentage Error by Missing Rate (Reconstructed Data)',
-        xaxis_title='Missing Rate (%)',
-        yaxis_title='MAPE (%)',
-        height=500
+
+    df_stats = (
+        df_filtered.groupby("rate_percent")[m.key].agg(["mean", "std", "min", "max"]).reset_index()
     )
-    
-    st.plotly_chart(fig, width='stretch')
-    
-    # Show statistics table
+    df_stats = df_stats.sort_values("rate_percent")
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=df_stats["rate_percent"],
+            y=df_stats["mean"],
+            mode="lines+markers",
+            error_y=dict(type="data", array=df_stats["std"]),
+            marker=dict(size=10, color="mediumpurple"),
+            line=dict(width=2),
+            name=f"Mean {m.label}",
+        )
+    )
+
+    fig.update_layout(
+        title=f"{m.label} by Missing Rate (Reconstructed Data)",
+        xaxis_title="Missing Rate (%)",
+        yaxis_title=m.label,
+        height=500,
+    )
+
+    st.plotly_chart(fig, width="stretch")
+
     st.subheader("Statistics")
     df_stats_display = df_stats.copy()
-    df_stats_display['rate_percent'] = df_stats_display['rate_percent'].astype(str) + '%'
-    st.dataframe(df_stats_display.style.format({
-        'mean': '{:.2f}%',
-        'std': '{:.2f}%',
-        'min': '{:.2f}%',
-        'max': '{:.2f}%'
-    }), width='stretch')
+    df_stats_display["rate_percent"] = df_stats_display["rate_percent"].astype(str) + "%"
+    mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
+    st.dataframe(
+        df_stats_display.style.format(
+            {"mean": mfmt, "std": mfmt, "min": mfmt, "max": mfmt}
+        ),
+        width="stretch",
+    )
 
 
-def plot_mape_by_reconstruction_model(df: pd.DataFrame, pred_model: str = None, technique: str = None):
-    """Plot MAPE comparison by reconstruction model (for reconstructed data only)"""
-    df_filtered = df.copy()
-    
-    # Filter to only reconstructed data
-    df_filtered = df_filtered[df_filtered['source_type'] == 'reconstructed']
-    
-    # Apply filters
+def plot_mape_by_reconstruction_model(
+    df: pd.DataFrame, m: PredictionMetricView, pred_model: str = None, technique: str = None
+):
+    """Plot metric by reconstruction model (reconstructed data only)."""
+    df_filtered = df[df["source_type"] == "reconstructed"]
+
     if pred_model:
-        df_filtered = df_filtered[df_filtered['prediction_model'] == pred_model]
+        df_filtered = df_filtered[df_filtered["prediction_model"] == pred_model]
     if technique:
-        df_filtered = df_filtered[df_filtered['technique'] == technique]
-    
+        df_filtered = df_filtered[df_filtered["technique"] == technique]
+
     if df_filtered.empty:
         st.warning("No data available for selected filters")
         return
-    
-    # Group by reconstruction_model and calculate statistics
-    df_stats = df_filtered.groupby('reconstruction_model')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
-    # Create bar plot
+
+    df_stats = (
+        df_filtered.groupby("reconstruction_model")[m.key]
+        .agg(["mean", "std", "min", "max"])
+        .reset_index()
+    )
+    df_stats = df_stats.sort_values("mean", ascending=m.lower_is_better)
+
     fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_stats['reconstruction_model'],
-        y=df_stats['mean'],
-        error_y=dict(type='data', array=df_stats['std']),
-        marker_color='teal',
-        name='Mean MAPE'
-    ))
-    
+
+    fig.add_trace(
+        go.Bar(
+            x=df_stats["reconstruction_model"],
+            y=df_stats["mean"],
+            error_y=dict(type="data", array=df_stats["std"]),
+            marker_color="teal",
+            name=f"Mean {m.label}",
+        )
+    )
+
     fig.update_layout(
-        title='Prediction MAPE by Reconstruction Model Used',
-        xaxis_title='Reconstruction Model',
-        yaxis_title='MAPE (%)',
+        title=f"Prediction {m.label} by Reconstruction Model Used",
+        xaxis_title="Reconstruction Model",
+        yaxis_title=m.label,
         xaxis_tickangle=-45,
-        height=500
+        height=500,
     )
-    
-    st.plotly_chart(fig, width='stretch')
-    
-    # Show statistics table
+
+    st.plotly_chart(fig, width="stretch")
+
     st.subheader("Statistics")
-    st.dataframe(df_stats.style.format({
-        'mean': '{:.2f}%',
-        'std': '{:.2f}%',
-        'min': '{:.2f}%',
-        'max': '{:.2f}%'
-    }), width='stretch')
+    mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
+    st.dataframe(
+        df_stats.style.format({"mean": mfmt, "std": mfmt, "min": mfmt, "max": mfmt}),
+        width="stretch",
+    )
 
 
-def plot_heatmap_recon_vs_technique(df: pd.DataFrame):
-    """Plot heatmap of MAPE: reconstruction model vs technique"""
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_heatmap_recon_vs_technique(df: pd.DataFrame, m: PredictionMetricView):
+    """Heatmap: reconstruction model vs technique."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
+
     pivot_data = df_filtered.pivot_table(
-        values='mape',
-        index='reconstruction_model',
-        columns='technique',
-        aggfunc='mean'
+        values=m.key, index="reconstruction_model", columns="technique", aggfunc="mean"
     )
-    
-    # Sort by mean MAPE across techniques
-    pivot_data['_mean'] = pivot_data.mean(axis=1)
-    pivot_data = pivot_data.sort_values('_mean')
-    pivot_data = pivot_data.drop('_mean', axis=1)
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot_data.values,
-        x=pivot_data.columns,
-        y=pivot_data.index,
-        colorscale='RdYlGn_r',
-        text=np.round(pivot_data.values, 2),
-        texttemplate='%{text}%',
-        textfont={"size": 10},
-        colorbar=dict(title='MAPE (%)')
-    ))
-    
+
+    pivot_data["_mean"] = pivot_data.mean(axis=1)
+    pivot_data = pivot_data.sort_values("_mean", ascending=m.lower_is_better)
+    pivot_data = pivot_data.drop("_mean", axis=1)
+
+    dec = _heatmap_text_decimals(m.value_is_percent)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=pivot_data.values,
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            colorscale=_metric_cmap(m.lower_is_better),
+            text=np.round(pivot_data.values, dec),
+            texttemplate=_heatmap_texttemplate(m.value_is_percent),
+            textfont={"size": 10},
+            colorbar=dict(title=m.label),
+        )
+    )
+
     fig.update_layout(
-        title='Heatmap: Reconstruction Model vs Missingness Technique',
-        xaxis_title='Missingness Technique',
-        yaxis_title='Reconstruction Model',
-        height=max(500, len(pivot_data.index) * 35)
+        title="Heatmap: Reconstruction Model vs Missingness Technique",
+        xaxis_title="Missingness Technique",
+        yaxis_title="Reconstruction Model",
+        height=max(500, len(pivot_data.index) * 35),
     )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_heatmap_recon_vs_rate(df: pd.DataFrame, technique: str = None):
-    """Plot heatmap of MAPE: reconstruction model vs missing rate"""
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_heatmap_recon_vs_rate(df: pd.DataFrame, m: PredictionMetricView, technique: str = None):
+    """Heatmap: reconstruction model vs missing rate."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if technique:
-        df_filtered = df_filtered[df_filtered['technique'] == technique]
-    
+        df_filtered = df_filtered[df_filtered["technique"] == technique]
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
+
     pivot_data = df_filtered.pivot_table(
-        values='mape',
-        index='reconstruction_model',
-        columns='rate_percent',
-        aggfunc='mean'
+        values=m.key, index="reconstruction_model", columns="rate_percent", aggfunc="mean"
     )
-    
-    # Sort by mean MAPE
-    pivot_data['_mean'] = pivot_data.mean(axis=1)
-    pivot_data = pivot_data.sort_values('_mean')
-    pivot_data = pivot_data.drop('_mean', axis=1)
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot_data.values,
-        x=[f"{int(r)}%" for r in pivot_data.columns],
-        y=pivot_data.index,
-        colorscale='RdYlGn_r',
-        text=np.round(pivot_data.values, 2),
-        texttemplate='%{text}%',
-        textfont={"size": 10},
-        colorbar=dict(title='MAPE (%)')
-    ))
-    
-    title = 'Heatmap: Reconstruction Model vs Missing Rate'
+
+    pivot_data["_mean"] = pivot_data.mean(axis=1)
+    pivot_data = pivot_data.sort_values("_mean", ascending=m.lower_is_better)
+    pivot_data = pivot_data.drop("_mean", axis=1)
+
+    dec = _heatmap_text_decimals(m.value_is_percent)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=pivot_data.values,
+            x=[f"{int(r)}%" for r in pivot_data.columns],
+            y=pivot_data.index,
+            colorscale=_metric_cmap(m.lower_is_better),
+            text=np.round(pivot_data.values, dec),
+            texttemplate=_heatmap_texttemplate(m.value_is_percent),
+            textfont={"size": 10},
+            colorbar=dict(title=m.label),
+        )
+    )
+
+    title = "Heatmap: Reconstruction Model vs Missing Rate"
     if technique:
-        title += f' ({technique})'
-    
+        title += f" ({technique})"
+
     fig.update_layout(
         title=title,
-        xaxis_title='Missing Rate',
-        yaxis_title='Reconstruction Model',
-        height=max(500, len(pivot_data.index) * 35)
+        xaxis_title="Missing Rate",
+        yaxis_title="Reconstruction Model",
+        height=max(500, len(pivot_data.index) * 35),
     )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_heatmap_pred_vs_recon(df: pd.DataFrame, sort_by_model: str = None):
-    """Plot heatmap of MAPE for prediction model vs reconstruction model"""
-    # Filter to only reconstructed data
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_heatmap_pred_vs_recon(df: pd.DataFrame, m: PredictionMetricView, sort_by_model: str = None):
+    """Heatmap: prediction model vs reconstruction model."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
-    # Calculate mean MAPE for each prediction-reconstruction model combination
+
     pivot_data = df_filtered.pivot_table(
-        values='mape',
-        index='prediction_model',
-        columns='reconstruction_model',
-        aggfunc='mean'
+        values=m.key, index="prediction_model", columns="reconstruction_model", aggfunc="mean"
     )
-    
-    # Sort by selected model or alphabetically
+
     if sort_by_model and sort_by_model in pivot_data.columns:
-        pivot_data = pivot_data.sort_values(by=sort_by_model, ascending=True)
+        pivot_data = pivot_data.sort_values(
+            by=sort_by_model, ascending=m.lower_is_better
+        )
         sort_info = f" (sorted by {sort_by_model})"
     else:
         pivot_data = pivot_data.sort_index()
         sort_info = " (alphabetical)"
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot_data.values,
-        x=pivot_data.columns,
-        y=pivot_data.index,
-        colorscale='RdYlGn_r',
-        text=np.round(pivot_data.values, 2),
-        texttemplate='%{text}%',
-        textfont={"size": 10},
-        colorbar=dict(title='MAPE (%)')
-    ))
-    
-    fig.update_layout(
-        title=f'Heatmap: MAPE by Prediction Model vs Reconstruction Model{sort_info}',
-        xaxis_title='Reconstruction Model',
-        yaxis_title='Prediction Model',
-        height=max(500, len(pivot_data.index) * 35)
+
+    dec = _heatmap_text_decimals(m.value_is_percent)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=pivot_data.values,
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            colorscale=_metric_cmap(m.lower_is_better),
+            text=np.round(pivot_data.values, dec),
+            texttemplate=_heatmap_texttemplate(m.value_is_percent),
+            textfont={"size": 10},
+            colorbar=dict(title=m.label),
+        )
     )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    fig.update_layout(
+        title=f"Heatmap: {m.label} by Prediction Model vs Reconstruction Model{sort_info}",
+        xaxis_title="Reconstruction Model",
+        yaxis_title="Prediction Model",
+        height=max(500, len(pivot_data.index) * 35),
+    )
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_heatmap_pred_vs_technique(df: pd.DataFrame, sort_by_technique: str = None):
-    """Plot heatmap of MAPE for prediction model vs missingness technique"""
-    # Filter to only reconstructed data
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_heatmap_pred_vs_technique(
+    df: pd.DataFrame, m: PredictionMetricView, sort_by_technique: str = None
+):
+    """Heatmap: prediction model vs missingness technique."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
-    # Calculate mean MAPE for each prediction model - technique combination
+
     pivot_data = df_filtered.pivot_table(
-        values='mape',
-        index='prediction_model',
-        columns='technique',
-        aggfunc='mean'
+        values=m.key, index="prediction_model", columns="technique", aggfunc="mean"
     )
-    
-    # Sort
+
     if sort_by_technique and sort_by_technique in pivot_data.columns:
-        pivot_data = pivot_data.sort_values(by=sort_by_technique, ascending=True)
+        pivot_data = pivot_data.sort_values(
+            by=sort_by_technique, ascending=m.lower_is_better
+        )
         sort_info = f" (sorted by {sort_by_technique})"
     else:
         pivot_data = pivot_data.sort_index()
         sort_info = " (alphabetical)"
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot_data.values,
-        x=pivot_data.columns,
-        y=pivot_data.index,
-        colorscale='RdYlGn_r',
-        text=np.round(pivot_data.values, 2),
-        texttemplate='%{text}%',
-        textfont={"size": 10},
-        colorbar=dict(title='MAPE (%)')
-    ))
-    
-    fig.update_layout(
-        title=f'Heatmap: MAPE by Prediction Model vs Technique{sort_info}',
-        xaxis_title='Missingness Technique',
-        yaxis_title='Prediction Model',
-        height=max(500, len(pivot_data.index) * 35)
+
+    dec = _heatmap_text_decimals(m.value_is_percent)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=pivot_data.values,
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            colorscale=_metric_cmap(m.lower_is_better),
+            text=np.round(pivot_data.values, dec),
+            texttemplate=_heatmap_texttemplate(m.value_is_percent),
+            textfont={"size": 10},
+            colorbar=dict(title=m.label),
+        )
     )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    fig.update_layout(
+        title=f"Heatmap: {m.label} by Prediction Model vs Technique{sort_info}",
+        xaxis_title="Missingness Technique",
+        yaxis_title="Prediction Model",
+        height=max(500, len(pivot_data.index) * 35),
+    )
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_dataset_comparison(df: pd.DataFrame):
-    """Compare MAPE across different datasets"""
-    df_stats = df.groupby('dataset_name')['mape'].agg(['mean', 'std']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
+def plot_dataset_comparison(df: pd.DataFrame, m: PredictionMetricView):
+    """Compare metric across datasets."""
+    df_stats = df.groupby("dataset_name")[m.key].agg(["mean", "std"]).reset_index()
+    df_stats = df_stats.sort_values("mean", ascending=m.lower_is_better)
+
     fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df_stats['dataset_name'],
-        y=df_stats['mean'],
-        error_y=dict(type='data', array=df_stats['std']),
-        marker_color='mediumpurple',
-        name='Mean MAPE'
-    ))
-    
-    fig.update_layout(
-        title='Mean Absolute Percentage Error by Dataset',
-        xaxis_title='Dataset',
-        yaxis_title='MAPE (%)',
-        xaxis_tickangle=-45,
-        height=500
+
+    fig.add_trace(
+        go.Bar(
+            x=df_stats["dataset_name"],
+            y=df_stats["mean"],
+            error_y=dict(type="data", array=df_stats["std"]),
+            marker_color="mediumpurple",
+            name=f"Mean {m.label}",
+        )
     )
-    
-    st.plotly_chart(fig, width='stretch')
+
+    fig.update_layout(
+        title=f"{m.label} by Dataset",
+        xaxis_title="Dataset",
+        yaxis_title=m.label,
+        xaxis_tickangle=-45,
+        height=500,
+    )
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_best_worst_reconstruction_models(df: pd.DataFrame, top_n: int = 10):
-    """Show best and worst performing RECONSTRUCTION models"""
-    df_filtered = df[df['source_type'] == 'reconstructed'].copy()
-    
+def plot_best_worst_reconstruction_models(df: pd.DataFrame, m: PredictionMetricView, top_n: int = 10):
+    """Best and worst reconstruction models by mean metric."""
+    df_filtered = df[df["source_type"] == "reconstructed"].copy()
+
     if df_filtered.empty:
         st.warning("No reconstructed data available")
         return
-    
-    df_stats = df_filtered.groupby('reconstruction_model')['mape'].mean().reset_index()
-    df_stats = df_stats.sort_values('mape')
-    
-    # Calculate global MAPE range for consistent axis scaling
-    global_min = df_stats['mape'].min()
-    global_max = df_stats['mape'].max()
+
+    df_stats = df_filtered.groupby("reconstruction_model")[m.key].mean().reset_index()
+    df_stats = df_stats.sort_values(m.key, ascending=m.lower_is_better)
+
+    global_min = df_stats[m.key].min()
+    global_max = df_stats[m.key].max()
     axis_range = [global_min * 0.95, global_max * 1.05]
-    
-    # Adjust top_n if we have fewer models
+
     top_n = min(top_n, len(df_stats) // 2) if len(df_stats) > 2 else len(df_stats)
-    
-    # Best models (lowest MAPE)
+
     best_models = df_stats.head(top_n).iloc[::-1]
-    
-    # Worst models (highest MAPE)
     worst_models = df_stats.tail(top_n)
-    
-    # Create subplots
+
     fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=(f'Top {top_n} Best Reconstruction Models', 
-                       f'Top {top_n} Worst Reconstruction Models')
+        rows=1,
+        cols=2,
+        subplot_titles=(
+            f"Top {top_n} Best Reconstruction Models",
+            f"Top {top_n} Worst Reconstruction Models",
+        ),
     )
-    
+
     fig.add_trace(
-        go.Bar(x=best_models['mape'], y=best_models['reconstruction_model'], 
-               orientation='h', marker_color='green', name='Best'),
-        row=1, col=1
+        go.Bar(
+            x=best_models[m.key],
+            y=best_models["reconstruction_model"],
+            orientation="h",
+            marker_color="green",
+            name="Best",
+        ),
+        row=1,
+        col=1,
     )
-    
+
     fig.add_trace(
-        go.Bar(x=worst_models['mape'], y=worst_models['reconstruction_model'], 
-               orientation='h', marker_color='red', name='Worst'),
-        row=1, col=2
+        go.Bar(
+            x=worst_models[m.key],
+            y=worst_models["reconstruction_model"],
+            orientation="h",
+            marker_color="red",
+            name="Worst",
+        ),
+        row=1,
+        col=2,
     )
-    
+
     fig.update_layout(height=max(500, top_n * 40), showlegend=False)
-    fig.update_xaxes(title_text="MAPE (%)", range=axis_range, row=1, col=1)
-    fig.update_xaxes(title_text="MAPE (%)", range=axis_range, row=1, col=2)
-    
-    st.plotly_chart(fig, width='stretch')
+    fig.update_xaxes(title_text=m.label, range=axis_range, row=1, col=1)
+    fig.update_xaxes(title_text=m.label, range=axis_range, row=1, col=2)
+
+    st.plotly_chart(fig, width="stretch")
 
 
-def plot_iteration_analysis(df: pd.DataFrame):
-    """Analyze MAPE variance across prediction iterations"""
-    # Group by prediction_model and prediction_iteration
-    df_stats = df.groupby(['prediction_model', 'prediction_iteration'])['mape'].mean().reset_index()
-    
-    if df_stats['prediction_iteration'].nunique() <= 1:
+def plot_iteration_analysis(df: pd.DataFrame, m: PredictionMetricView):
+    """Metric variance across prediction iterations."""
+    df_stats = (
+        df.groupby(["prediction_model", "prediction_iteration"])[m.key].mean().reset_index()
+    )
+
+    if df_stats["prediction_iteration"].nunique() <= 1:
         st.info("Only one iteration available - no variance to analyze")
         return
-    
-    # Create line plot
+
     fig = px.line(
         df_stats,
-        x='prediction_iteration',
-        y='mape',
-        color='prediction_model',
+        x="prediction_iteration",
+        y=m.key,
+        color="prediction_model",
         markers=True,
-        title='MAPE by Prediction Iteration per Model',
-        labels={'mape': 'MAPE (%)', 'prediction_iteration': 'Iteration', 'prediction_model': 'Model'}
+        title=f"{m.label} by Prediction Iteration per Model",
+        labels={
+            m.key: m.label,
+            "prediction_iteration": "Iteration",
+            "prediction_model": "Model",
+        },
     )
-    
+
     fig.update_layout(height=500)
-    st.plotly_chart(fig, width='stretch')
-    
-    # Show variance statistics
+    st.plotly_chart(fig, width="stretch")
+
     st.subheader("Iteration Variance by Model")
-    variance_stats = df.groupby('prediction_model')['mape'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    variance_stats['cv'] = (variance_stats['std'] / variance_stats['mean'] * 100).round(2)  # Coefficient of variation
-    variance_stats = variance_stats.sort_values('cv', ascending=False)
-    variance_stats.columns = ['Model', 'Mean MAPE', 'Std', 'Min', 'Max', 'CV (%)']
-    
-    st.dataframe(variance_stats.style.format({
-        'Mean MAPE': '{:.2f}%',
-        'Std': '{:.2f}%',
-        'Min': '{:.2f}%',
-        'Max': '{:.2f}%',
-        'CV (%)': '{:.2f}%'
-    }), width='stretch')
-    
-    st.caption("CV (Coefficient of Variation) = Std/Mean × 100% - higher values indicate more variability")
+    variance_stats = (
+        df.groupby("prediction_model")[m.key].agg(["mean", "std", "min", "max"]).reset_index()
+    )
+    variance_stats["cv"] = (
+        variance_stats["std"] / variance_stats["mean"].replace(0, np.nan) * 100
+    ).round(2)
+    variance_stats = variance_stats.sort_values("cv", ascending=False)
+    mean_hdr = f"Mean {m.label}"
+    variance_stats.columns = ["Model", mean_hdr, "Std", "Min", "Max", "CV (%)"]
+
+    mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
+    st.dataframe(
+        variance_stats.style.format(
+            {
+                mean_hdr: mfmt,
+                "Std": mfmt,
+                "Min": mfmt,
+                "Max": mfmt,
+                "CV (%)": "{:.2f}%",
+            }
+        ),
+        width="stretch",
+    )
+
+    st.caption(
+        "CV (Coefficient of Variation) = Std/Mean × 100% — higher values indicate more variability"
+    )
 
 
 def main():
@@ -688,7 +802,7 @@ def main():
         layout="wide"
     )
     
-    st.title("🔧 Reconstruction Model Comparison by Prediction MAPE")
+    st.title("🔧 Reconstruction Model Comparison by Prediction Error")
     st.caption("Compare how different reconstruction methods affect prediction accuracy")
     st.markdown("---")
     
@@ -700,7 +814,7 @@ def main():
     
     if not available_files:
         st.error("No result files found in `prediction_experiment_results/` directory.")
-        st.info("Run `python 8_calculate_prediction_error.py` first to generate results.")
+        st.info("Run `python 9_calculate_prediction_error.py` first to generate results.")
         return
     
     # File selection
@@ -719,6 +833,31 @@ def main():
     if df.empty:
         st.error("Failed to load data or file is empty")
         return
+
+    config = load_config()
+    available_specs = [s for s in list_metric_specs_ordered() if s.key in df.columns]
+    if not available_specs:
+        st.error(
+            "This CSV has no registered prediction metric columns. "
+            "Re-run `python 9_calculate_prediction_error.py` with an up-to-date config."
+        )
+        return
+
+    default_key = config.get_visualization_default_prediction_metric()
+    metric_keys = [s.key for s in available_specs]
+    if default_key not in metric_keys:
+        default_key = metric_keys[0]
+    default_idx = metric_keys.index(default_key)
+
+    st.sidebar.subheader("📏 Prediction error metric")
+    selected_metric_key = st.sidebar.selectbox(
+        "Metric",
+        metric_keys,
+        index=default_idx,
+        format_func=lambda k: get_metric_spec(k).label,
+        help="Columns come from script 9; switch metric to refresh all charts and tables.",
+    )
+    m = PredictionMetricView.from_spec(get_metric_spec(selected_metric_key))
     
     # Display file info
     st.sidebar.success(f"✓ Loaded {len(df)} records")
@@ -735,7 +874,9 @@ def main():
     # Get techniques and rates (may have NaN for original data)
     all_techniques = sorted([t for t in df['technique'].dropna().unique().tolist()])
     all_rates = sorted([r for r in df['rate_percent'].dropna().unique().tolist()])
-    all_recon_models = sorted([m for m in df['reconstruction_model'].dropna().unique().tolist()])
+    all_recon_models = sorted(
+        [rm for rm in df["reconstruction_model"].dropna().unique().tolist()]
+    )
     
     # Global filters in sidebar
     st.sidebar.subheader("🌍 Global Filters")
@@ -763,24 +904,33 @@ def main():
     if selected_rates:
         df_recon = df_recon[df_recon['rate_percent'].isin(selected_rates)]
     
-    # Filter out NaN MAPE values
-    df_filtered = df_filtered[df_filtered['mape'].notna()]
-    df_recon = df_recon[df_recon['mape'].notna()]
+    # Filter out NaN values for selected metric
+    df_filtered = df_filtered[df_filtered[m.key].notna()]
+    df_recon = df_recon[df_recon[m.key].notna()]
     
     # Display overview metrics for RECONSTRUCTION MODELS
     st.header("📈 Overview: Reconstruction Models")
     
     if len(df_recon) > 0:
         col1, col2, col3, col4, col5 = st.columns(5)
+        mean_v = df_recon[m.key].mean()
+        by_recon = df_recon.groupby("reconstruction_model")[m.key].mean()
+        if m.lower_is_better:
+            best_model = by_recon.idxmin()
+            best_v = by_recon.min()
+        else:
+            best_model = by_recon.idxmax()
+            best_v = by_recon.max()
+        mean_s = f"{mean_v:.2f}%" if m.value_is_percent else f"{mean_v:.4f}"
+        best_s = f"{best_v:.2f}%" if m.value_is_percent else f"{best_v:.4f}"
         with col1:
-            st.metric("Recon Models", df_recon['reconstruction_model'].nunique())
+            st.metric("Recon Models", df_recon["reconstruction_model"].nunique())
         with col2:
-            st.metric("Mean MAPE", f"{df_recon['mape'].mean():.2f}%")
+            st.metric(f"Mean {m.label}", mean_s)
         with col3:
-            best_model = df_recon.groupby('reconstruction_model')['mape'].mean().idxmin()
             st.metric("Best Model", best_model)
         with col4:
-            st.metric("Best MAPE", f"{df_recon.groupby('reconstruction_model')['mape'].mean().min():.2f}%")
+            st.metric(f"Best {m.label}", best_s)
         with col5:
             st.metric("Total Records", len(df_recon))
     else:
@@ -841,8 +991,9 @@ def main():
         
         plot_mape_by_reconstruction_model_main(
             df_tab1,
-            technique=None if filter_technique == 'All' else filter_technique,
-            rate=None if filter_rate == 'All' else filter_rate
+            m,
+            technique=None if filter_technique == "All" else filter_technique,
+            rate=None if filter_rate == "All" else filter_rate,
         )
         
         # Data for detailed stats (technique + rate only, so all prediction models)
@@ -853,64 +1004,59 @@ def main():
             df_tab1_detail = df_tab1_detail[df_tab1_detail['rate_percent'] == filter_rate]
         
         st.markdown("---")
-        st.subheader("📊 Detailed Statistics: MAPE per Reconstruction × Prediction Model")
-        st.caption("Mean MAPE for each combination of reconstruction model and prediction model")
+        st.subheader(
+            f"📊 Detailed Statistics: {m.label} per Reconstruction × Prediction Model"
+        )
+        st.caption(
+            f"Mean {m.label} for each combination of reconstruction model and prediction model"
+        )
         
         if len(df_tab1_detail) > 0:
-            # Pivot: pred_model (rows, first column) × recon_model (columns) → mean MAPE
+            pivot_dec = 2 if m.value_is_percent else 4
             pivot_mean = df_tab1_detail.pivot_table(
-                values='mape',
+                values=m.key,
                 index='prediction_model',
                 columns='reconstruction_model',
                 aggfunc='mean'
-            ).round(2)
+            ).round(pivot_dec)
             pivot_count = df_tab1_detail.pivot_table(
-                values='mape',
+                values=m.key,
                 index='prediction_model',
                 columns='reconstruction_model',
                 aggfunc='count'
             )
             
-            # Style: per row — all cells with min MAPE = green, all with max MAPE = red (tolerance for floats)
-            def highlight_best_worst_per_row(row):
-                min_val = row.min()
-                max_val = row.max()
-                # Tolerance so that equal floats (e.g. 10.00 and 10.00) are treated the same
-                tol = 1e-6
-                is_min = lambda v: pd.notna(v) and (abs(v - min_val) <= tol or (min_val == max_val))
-                is_max = lambda v: pd.notna(v) and min_val != max_val and (abs(v - max_val) <= tol)
-                return [
-                    'background-color: #90EE90' if is_min(v)
-                    else 'background-color: #FFB6C1' if is_max(v)
-                    else ''
-                    for v in row
-                ]
-            
-            st.write("**Mean MAPE (%)** — per row: green = best reconstruction model, red = worst")
+            st.write(
+                f"**Mean {m.label}** — per row: green = best reconstruction model, red = worst"
+            )
+            pivot_fmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
             st.dataframe(
-                pivot_mean.style
-                .apply(highlight_best_worst_per_row, axis=1)
-                .format('{:.2f}%', na_rep='—'),
+                pivot_mean.style.apply(
+                    lambda row: _style_row_best_worst(row, m.lower_is_better), axis=1
+                ).format(pivot_fmt, na_rep='—'),
                 width='stretch'
             )
             
             with st.expander("📋 Show count of predictions per cell"):
                 st.dataframe(pivot_count.astype(int), width='stretch')
             
-            # Per-reconstruction-model stats across all prediction models
             st.write("**Summary per Reconstruction Model (across all prediction models)**")
-            recon_summary = df_tab1_detail.groupby('reconstruction_model')['mape'].agg([
+            mean_hdr = f"Mean {m.label}"
+            recon_summary = df_tab1_detail.groupby('reconstruction_model')[m.key].agg([
                 'mean', 'std', 'median', 'min', 'max', 'count'
-            ]).round(2)
-            recon_summary.columns = ['Mean MAPE', 'Std', 'Median', 'Min', 'Max', 'N']
-            recon_summary = recon_summary.sort_values('Mean MAPE')
+            ]).round(pivot_dec)
+            recon_summary.columns = [mean_hdr, 'Std', 'Median', 'Min', 'Max', 'N']
+            recon_summary = recon_summary.sort_values(
+                mean_hdr, ascending=m.lower_is_better
+            )
+            mfmt = "{:.2f}%" if m.value_is_percent else "{:.4f}"
             st.dataframe(
                 recon_summary.style.format({
-                    'Mean MAPE': '{:.2f}%',
-                    'Std': '{:.2f}%',
-                    'Median': '{:.2f}%',
-                    'Min': '{:.2f}%',
-                    'Max': '{:.2f}%',
+                    mean_hdr: mfmt,
+                    'Std': mfmt,
+                    'Median': mfmt,
+                    'Min': mfmt,
+                    'Max': mfmt,
                     'N': '{:.0f}'
                 }),
                 width='stretch'
@@ -919,21 +1065,24 @@ def main():
             st.warning("No data for detailed statistics with current filters.")
         
         st.markdown("---")
-        st.subheader("📋 MAPE per Prediction (each row = one prediction)")
-        st.caption("Every prediction record: dataset, technique, rate, reconstruction model, prediction model, MAPE")
+        st.subheader(f"📋 {m.label} per Prediction (each row = one prediction)")
+        st.caption(
+            "Every prediction record: dataset, technique, rate, reconstruction model, prediction model, "
+            f"and {m.label}"
+        )
         
         if len(df_tab1) > 0:
-            # Columns for per-row view (MAPE only, no MAE/RMSE)
             row_cols = [
                 'dataset_name', 'technique', 'rate_percent',
                 'reconstruction_model', 'prediction_model', 'prediction_iteration',
-                'mape'
+                m.key,
             ]
             if 'n_samples' in df_tab1.columns:
                 row_cols.append('n_samples')
             
             df_rows = df_tab1[[c for c in row_cols if c in df_tab1.columns]].copy()
             df_rows = df_rows.sort_values(['reconstruction_model', 'prediction_model', 'dataset_name', 'technique', 'rate_percent'])
+            metric_col_disp = m.label
             df_rows = df_rows.rename(columns={
                 'dataset_name': 'Dataset',
                 'technique': 'Technique',
@@ -941,12 +1090,14 @@ def main():
                 'reconstruction_model': 'Recon Model',
                 'prediction_model': 'Pred Model',
                 'prediction_iteration': 'Pred Iter',
-                'mape': 'MAPE (%)',
+                m.key: metric_col_disp,
                 'n_samples': 'N Samples'
             })
             
             n_show = st.slider("Show first N rows", 10, 500, min(100, len(df_rows)), key='tab1_rows_slider')
-            fmt_dict = {'MAPE (%)': '{:.2f}%'}
+            fmt_dict = {
+                metric_col_disp: '{:.2f}%' if m.value_is_percent else '{:.4f}'
+            }
             if 'Rate %' in df_rows.columns:
                 fmt_dict['Rate %'] = '{:.0f}'
             if 'N Samples' in df_rows.columns:
@@ -958,12 +1109,11 @@ def main():
             )
             st.caption(f"Showing {min(n_show, len(df_rows))} of {len(df_rows)} prediction rows.")
             
-            # Download full per-row data
             csv_rows = df_rows.to_csv(index=False)
             st.download_button(
                 label="📥 Download full per-prediction data (CSV)",
                 data=csv_rows,
-                file_name="mape_per_prediction_tab1.csv",
+                file_name=f"prediction_{m.key}_per_row_tab1.csv",
                 mime="text/csv",
                 key='tab1_download_rows'
             )
@@ -976,14 +1126,14 @@ def main():
         st.caption("How do reconstruction models perform across different missingness types?")
         
         if len(df_recon) > 0:
-            plot_recon_by_technique(df_recon)
+            plot_recon_by_technique(df_recon, m)
         else:
             st.warning("No reconstructed data available")
     
     # Tab 3: By Missing Rate
     with tab3:
         st.header("📈 Reconstruction Models by Missing Rate")
-        st.caption("How does prediction MAPE change with increasing missing rate?")
+        st.caption(f"How does {m.label} change with increasing missing rate?")
         
         filter_technique = st.selectbox(
             "Filter by Technique",
@@ -994,6 +1144,7 @@ def main():
         if len(df_recon) > 0:
             plot_recon_by_rate(
                 df_recon,
+                m,
                 technique=None if filter_technique == 'All' else filter_technique
             )
         else:
@@ -1013,7 +1164,7 @@ def main():
         if len(df_recon) == 0:
             st.warning("No reconstructed data available")
         elif heatmap_type == "Recon Model vs Technique":
-            plot_heatmap_recon_vs_technique(df_recon)
+            plot_heatmap_recon_vs_technique(df_recon, m)
         elif heatmap_type == "Recon Model vs Missing Rate":
             filter_technique = st.selectbox(
                 "Filter by Technique",
@@ -1022,10 +1173,11 @@ def main():
             )
             plot_heatmap_recon_vs_rate(
                 df_recon,
+                m,
                 technique=None if filter_technique == 'All' else filter_technique
             )
         else:
-            plot_heatmap_pred_vs_recon(df_recon)
+            plot_heatmap_pred_vs_recon(df_recon, m)
     
     # Tab 5: Best/Worst
     with tab5:
@@ -1034,7 +1186,7 @@ def main():
         top_n = st.slider("Number of models to show", 3, 10, min(5, len(all_recon_models)))
         
         if len(df_recon) > 0:
-            plot_best_worst_reconstruction_models(df_recon, top_n=top_n)
+            plot_best_worst_reconstruction_models(df_recon, m, top_n=top_n)
         else:
             st.warning("No reconstructed data available")
     
@@ -1053,10 +1205,10 @@ def main():
             )
             
             with st.expander("ℹ️ How to interpret this analysis", expanded=False):
-                st.markdown("""
+                st.markdown(f"""
                 **Statistical Significance Testing**:
                 
-                Pairwise t-tests between reconstruction models to determine if MAPE differences are statistically significant.
+                Pairwise t-tests between reconstruction models to determine if **{m.label}** differences are statistically significant.
                 
                 **Legend**:
                 - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model
@@ -1072,16 +1224,26 @@ def main():
             df_for_stats = df_recon.rename(columns={'reconstruction_model': 'model'})
             
             st.subheader("Reconstruction Model Statistics")
-            model_stats = get_model_statistics(df_for_stats, metric='mape')
+            model_stats = get_model_statistics(
+                df_for_stats, metric=m.key, lower_is_better=m.lower_is_better
+            )
             st.dataframe(
-                model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
+                model_stats.style.background_gradient(
+                    subset=['mean'], cmap=_metric_cmap(m.lower_is_better)
+                ),
                 width='stretch'
             )
             
             st.divider()
             
             st.subheader("Pairwise Statistical Significance Matrix")
-            significance_matrix = perform_pairwise_ttests(df_for_stats, metric='mape', alpha_01=0.01, alpha_05=0.05)
+            significance_matrix = perform_pairwise_ttests(
+                df_for_stats,
+                metric=m.key,
+                alpha_01=0.01,
+                alpha_05=0.05,
+                lower_is_better=m.lower_is_better,
+            )
             
             def color_significance(val):
                 if val == 2:
@@ -1122,16 +1284,26 @@ def main():
             df_pred_stats = df_recon.rename(columns={'prediction_model': 'model'})
             
             st.subheader("Prediction Model Statistics")
-            pred_model_stats = get_model_statistics(df_pred_stats, metric='mape')
+            pred_model_stats = get_model_statistics(
+                df_pred_stats, metric=m.key, lower_is_better=m.lower_is_better
+            )
             st.dataframe(
-                pred_model_stats.style.background_gradient(subset=['mean'], cmap='RdYlGn_r'),
+                pred_model_stats.style.background_gradient(
+                    subset=['mean'], cmap=_metric_cmap(m.lower_is_better)
+                ),
                 width='stretch'
             )
             
             st.divider()
             
             st.subheader("Pairwise Statistical Significance Matrix (Prediction Models)")
-            pred_significance_matrix = perform_pairwise_ttests(df_pred_stats, metric='mape', alpha_01=0.01, alpha_05=0.05)
+            pred_significance_matrix = perform_pairwise_ttests(
+                df_pred_stats,
+                metric=m.key,
+                alpha_01=0.01,
+                alpha_05=0.05,
+                lower_is_better=m.lower_is_better,
+            )
             
             styled_pred_matrix = pred_significance_matrix.style.map(color_significance)
             st.dataframe(styled_pred_matrix, width='stretch', height=500)
@@ -1152,16 +1324,24 @@ def main():
         st.header("📁 Comparison by Dataset")
         
         if len(df_recon) > 0:
-            df_stats = df_recon.groupby(['reconstruction_model', 'dataset_name'])['mape'].mean().reset_index()
+            df_stats = (
+                df_recon.groupby(["reconstruction_model", "dataset_name"])[m.key]
+                .mean()
+                .reset_index()
+            )
             
             fig = px.bar(
                 df_stats,
                 x='dataset_name',
-                y='mape',
+                y=m.key,
                 color='reconstruction_model',
                 barmode='group',
-                title='Reconstruction Model MAPE by Dataset',
-                labels={'mape': 'Mean MAPE (%)', 'dataset_name': 'Dataset', 'reconstruction_model': 'Recon Model'}
+                title=f'Reconstruction Model {m.label} by Dataset',
+                labels={
+                    m.key: f'Mean {m.label}',
+                    'dataset_name': 'Dataset',
+                    'reconstruction_model': 'Recon Model'
+                }
             )
             fig.update_layout(xaxis_tickangle=-45, height=500)
             st.plotly_chart(fig, width='stretch')
@@ -1580,7 +1760,9 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
-            sort_column = st.selectbox("Sort by", df_display.columns.tolist(), index=df_display.columns.tolist().index('mape') if 'mape' in df_display.columns else 0)
+            cols_list = df_display.columns.tolist()
+            sort_default = cols_list.index(m.key) if m.key in cols_list else 0
+            sort_column = st.selectbox("Sort by", cols_list, index=sort_default)
         with col2:
             sort_order = st.radio("Order", ['Ascending', 'Descending'])
         

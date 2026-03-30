@@ -95,12 +95,33 @@ def metric_keys_for_csv() -> List[str]:
     return list_primary_metric_keys()
 
 
-def compute_reconstruction_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+def _resolve_metric_keys(metric_keys: Optional[List[str]]) -> List[str]:
+    """Resolve which primary keys to compute; ``None`` or empty list → all registered."""
+    if not metric_keys:
+        return list(_PRIMARY_ORDER)
+    out: List[str] = []
+    for k in metric_keys:
+        kk = str(k).strip().lower()
+        if kk not in _SPECS:
+            raise KeyError(
+                f"Unknown reconstruction metric: {kk!r}. Known: {list(_SPECS.keys())}"
+            )
+        if kk not in out:
+            out.append(kk)
+    return out
+
+
+def compute_reconstruction_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    metric_keys: Optional[List[str]] = None,
+) -> Dict[str, float]:
     """
-    Compute all registered primary metrics plus auxiliary diff stats.
+    Compute selected registered primary metrics plus auxiliary diff stats.
 
     Args:
         y_true, y_pred: 1-D arrays, same length, finite values (missing positions only).
+        metric_keys: Subset of registered keys; ``None`` or ``[]`` → all primaries.
     """
     yt = np.asarray(y_true, dtype=np.float64).ravel()
     yp = np.asarray(y_pred, dtype=np.float64).ravel()
@@ -112,8 +133,9 @@ def compute_reconstruction_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Di
     diff = yt - yp
     adiff = np.abs(diff)
 
+    keys = _resolve_metric_keys(metric_keys)
     out: Dict[str, float] = {}
-    for key in _PRIMARY_ORDER:
+    for key in keys:
         if key in _USER_METRICS:
             _, fn = _USER_METRICS[key]
             out[key] = fn(yt, yp)

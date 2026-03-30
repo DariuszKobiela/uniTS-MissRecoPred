@@ -62,6 +62,17 @@ reconstruction_models:
     # - "stable_diffusion_2_spec"
 
 # ============================================================================
+# RECONSTRUCTION ERROR METRICS (script 5 → reconstruction_results_*.csv)
+# ============================================================================
+reconstruction:
+  error_metrics:
+    # Which metrics to compute; empty list = all registered built-ins (mad, mae, rmse, r2, smape)
+    compute: []
+    primary_metric: "smape"
+    # minimize | maximize | auto (auto uses each metric's registered direction)
+    primary_metric_objective: "auto"
+
+# ============================================================================
 # PREDICTION MODELS
 # ============================================================================
 prediction_models:
@@ -91,6 +102,14 @@ prediction:
   # Whether to predict on reconstructed data (from 4_fixed_data)
   # This is the main prediction task
   predict_on_reconstructed: true
+
+  # Prediction error metrics (script 9 → prediction_results_*.csv); see src/prediction_metrics/
+  error_metrics:
+    # Which metrics to compute; empty list = all registered built-ins (mape, smape, mase, mae, rmse)
+    compute: []
+    primary_metric: "mape"
+    # minimize | maximize | auto (auto uses each metric's registered direction; all built-ins → minimize)
+    primary_metric_objective: "auto"
 
 # ============================================================================
 # MISSINGNESS TECHNIQUES
@@ -143,6 +162,8 @@ optimization:
 visualization:
   # Default metric in Streamlit reconstruction dashboard (must match a registered metric key)
   default_metric: "smape"
+  # Optional override for prediction dashboard (defaults to prediction.error_metrics.primary_metric)
+  # default_prediction_metric: "mape"
   show_top_n: 10
 
 # ============================================================================

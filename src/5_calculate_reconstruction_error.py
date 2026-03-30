@@ -28,7 +28,30 @@ setup_logging("5_calculate_reconstruction_error")
 
 # Import config loader
 from utils.config_loader import load_config
-from reconstruction_metrics import compute_reconstruction_metrics
+from reconstruction_metrics import (
+    compute_reconstruction_metrics,
+    list_primary_metric_keys,
+)
+
+
+def _format_recon_metric_value(key: str, value: float) -> str:
+    if key == "smape":
+        return f"{value:.2f}%"
+    return f"{value:.4f}"
+
+
+def _preview_metrics_line(metrics: dict, metric_keys: list, primary: str) -> str:
+    """Short log line: primary first, then other computed keys (capped)."""
+    ordered = []
+    if primary in metric_keys and primary in metrics:
+        ordered.append(primary)
+    for k in metric_keys:
+        if k != primary and k in metrics:
+            ordered.append(k)
+    parts = []
+    for k in ordered[:5]:
+        parts.append(f"{k}: {_format_recon_metric_value(k, float(metrics[k]))}")
+    return ", ".join(parts)
 
 
 def load_performance_metrics(results_dir: str) -> dict:
@@ -204,9 +227,11 @@ def calculate_reconstruction_errors(source_file_path, degraded_file_path, recons
     if len(source_missing) == 0:
         raise ValueError("No valid missing values to compare")
 
+    metric_keys = config.get_reconstruction_error_metrics_to_compute()
     core = compute_reconstruction_metrics(
         source_missing.to_numpy(dtype=np.float64),
         reconstructed_missing.to_numpy(dtype=np.float64),
+        metric_keys=metric_keys,
     )
     core["n_missing"] = int(core.pop("n_missing"))
     core["n_total"] = int(len(source_values))
@@ -344,6 +369,21 @@ Examples:
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {args.config}")
         return
+
+    metric_keys = config.get_reconstruction_error_metrics_to_compute()
+    primary_metric = config.get_reconstruction_primary_metric()
+    valid_keys = set(list_primary_metric_keys())
+    unknown = [k for k in metric_keys if k not in valid_keys]
+    if unknown:
+        print(f"❌ Unknown reconstruction.error_metrics.compute key(s): {unknown}")
+        print(f"   Valid keys: {sorted(valid_keys)}")
+        return
+    if primary_metric not in metric_keys:
+        print(
+            f"❌ reconstruction.error_metrics.primary_metric {primary_metric!r} "
+            f"must be included in compute list: {metric_keys}"
+        )
+        return
     
     # Get directories from config
     source_dir = config.get_source_dir()
@@ -386,6 +426,8 @@ Examples:
     print("="*70)
     print("CALCULATE RECONSTRUCTION ERROR METRICS")
     print("="*70)
+    print(f"Metrics computed: {metric_keys}")
+    print(f"Primary (summaries): {primary_metric}")
     print(f"Source directory: {source_dir}")
     print(f"  Datasets: {len(source_datasets)} files")
     print(f"Missing data directory: {missing_dir}")
@@ -433,7 +475,11 @@ Examples:
                         metrics = res['data']
                         results.append(metrics)
                         print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
-                        print(f"  ✓ MAD: {metrics['mad']:.4f}, RMSE: {metrics['rmse']:.4f}, SMAPE: {metrics['smape']:.2f}%, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+                        prev = _preview_metrics_line(metrics, metric_keys, primary_metric)
+                        print(
+                            f"  ✓ {prev} | Missing: {metrics['n_missing']}/{metrics['n_total']} "
+                            f"({metrics['n_missing']/metrics['n_total']*100:.1f}%)"
+                        )
                     else:
                         print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
                         print(f"  ❌ Error: {res['msg']}")
@@ -456,7 +502,11 @@ Examples:
             if res['status'] == 'success':
                 metrics = res['data']
                 results.append(metrics)
-                print(f"  ✓ MAD: {metrics['mad']:.4f}, RMSE: {metrics['rmse']:.4f}, SMAPE: {metrics['smape']:.2f}%, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+                prev = _preview_metrics_line(metrics, metric_keys, primary_metric)
+                print(
+                    f"  ✓ {prev} | Missing: {metrics['n_missing']}/{metrics['n_total']} "
+                    f"({metrics['n_missing']/metrics['n_total']*100:.1f}%)"
+                )
             else:
                 print(f"  ❌ Error: {res['msg']}")
                 error_count += 1
@@ -474,22 +524,18 @@ Examples:
         print(f"📁 Results saved to: {output_file}")
         print("="*70)
         print("\nSummary Statistics (over all runs):")
-        for col, title in [
-            ("mad", "MAD"),
-            ("mae", "MAE"),
-            ("rmse", "RMSE"),
-            ("r2", "R²"),
-            ("smape", "SMAPE (%)"),
-        ]:
-            if col in df_results.columns:
-                s = df_results[col].dropna()
-                if len(s) == 0:
-                    continue
-                print(f"  {title}:")
-                print(f"    Mean: {s.mean():.4f}")
-                print(f"    Median: {s.median():.4f}")
-                print(f"    Min: {s.min():.4f}")
-                print(f"    Max: {s.max():.4f}")
+        summary_cols = [k for k in metric_keys if k in df_results.columns]
+        for col in summary_cols:
+            s = df_results[col].dropna()
+            if len(s) == 0:
+                continue
+            title = "R²" if col == "r2" else ("SMAPE (%)" if col == "smape" else col.upper())
+            dec = 2 if col == "smape" else 4
+            print(f"  {title}:")
+            print(f"    Mean: {s.mean():.{dec}f}")
+            print(f"    Median: {s.median():.{dec}f}")
+            print(f"    Min: {s.min():.{dec}f}")
+            print(f"    Max: {s.max():.{dec}f}")
         
         # Show performance metrics summary if available
         if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():

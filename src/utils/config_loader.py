@@ -225,6 +225,107 @@ class Config:
     def get_predict_on_reconstructed(self) -> bool:
         """Get whether to predict on reconstructed data"""
         return self.config.get('prediction', {}).get('predict_on_reconstructed', True)
+
+    def get_prediction_error_metrics_to_compute(self) -> List[str]:
+        """
+        Keys of prediction error metrics to write in script 9.
+        Empty YAML list ``compute: []`` or omitted → all registered built-ins.
+        """
+        from prediction_metrics import list_primary_metric_keys
+
+        em = self.config.get("prediction", {}).get("error_metrics", {})
+        compute = em.get("compute")
+        if compute is None:
+            return list_primary_metric_keys()
+        if isinstance(compute, list) and len(compute) == 0:
+            return list_primary_metric_keys()
+        if isinstance(compute, list):
+            return [str(x).strip().lower() for x in compute]
+        return [str(compute).strip().lower()]
+
+    def get_prediction_primary_metric(self) -> str:
+        """Default / primary prediction error metric (summaries, Streamlit default)."""
+        return str(
+            self.config.get("prediction", {}).get("error_metrics", {}).get("primary_metric", "mape")
+        ).lower()
+
+    def get_prediction_primary_metric_lower_is_better(self) -> bool:
+        """
+        Direction for primary_metric (e.g. ranking). Uses prediction.error_metrics.primary_metric_objective.
+        """
+        from prediction_metrics import infer_lower_is_better
+
+        raw = self.config.get("prediction", {}).get("error_metrics", {}).get(
+            "primary_metric_objective", "auto"
+        )
+        if raw is None:
+            raw = "auto"
+        s = str(raw).strip().lower()
+        if s in ("auto", "default", "infer", ""):
+            return infer_lower_is_better(self.get_prediction_primary_metric())
+        if s in ("minimize", "min", "lower"):
+            return True
+        if s in ("maximize", "max", "higher"):
+            return False
+        raise ValueError(
+            f"Invalid prediction.error_metrics.primary_metric_objective: {raw!r}. "
+            'Use "minimize", "maximize", or "auto".'
+        )
+
+    def get_visualization_default_prediction_metric(self) -> str:
+        """Streamlit default column; falls back to prediction.error_metrics.primary_metric."""
+        v = self.config.get("visualization", {}).get("default_prediction_metric")
+        if v is not None and str(v).strip():
+            return str(v).strip().lower()
+        return self.get_prediction_primary_metric()
+
+    def get_reconstruction_error_metrics_to_compute(self) -> List[str]:
+        """
+        Keys of reconstruction error metrics to write in script 5.
+        Empty YAML list ``compute: []`` or omitted → all registered built-ins.
+        """
+        from reconstruction_metrics import list_primary_metric_keys
+
+        em = self.config.get("reconstruction", {}).get("error_metrics", {})
+        compute = em.get("compute")
+        if compute is None:
+            return list_primary_metric_keys()
+        if isinstance(compute, list) and len(compute) == 0:
+            return list_primary_metric_keys()
+        if isinstance(compute, list):
+            return [str(x).strip().lower() for x in compute]
+        return [str(compute).strip().lower()]
+
+    def get_reconstruction_primary_metric(self) -> str:
+        """Default / primary reconstruction metric (summaries in script 5, optional UI default)."""
+        return str(
+            self.config.get("reconstruction", {}).get("error_metrics", {}).get(
+                "primary_metric", "smape"
+            )
+        ).lower()
+
+    def get_reconstruction_primary_metric_lower_is_better(self) -> bool:
+        """
+        Direction for reconstruction primary_metric. Uses reconstruction.error_metrics.primary_metric_objective.
+        """
+        from reconstruction_metrics import infer_lower_is_better
+
+        raw = self.config.get("reconstruction", {}).get("error_metrics", {}).get(
+            "primary_metric_objective", "auto"
+        )
+        if raw is None:
+            raw = "auto"
+        s = str(raw).strip().lower()
+        if s in ("auto", "default", "infer", ""):
+            return infer_lower_is_better(self.get_reconstruction_primary_metric())
+        if s in ("minimize", "min", "lower"):
+            return True
+        if s in ("maximize", "max", "higher"):
+            return False
+        raise ValueError(
+            f"Invalid reconstruction.error_metrics.primary_metric_objective: {raw!r}. "
+            'Use "minimize", "maximize", or "auto".'
+        )
     
     # =========================================================================
     # MISSINGNESS SETTINGS
@@ -386,6 +487,10 @@ class Config:
         print(f"\n🔮 Prediction Settings:")
         print(f"  Predict on original train: {self.get_predict_on_original_train()}")
         print(f"  Predict on reconstructed:  {self.get_predict_on_reconstructed()}")
+
+        print(f"\n📏 Reconstruction error metrics (script 5):")
+        print(f"  Compute: {self.get_reconstruction_error_metrics_to_compute()}")
+        print(f"  Primary: {self.get_reconstruction_primary_metric()}")
         
         print("="*70)
 

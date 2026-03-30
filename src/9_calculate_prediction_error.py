@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
 Calculate Prediction Error
-Compares predicted values with actual test data (ground truth)
-and calculates Mean Absolute Percentage Error (MAPE).
+Compares predicted values with actual test data (ground truth).
+Metrics are defined in prediction_metrics/ (config: prediction.error_metrics).
 Results are saved to prediction_experiment_results/ with timestamp.
-Uses config/config.yaml for configuration.
 
-NOTE: This script compares PREDICTIONS with TEST data (ground truth).
-Predictions come from 7_predict_datasets.py, test data from 2_splitted_data/test/.
+NOTE: PREDICTIONS vs TEST ground truth. Predictions from 8_predict_datasets.py (after 7_train_prediction_models.py), test from splitted test dir.
 """
 
 import os
 import sys
-import csv
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -27,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import config loader
 from utils.config_loader import load_config, load_prediction_models_config
 from utils.logger import setup_logging
+from prediction_metrics import compute_prediction_metrics, get_metric_spec, list_primary_metric_keys
 
 # Cache for known prediction models
 _known_pred_models_cache = None
@@ -244,65 +242,50 @@ def parse_prediction_filename(filename: str) -> dict:
         }
 
 
-def calculate_mape(actual: pd.Series, predicted: pd.Series) -> dict:
+def align_actual_predicted(actual: pd.Series, predicted: pd.Series) -> tuple:
     """
-    Calculate Mean Absolute Percentage Error (MAPE) and other metrics.
-    
-    MAPE = (1/n) * Σ |actual - predicted| / |actual| * 100
-    
-    Args:
-        actual: Series with actual (ground truth) values
-        predicted: Series with predicted values
-        
-    Returns:
-        dict with metrics: mape, mae, rmse, max_error, min_error, std_error, n_samples
+    Align length, coerce numeric, drop NaN pairs. Returns (y_true, y_pred) as float64 1-D arrays.
     """
-    # Ensure same length
     if len(actual) != len(predicted):
         min_len = min(len(actual), len(predicted))
         actual = actual.iloc[:min_len]
         predicted = predicted.iloc[:min_len]
-    
-    # Convert to numeric
-    actual = pd.to_numeric(actual, errors='coerce')
-    predicted = pd.to_numeric(predicted, errors='coerce')
-    
-    # Remove NaN values
+
+    actual = pd.to_numeric(actual, errors="coerce")
+    predicted = pd.to_numeric(predicted, errors="coerce")
+
     valid_mask = ~(actual.isna() | predicted.isna())
     actual = actual[valid_mask]
     predicted = predicted[valid_mask]
-    
+
     if len(actual) == 0:
         raise ValueError("No valid values to compare")
-    
-    # Calculate errors
-    errors = actual.values - predicted.values
-    abs_errors = np.abs(errors)
-    
-    # Calculate MAPE (handle zero values in actual)
-    # Use only non-zero actual values for MAPE calculation
-    non_zero_mask = actual.values != 0
-    if non_zero_mask.sum() > 0:
-        mape = np.mean(np.abs(errors[non_zero_mask]) / np.abs(actual.values[non_zero_mask])) * 100
-    else:
-        # If all actual values are zero, MAPE is undefined
-        mape = np.nan
-    
-    # Calculate other metrics
-    mae = np.mean(abs_errors)  # Mean Absolute Error
-    rmse = np.sqrt(np.mean(errors ** 2))  # Root Mean Square Error
-    
-    metrics = {
-        'mape': mape,  # Mean Absolute Percentage Error (%)
-        'mae': mae,    # Mean Absolute Error
-        'rmse': rmse,  # Root Mean Square Error
-        'max_error': abs_errors.max(),
-        'min_error': abs_errors.min(),
-        'std_error': abs_errors.std(),
-        'n_samples': len(actual)
+
+    yt = actual.to_numpy(dtype=np.float64)
+    yp = predicted.to_numpy(dtype=np.float64)
+    return yt, yp
+
+
+def auxiliary_error_stats(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    abs_e = np.abs(y_true - y_pred)
+    return {
+        "max_error": float(np.max(abs_e)),
+        "min_error": float(np.min(abs_e)),
+        "std_error": float(np.std(abs_e, ddof=0)),
+        "n_samples": int(len(y_true)),
     }
-    
-    return metrics
+
+
+def _format_metric_preview(key: str, value: float) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "N/A"
+    try:
+        spec = get_metric_spec(key)
+        if spec.value_is_percent:
+            return f"{float(value):.2f}%"
+        return f"{float(value):.4f}"
+    except KeyError:
+        return f"{float(value):.4f}"
 
 
 def generate_output_filename():
@@ -318,11 +301,12 @@ def process_file_wrapper(args):
     """
     Wrapper for processing a single prediction file.
     Args:
-        args: Tuple containing (prediction_file_path, test_data_mapping, config, performance_metrics)
+        args: Tuple (prediction_file_path, test_data_mapping, train_data_mapping,
+              metric_keys, config, performance_metrics)
     Returns:
         dict with status ('success' or 'error') and result data or error message
     """
-    prediction_file_path, test_data_mapping, config, performance_metrics = args
+    prediction_file_path, test_data_mapping, train_data_mapping, metric_keys, config, performance_metrics = args
     filename = os.path.basename(prediction_file_path)
     
     try:
@@ -348,27 +332,35 @@ def process_file_wrapper(args):
         format_settings = config.get_csv_format(os.path.basename(test_file_path))
         test_df = pd.read_csv(test_file_path, **format_settings)
         actual_values = pd.to_numeric(test_df.iloc[:, 0], errors='coerce')
-        
-        # Calculate MAPE and other metrics
-        metrics = calculate_mape(actual_values, predicted_values)
-        
-        # Build result
+
+        y_true, y_pred = align_actual_predicted(actual_values, predicted_values)
+
+        train_arr = None
+        if dataset_name in train_data_mapping:
+            train_path = train_data_mapping[dataset_name]
+            if os.path.exists(train_path):
+                tfmt = config.get_csv_format(os.path.basename(train_path))
+                train_df = pd.read_csv(train_path, **tfmt)
+                train_arr = pd.to_numeric(train_df.iloc[:, 0], errors="coerce").dropna().to_numpy(
+                    dtype=np.float64
+                )
+
+        primary_metrics = compute_prediction_metrics(
+            y_true, y_pred, train=train_arr, metric_keys=metric_keys
+        )
+        aux = auxiliary_error_stats(y_true, y_pred)
+
         result = {
-            'dataset_name': metadata['dataset_name'],
-            'source_type': metadata['source_type'],
-            'technique': metadata['technique'],
-            'rate_percent': metadata['rate_percent'],
-            'reconstruction_iteration': metadata['reconstruction_iteration'],
-            'reconstruction_model': metadata['reconstruction_model'],
-            'prediction_model': metadata['prediction_model'],
-            'prediction_iteration': metadata['prediction_iteration'],
-            'mape': metrics['mape'],
-            'mae': metrics['mae'],
-            'rmse': metrics['rmse'],
-            'max_error': metrics['max_error'],
-            'min_error': metrics['min_error'],
-            'std_error': metrics['std_error'],
-            'n_samples': metrics['n_samples']
+            "dataset_name": metadata["dataset_name"],
+            "source_type": metadata["source_type"],
+            "technique": metadata["technique"],
+            "rate_percent": metadata["rate_percent"],
+            "reconstruction_iteration": metadata["reconstruction_iteration"],
+            "reconstruction_model": metadata["reconstruction_model"],
+            "prediction_model": metadata["prediction_model"],
+            "prediction_iteration": metadata["prediction_iteration"],
+            **primary_metrics,
+            **aux,
         }
         
         # Add performance metrics if available
@@ -412,15 +404,12 @@ def process_file_wrapper(args):
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
-        description="Calculate prediction error (MAPE) between predictions and test data",
+        description="Calculate prediction error metrics (MAPE, SMAPE, MASE, MAE, RMSE, …) vs test data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use configuration from config/config.yaml
-  python 8_calculate_prediction_error.py
-  
-  # Use custom config file
-  python 8_calculate_prediction_error.py --config config/my_config.yaml
+  python src/9_calculate_prediction_error.py
+  python src/9_calculate_prediction_error.py --config config/my_config.yaml
         """
     )
     
@@ -443,9 +432,26 @@ Examples:
     
     # Get directories from config
     test_dir = config.get_splitted_test_dir()
+    train_dir = config.get_splitted_train_dir()
     predictions_dir = os.path.join(config.get_prediction_results_dir(), "predictions")
     output_dir = config.get_prediction_results_dir()
-    
+
+    try:
+        metric_keys = config.get_prediction_error_metrics_to_compute()
+        for mk in metric_keys:
+            get_metric_spec(mk)
+    except (KeyError, ValueError) as e:
+        print(f"❌ Invalid prediction.error_metrics.compute: {e}")
+        print(f"   Known keys: {list_primary_metric_keys()}")
+        return
+
+    primary_key = config.get_prediction_primary_metric()
+    try:
+        get_metric_spec(primary_key)
+    except KeyError:
+        print(f"❌ Unknown prediction.error_metrics.primary_metric: {primary_key!r}")
+        return
+
     # Check directories exist
     if not os.path.exists(test_dir):
         print(f"❌ Test data directory not found: {test_dir}")
@@ -472,6 +478,13 @@ Examples:
     
     # Create mapping: dataset_name -> test_file_path
     test_data_mapping = {f.stem: str(f) for f in test_files}
+
+    train_data_mapping = {}
+    if os.path.isdir(train_dir):
+        train_files = list(Path(train_dir).glob("*.csv"))
+        train_data_mapping = {f.stem: str(f) for f in train_files}
+    else:
+        print(f"⚠️  Train directory not found (MASE will be NaN): {train_dir}")
     
     # Get list of prediction files
     prediction_files = sorted(Path(predictions_dir).glob("*.csv"))
@@ -485,16 +498,18 @@ Examples:
     performance_metrics = load_performance_metrics(output_dir)
     
     print("="*70)
-    print("CALCULATE PREDICTION ERROR (MAPE)")
+    print("CALCULATE PREDICTION ERROR METRICS")
     print("="*70)
+    print(f"Metrics computed: {', '.join(metric_keys)}")
+    print(f"Primary (summaries): {primary_key}")
     print(f"Test data directory: {test_dir}")
     print(f"  Test datasets: {len(test_files)} files")
+    print(f"Train data directory: {train_dir}")
+    print(f"  Train datasets: {len(train_data_mapping)} files (for MASE scaling)")
     print(f"Predictions directory: {predictions_dir}")
     print(f"  Prediction files: {len(prediction_files)} files")
     print(f"Output directory: {output_dir}")
     print(f"Output file: {output_filename}")
-    print("="*70)
-    print("\nℹ️  MAPE = Mean Absolute Percentage Error (lower is better)")
     print("="*70)
     
     # Store results
@@ -513,7 +528,7 @@ Examples:
         
         # Prepare arguments for each job
         job_args = [
-            (str(f), test_data_mapping, config, performance_metrics) 
+            (str(f), test_data_mapping, train_data_mapping, metric_keys, config, performance_metrics)
             for f in prediction_files
         ]
         
@@ -531,9 +546,10 @@ Examples:
                     if res['status'] == 'success':
                         metrics = res['data']
                         results.append(metrics)
-                        mape_str = f"{metrics['mape']:.2f}%" if not np.isnan(metrics['mape']) else "N/A"
+                        pv = metrics.get(primary_key, float("nan"))
+                        p_str = _format_metric_preview(primary_key, pv)
                         print(f"[{processed_count}/{len(prediction_files)}] {filename}")
-                        print(f"  ✓ MAPE: {mape_str}, MAE: {metrics['mae']:.4f}, RMSE: {metrics['rmse']:.4f}")
+                        print(f"  ✓ {primary_key.upper()}: {p_str} (n={metrics.get('n_samples', '?')})")
                     else:
                         print(f"[{processed_count}/{len(prediction_files)}] {filename}")
                         print(f"  ❌ Error: {res['msg']}")
@@ -547,7 +563,14 @@ Examples:
         print("\nSequential processing...")
         for prediction_file in prediction_files:
             filename = prediction_file.name
-            args = (str(prediction_file), test_data_mapping, config, performance_metrics)
+            args = (
+                str(prediction_file),
+                test_data_mapping,
+                train_data_mapping,
+                metric_keys,
+                config,
+                performance_metrics,
+            )
             
             processed_count += 1
             print(f"\n[{processed_count}/{len(prediction_files)}] Processing: {filename}")
@@ -557,8 +580,9 @@ Examples:
             if res['status'] == 'success':
                 metrics = res['data']
                 results.append(metrics)
-                mape_str = f"{metrics['mape']:.2f}%" if not np.isnan(metrics['mape']) else "N/A"
-                print(f"  ✓ MAPE: {mape_str}, MAE: {metrics['mae']:.4f}, RMSE: {metrics['rmse']:.4f}")
+                pv = metrics.get(primary_key, float("nan"))
+                p_str = _format_metric_preview(primary_key, pv)
+                print(f"  ✓ {primary_key.upper()}: {p_str} (n={metrics.get('n_samples', '?')})")
             else:
                 print(f"  ❌ Error: {res['msg']}")
                 error_count += 1
@@ -578,45 +602,44 @@ Examples:
         
         # Summary statistics
         print("\nSummary Statistics:")
-        
-        # MAPE statistics (excluding NaN)
-        valid_mape = df_results['mape'].dropna()
-        if len(valid_mape) > 0:
-            print("  MAPE (Mean Absolute Percentage Error):")
-            print(f"    Mean:   {valid_mape.mean():.2f}%")
-            print(f"    Median: {valid_mape.median():.2f}%")
-            print(f"    Min:    {valid_mape.min():.2f}%")
-            print(f"    Max:    {valid_mape.max():.2f}%")
-        
-        # MAE statistics
-        print("  MAE (Mean Absolute Error):")
-        print(f"    Mean:   {df_results['mae'].mean():.4f}")
-        print(f"    Median: {df_results['mae'].median():.4f}")
-        print(f"    Min:    {df_results['mae'].min():.4f}")
-        print(f"    Max:    {df_results['mae'].max():.4f}")
-        
-        # RMSE statistics
-        print("  RMSE (Root Mean Square Error):")
-        print(f"    Mean:   {df_results['rmse'].mean():.4f}")
-        print(f"    Median: {df_results['rmse'].median():.4f}")
-        print(f"    Min:    {df_results['rmse'].min():.4f}")
-        print(f"    Max:    {df_results['rmse'].max():.4f}")
-        
-        # Breakdown by source type
-        print("\n  By Source Type:")
-        for source_type in df_results['source_type'].unique():
-            subset = df_results[df_results['source_type'] == source_type]
-            valid_mape = subset['mape'].dropna()
-            if len(valid_mape) > 0:
-                print(f"    {source_type}: MAPE {valid_mape.mean():.2f}% (n={len(subset)})")
-        
-        # Breakdown by prediction model
-        print("\n  By Prediction Model:")
-        for model in df_results['prediction_model'].unique():
-            subset = df_results[df_results['prediction_model'] == model]
-            valid_mape = subset['mape'].dropna()
-            if len(valid_mape) > 0:
-                print(f"    {model}: MAPE {valid_mape.mean():.2f}% (n={len(subset)})")
+        for col in metric_keys:
+            if col not in df_results.columns:
+                continue
+            s = df_results[col].dropna()
+            if len(s) == 0:
+                continue
+            label = get_metric_spec(col).label
+            pct = get_metric_spec(col).value_is_percent
+            u = "%" if pct else ""
+            print(f"  {label} ({col}):")
+            print(f"    Mean:   {s.mean():.4f}{u}")
+            print(f"    Median: {s.median():.4f}{u}")
+            print(f"    Min:    {s.min():.4f}{u}")
+            print(f"    Max:    {s.max():.4f}{u}")
+
+        print("\n  By Source Type (primary metric):")
+        for source_type in df_results["source_type"].unique():
+            subset = df_results[df_results["source_type"] == source_type]
+            if primary_key not in subset.columns:
+                continue
+            vp = subset[primary_key].dropna()
+            if len(vp) > 0:
+                print(
+                    f"    {source_type}: {primary_key} "
+                    f"{_format_metric_preview(primary_key, vp.mean())} (n={len(subset)})"
+                )
+
+        print("\n  By Prediction Model (primary metric):")
+        for model in df_results["prediction_model"].unique():
+            subset = df_results[df_results["prediction_model"] == model]
+            if primary_key not in subset.columns:
+                continue
+            vp = subset[primary_key].dropna()
+            if len(vp) > 0:
+                print(
+                    f"    {model}: {primary_key} "
+                    f"{_format_metric_preview(primary_key, vp.mean())} (n={len(subset)})"
+                )
         
         # Performance metrics summary if available
         if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():
