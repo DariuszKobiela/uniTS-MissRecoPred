@@ -125,11 +125,24 @@ missingness_rates:
   seed: 42
 
 # ============================================================================
+# OPTIMIZATION (e.g. Stable Diffusion hyperparameters in src/optimization/)
+# ============================================================================
+optimization:
+  # Which reconstruction error metric to optimize (see src/reconstruction_metrics/)
+  # Built-ins: mad, mae, rmse, r2, smape; custom keys from register_reconstruction_metric()
+  reconstruction_metric: "smape"
+  # Direction for that metric during SD hyperparameter search (Optuna always minimizes internally):
+  # - "minimize" — lower metric value is better (typical for SMAPE, MAE, RMSE, MAD)
+  # - "maximize" — higher metric value is better (typical for R²)
+  # - "auto" — use the default convention registered for that metric in code
+  reconstruction_metric_objective: "auto"
+
+# ============================================================================
 # VISUALIZATION SETTINGS
 # ============================================================================
 visualization:
-  # Default settings for Streamlit dashboard
-  default_metric: "mad"
+  # Default metric in Streamlit reconstruction dashboard (must match a registered metric key)
+  default_metric: "smape"
   show_top_n: 10
 
 # ============================================================================
@@ -154,7 +167,7 @@ computation:
 # OVERWRITE SETTINGS
 # ============================================================================
 overwrite:
-  # Reconstruction phase (steps 3-5: degrade, reconstruct, calculate MAD)
+  # Reconstruction phase (steps 3-5: degrade, reconstruct, calculate reconstruction errors)
   # true = overwrite existing degraded/reconstructed files
   # false = skip if files already exist
   reconstruction: false

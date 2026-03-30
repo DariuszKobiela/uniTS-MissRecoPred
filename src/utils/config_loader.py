@@ -288,6 +288,40 @@ class Config:
         """Get number of parallel jobs"""
         return self.config['computation'].get('n_jobs', 1)
     
+    def get_visualization_default_metric(self) -> str:
+        """Default reconstruction metric key for Streamlit (e.g. smape, mad)."""
+        return str(self.config.get("visualization", {}).get("default_metric", "smape")).lower()
+    
+    def get_optimization_reconstruction_metric(self) -> str:
+        """Metric key used to score trials in SD hyperparameter optimization."""
+        return str(self.config.get("optimization", {}).get("reconstruction_metric", "smape")).lower()
+
+    def get_optimization_reconstruction_lower_is_better(self) -> bool:
+        """
+        Whether SD optimization should treat lower values of reconstruction_metric as better.
+
+        Config key: optimization.reconstruction_metric_objective
+        - "minimize", "min", "lower" -> True
+        - "maximize", "max", "higher" -> False
+        - "auto", null, omitted -> infer from reconstruction_metrics for the chosen metric key
+        """
+        from reconstruction_metrics import infer_lower_is_better
+
+        raw = self.config.get("optimization", {}).get("reconstruction_metric_objective", "auto")
+        if raw is None:
+            raw = "auto"
+        s = str(raw).strip().lower()
+        if s in ("auto", "default", "infer", ""):
+            return infer_lower_is_better(self.get_optimization_reconstruction_metric())
+        if s in ("minimize", "min", "lower"):
+            return True
+        if s in ("maximize", "max", "higher"):
+            return False
+        raise ValueError(
+            f"Invalid optimization.reconstruction_metric_objective: {raw!r}. "
+            'Use "minimize", "maximize", or "auto".'
+        )
+    
     # =========================================================================
     # SUMMARY
     # =========================================================================

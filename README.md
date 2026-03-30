@@ -41,7 +41,7 @@ A modular framework for evaluating time series reconstruction methods on univari
 - **Configuration-Based**: YAML config for easy experiment management
 - **Interactive Visualization**: Streamlit dashboard for result analysis
 - **Modular Design**: Easy to add new models and techniques
-- **MAD Metric**: Measures reconstruction quality only on missing values
+- **Reconstruction metrics** (MAD, MAE, RMSE, R², SMAPE, …): quality only on missing values; extensible in `src/utils/reconstruction_metrics.py`
 
 ## 📁 Project Structure
 
@@ -53,8 +53,8 @@ uniTS-MissRecoPred/
 │   ├── 🐍 2_create_split.py                # [MAIN] Split into train/test sets
 │   ├── 🐍 3_degrade_datasets.py            # [MAIN] Introduce missing data (training)
 │   ├── 🐍 4_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
-│   ├── 🐍 5_calculate_mad.py               # [MAIN] Calculate MAD metric
-│   ├── 🐍 6_visualize_mad_comparison.py    # [MAIN] Streamlit dashboard
+│   ├── 🐍 5_calculate_reconstruction_error.py   # [MAIN] Reconstruction error metrics (CSV)
+│   ├── 🐍 6_visualize_reconstruction_error.py   # [MAIN] Streamlit dashboard
 │   ├── 🐍 7_predict_datasets.py            # [MAIN] Predict future values
 │   ├── 🐍 8_calculate_prediction_error.py  # [MAIN] Calculate prediction MAPE
 │   ├── 🐍 9_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
@@ -102,7 +102,7 @@ uniTS-MissRecoPred/
 │   └── 📁 4_fixed_data/                    # Reconstructed training datasets (generated)
 │
 ├── 📁 reconstruction_experiments_results/  # Reconstruction experiment results
-│   ├── 📝 reconstruction_results_*.csv        # MAD + performance metrics (merged)
+│   ├── 📝 reconstruction_results_*.csv        # Error metrics + performance (merged)
 │   └── 📁 performance_metrics/                # Performance metrics archive
 │       └── 📝 performance_metrics_*.csv       # Individual performance logs
 │
@@ -236,18 +236,18 @@ make help
 make pipeline
 
 # Option 2: Run step by step
-make clean-datasets    # Step 1: Clean and validate raw data
-make split             # Step 2: Split into train/test sets
-make degrade           # Step 3: Create degraded training datasets
+make clean-datasets              # Step 1: Clean and validate raw data
+make create-split                # Step 2: Split into train/test sets
+make degrade-datasets            # Step 3: Introduce missingness in training data
 # OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
-make optimize          # Find optimal num_inference_steps and guidance_scale
-# Then update config/config.yaml with recommended values
-make reconstruct       # Step 4: Reconstruct missing values
-make calculate         # Step 5: Calculate MAD metric
-make visualize             # Step 6: Launch reconstruction dashboard
-make predict               # Step 7: Predict future values (optional)
-make calculate-prediction  # Step 8: Calculate prediction error (MAPE)
-make visualize-prediction  # Step 9: Launch prediction dashboard
+make optimize                    # Optuna search; then update config/config.yaml
+make reconstruct-datasets        # Step 4: Reconstruct missing training values
+make calculate-reconstruction-error  # Step 5: Reconstruction error metrics (CSV)
+make visualize-reconstruction-error  # Step 6: Reconstruction dashboard (Streamlit)
+make train-prediction-models     # Step 7: Train prediction models
+make predict-datasets            # Step 8: Run predictions
+make calculate-prediction-error  # Step 9: Prediction error metrics
+make visualize-prediction        # Step 10: Prediction dashboard (Streamlit)
 
 
 ```
@@ -260,11 +260,12 @@ python src/2_create_split.py          # Split into train/test sets
 python src/3_degrade_datasets.py      # Create degraded training datasets
 python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable Diffusion
 python src/4_reconstruct_datasets.py  # Reconstruct missing values
-python src/5_calculate_mad.py         # Calculate MAD metric
-streamlit run src/6_visualize_mad_comparison.py  # Visualize results
-python src/7_predict_datasets.py      # Predict future values (optional)
-python src/8_calculate_prediction_error.py  # Calculate prediction MAPE
-streamlit run src/9_visualize_prediction.py  # Visualize prediction results
+python src/5_calculate_reconstruction_error.py   # MAD, MAE, RMSE, R², SMAPE, …
+streamlit run src/6_visualize_reconstruction_error.py  # Visualize results
+python src/7_train_prediction_models.py  # Train prediction models (before predict)
+python src/8_predict_datasets.py      # Run predictions (optional)
+python src/9_calculate_prediction_error.py  # Prediction error metrics
+streamlit run src/10_visualize_prediction.py  # Prediction dashboard
 ```
 
 **💡 Tip**: For long-running experiments, use `tmux` to keep processes running in background:
@@ -293,13 +294,12 @@ make help
 make test
 
 # Setup from scratch
-make setup          # Create virtual environment
-make install        # Install dependencies
+make setup          # Install dependencies (uv sync)
 
 # Full workflow
-make pipeline       # Run reconstruction pipeline (steps 1-5)
-make pipeline-full  # Run full pipeline including prediction (steps 1-5, 7)
-make visualize      # View results
+make pipeline       # Reconstruction only (steps 1-5)
+make pipeline-full  # Reconstruction + prediction train/predict/eval (1-5, 7-9)
+make visualize-reconstruction-error  # Reconstruction dashboard
 
 # Cleanup
 make clean          # Remove generated data

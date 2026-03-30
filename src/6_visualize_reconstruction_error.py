@@ -2,6 +2,7 @@
 """
 Streamlit Visualization App for Reconstruction & Prediction Results
 Interactive dashboard for comparing reconstruction models, techniques, and missing rates.
+Reconstruction error metrics live in the reconstruction_metrics package (extensible).
 Part of uniTS-MissRecoPred framework.
 """
 
@@ -16,6 +17,9 @@ import numpy as np
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+from reconstruction_metrics import get_metric_spec, list_metric_specs_ordered
+from utils.config_loader import load_config
 
 
 def load_results(file_path: str) -> pd.DataFrame:
@@ -41,124 +45,133 @@ def get_available_results() -> list:
 # No need for separate performance_metrics_*.csv files
 
 
-def plot_mad_by_model(df: pd.DataFrame, technique: str = None, rate: int = None):
-    """Plot MAD comparison by reconstruction model"""
+def plot_metric_by_model(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    lower_is_better: bool,
+    technique: str = None,
+    rate: int = None,
+):
+    """Plot selected reconstruction metric by reconstruction model."""
     df_filtered = df.copy()
-    
-    # Apply filters
+
     if technique:
         df_filtered = df_filtered[df_filtered['technique'] == technique]
     if rate:
         df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
-    
+
     if df_filtered.empty:
         st.warning("No data available for selected filters")
         return
-    
-    # Group by model and calculate statistics
-    df_stats = df_filtered.groupby('model')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
-    # Create bar plot
+
+    df_stats = df_filtered.groupby('model')[metric_col].agg(['mean', 'std', 'min', 'max']).reset_index()
+    df_stats = df_stats.sort_values('mean', ascending=lower_is_better)
+
     fig = go.Figure()
-    
+
     fig.add_trace(go.Bar(
         x=df_stats['model'],
         y=df_stats['mean'],
         error_y=dict(type='data', array=df_stats['std']),
         marker_color='lightblue',
-        name='Mean MAD'
+        name=f'Mean {metric_label}',
     ))
-    
+
     fig.update_layout(
-        title='Mean Absolute Difference by Reconstruction Model',
+        title=f'{metric_label} by Reconstruction Model',
         xaxis_title='Reconstruction Model',
-        yaxis_title='MAD',
+        yaxis_title=metric_label,
         xaxis_tickangle=-45,
-        height=500
+        height=500,
     )
-    
+
     st.plotly_chart(fig, width='stretch')
-    
-    # Show statistics table
+
     st.subheader("Statistics")
     st.dataframe(df_stats.style.format({
         'mean': '{:.4f}',
         'std': '{:.4f}',
         'min': '{:.4f}',
-        'max': '{:.4f}'
+        'max': '{:.4f}',
     }), width='stretch')
 
 
-def plot_mad_by_technique(df: pd.DataFrame, model: str = None, rate: int = None):
-    """Plot MAD comparison by missingness technique"""
+def plot_metric_by_technique(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    lower_is_better: bool,
+    model: str = None,
+    rate: int = None,
+):
+    """Plot selected metric by missingness technique."""
     df_filtered = df.copy()
-    
-    # Apply filters
+
     if model:
         df_filtered = df_filtered[df_filtered['model'] == model]
     if rate:
         df_filtered = df_filtered[df_filtered['rate_percent'] == rate]
-    
+
     if df_filtered.empty:
         st.warning("No data available for selected filters")
         return
-    
-    # Group by technique and calculate statistics
-    df_stats = df_filtered.groupby('technique')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
-    # Create bar plot
+
+    df_stats = df_filtered.groupby('technique')[metric_col].agg(['mean', 'std', 'min', 'max']).reset_index()
+    df_stats = df_stats.sort_values('mean', ascending=lower_is_better)
+
     fig = go.Figure()
-    
+
     fig.add_trace(go.Bar(
         x=df_stats['technique'],
         y=df_stats['mean'],
         error_y=dict(type='data', array=df_stats['std']),
         marker_color='lightgreen',
-        name='Mean MAD'
+        name=f'Mean {metric_label}',
     ))
-    
+
     fig.update_layout(
-        title='Mean Absolute Difference by Missingness Technique',
+        title=f'{metric_label} by Missingness Technique',
         xaxis_title='Missingness Technique',
-        yaxis_title='MAD',
-        height=500
+        yaxis_title=metric_label,
+        height=500,
     )
-    
+
     st.plotly_chart(fig, width='stretch')
-    
-    # Show statistics table
+
     st.subheader("Statistics")
     st.dataframe(df_stats.style.format({
         'mean': '{:.4f}',
         'std': '{:.4f}',
         'min': '{:.4f}',
-        'max': '{:.4f}'
+        'max': '{:.4f}',
     }), width='stretch')
 
 
-def plot_mad_by_rate(df: pd.DataFrame, model: str = None, technique: str = None):
-    """Plot MAD comparison by missing rate"""
+def plot_metric_by_rate(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    model: str = None,
+    technique: str = None,
+):
+    """Plot selected metric by missing rate."""
     df_filtered = df.copy()
-    
-    # Apply filters
+
     if model:
         df_filtered = df_filtered[df_filtered['model'] == model]
     if technique:
         df_filtered = df_filtered[df_filtered['technique'] == technique]
-    
+
     if df_filtered.empty:
         st.warning("No data available for selected filters")
         return
-    
-    # Group by rate and calculate statistics
-    df_stats = df_filtered.groupby('rate_percent')['mad'].agg(['mean', 'std', 'min', 'max']).reset_index()
+
+    df_stats = df_filtered.groupby('rate_percent')[metric_col].agg(['mean', 'std', 'min', 'max']).reset_index()
     df_stats = df_stats.sort_values('rate_percent')
-    
-    # Create line plot
+
     fig = go.Figure()
-    
+
     fig.add_trace(go.Scatter(
         x=df_stats['rate_percent'],
         y=df_stats['mean'],
@@ -166,19 +179,18 @@ def plot_mad_by_rate(df: pd.DataFrame, model: str = None, technique: str = None)
         error_y=dict(type='data', array=df_stats['std']),
         marker=dict(size=10, color='coral'),
         line=dict(width=2),
-        name='Mean MAD'
+        name=f'Mean {metric_label}',
     ))
-    
+
     fig.update_layout(
-        title='Mean Absolute Difference by Missing Rate',
+        title=f'{metric_label} by Missing Rate',
         xaxis_title='Missing Rate (%)',
-        yaxis_title='MAD',
-        height=500
+        yaxis_title=metric_label,
+        height=500,
     )
-    
+
     st.plotly_chart(fig, width='stretch')
-        
-    # Show statistics table
+
     st.subheader("Statistics")
     df_stats_display = df_stats.copy()
     df_stats_display['rate_percent'] = df_stats_display['rate_percent'].astype(str) + '%'
@@ -186,123 +198,141 @@ def plot_mad_by_rate(df: pd.DataFrame, model: str = None, technique: str = None)
         'mean': '{:.4f}',
         'std': '{:.4f}',
         'min': '{:.4f}',
-        'max': '{:.4f}'
+        'max': '{:.4f}',
     }), width='stretch')
 
 
-def plot_heatmap(df: pd.DataFrame, metric: str = 'mad', sort_by_technique: str = None):
-    """Plot heatmap of MAD for model vs technique
-    
-    Args:
-        df: DataFrame with results
-        metric: Metric to display (always 'mad')
-        sort_by_technique: Technique name to sort models by, or None for alphabetical
-    """
-    # Calculate mean MAD for each model-technique combination
+def plot_heatmap(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    lower_is_better: bool,
+    sort_by_technique: str = None,
+):
+    """Heatmap of mean metric for model vs technique."""
     pivot_data = df.pivot_table(
-        values='mad',
+        values=metric_col,
         index='model',
         columns='technique',
-        aggfunc='mean'
+        aggfunc='mean',
     )
-    
-    # Sort models by selected technique or alphabetically
+
+    asc = lower_is_better
     if sort_by_technique and sort_by_technique in pivot_data.columns:
-        pivot_data = pivot_data.sort_values(by=sort_by_technique, ascending=True)
+        pivot_data = pivot_data.sort_values(by=sort_by_technique, ascending=asc)
         sort_info = f" (sorted by {sort_by_technique})"
     else:
         pivot_data = pivot_data.sort_index()
         sort_info = " (alphabetical)"
-    
+
+    colorscale = 'RdYlGn_r' if lower_is_better else 'RdYlGn'
+
     fig = go.Figure(data=go.Heatmap(
         z=pivot_data.values,
         x=pivot_data.columns,
         y=pivot_data.index,
-        colorscale='RdYlGn_r',
+        colorscale=colorscale,
         text=np.round(pivot_data.values, 4),
         texttemplate='%{text}',
         textfont={"size": 10},
-        colorbar=dict(title='MAD')
+        colorbar=dict(title=metric_label),
     ))
-    
+
     fig.update_layout(
-        title=f'Heatmap: MAD by Model and Technique{sort_info}',
+        title=f'Heatmap: {metric_label} by Model and Technique{sort_info}',
         xaxis_title='Missingness Technique',
         yaxis_title='Reconstruction Model',
-        height=max(500, len(pivot_data.index) * 30)
+        height=max(500, len(pivot_data.index) * 30),
     )
-    
+
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_dataset_comparison(df: pd.DataFrame):
-    """Compare MAD across different datasets"""
-    df_stats = df.groupby('dataset_name')['mad'].agg(['mean', 'std']).reset_index()
-    df_stats = df_stats.sort_values('mean')
-    
+def plot_dataset_comparison(
+    df: pd.DataFrame, metric_col: str, metric_label: str, lower_is_better: bool
+):
+    """Compare selected metric across datasets."""
+    df_stats = df.groupby('dataset_name')[metric_col].agg(['mean', 'std']).reset_index()
+    df_stats = df_stats.sort_values('mean', ascending=lower_is_better)
+
     fig = go.Figure()
-    
+
     fig.add_trace(go.Bar(
         x=df_stats['dataset_name'],
         y=df_stats['mean'],
         error_y=dict(type='data', array=df_stats['std']),
         marker_color='mediumpurple',
-        name='Mean MAD'
+        name=f'Mean {metric_label}',
     ))
-    
+
     fig.update_layout(
-        title='Mean Absolute Difference by Dataset',
+        title=f'{metric_label} by Dataset',
         xaxis_title='Dataset',
-        yaxis_title='MAD',
-        height=500
+        yaxis_title=metric_label,
+        height=500,
     )
-    
+
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_best_worst_models(df: pd.DataFrame, top_n: int = 10):
-    """Show best and worst performing models"""
-    df_stats = df.groupby('model')['mad'].mean().reset_index()
-    df_stats = df_stats.sort_values('mad')
-    
-    # Calculate global MAD range for consistent axis scaling
-    global_min = df_stats['mad'].min()
-    global_max = df_stats['mad'].max()
-    # Add 5% padding for better visualization
-    axis_range = [global_min * 0.95, global_max * 1.05]
-    
-    # Best models (lowest MAD) - reverse order for display (best on top)
+def plot_best_worst_models(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    lower_is_better: bool,
+    top_n: int = 10,
+):
+    """Best and worst models for the selected metric."""
+    df_stats = df.groupby('model')[metric_col].mean().reset_index()
+    if lower_is_better:
+        df_stats = df_stats.sort_values(metric_col, ascending=True)
+        t_best = f'Top {top_n} Best (lowest {metric_label})'
+        t_worst = f'Top {top_n} Worst (highest {metric_label})'
+    else:
+        df_stats = df_stats.sort_values(metric_col, ascending=False)
+        t_best = f'Top {top_n} Best (highest {metric_label})'
+        t_worst = f'Top {top_n} Worst (lowest {metric_label})'
+
+    global_min = df_stats[metric_col].min()
+    global_max = df_stats[metric_col].max()
+    span = global_max - global_min
+    if span < 1e-12:
+        span = abs(global_max) * 0.05 + 1e-9
+    axis_range = [global_min - 0.05 * span, global_max + 0.05 * span]
+
     best_models = df_stats.head(top_n).iloc[::-1]
-    
-    # Worst models (highest MAD) - reverse order for display (worst on top)
     worst_models = df_stats.tail(top_n)
-    
-    # Create subplots
-    fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=(f'Top {top_n} Best Models (Lowest MAD)', 
-                       f'Top {top_n} Worst Models (Highest MAD)')
-    )
-    
-    # Best models
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=(t_best, t_worst))
+
     fig.add_trace(
-        go.Bar(x=best_models['mad'], y=best_models['model'], 
-               orientation='h', marker_color='green', name='Best'),
-        row=1, col=1
+        go.Bar(
+            x=best_models[metric_col],
+            y=best_models['model'],
+            orientation='h',
+            marker_color='green',
+            name='Best',
+        ),
+        row=1,
+        col=1,
     )
-    
-    # Worst models
+
     fig.add_trace(
-        go.Bar(x=worst_models['mad'], y=worst_models['model'], 
-               orientation='h', marker_color='red', name='Worst'),
-        row=1, col=2
+        go.Bar(
+            x=worst_models[metric_col],
+            y=worst_models['model'],
+            orientation='h',
+            marker_color='red',
+            name='Worst',
+        ),
+        row=1,
+        col=2,
     )
-    
+
     fig.update_layout(height=max(500, top_n * 40), showlegend=False)
-    # Set the same x-axis range for both subplots
-    fig.update_xaxes(title_text="MAD", range=axis_range, row=1, col=1)
-    fig.update_xaxes(title_text="MAD", range=axis_range, row=1, col=2)
-    
+    fig.update_xaxes(title_text=metric_label, range=axis_range, row=1, col=1)
+    fig.update_xaxes(title_text=metric_label, range=axis_range, row=1, col=2)
+
     st.plotly_chart(fig, width='stretch')
 
 
@@ -324,7 +354,7 @@ def main():
     
     if not available_files:
         st.error("No result files found in `reconstruction_experiments_results/` directory.")
-        st.info("Run `python 5_calculate_mad.py` first to generate results.")
+        st.info("Run `python src/5_calculate_reconstruction_error.py` first to generate results.")
         return
     
     # File selection
@@ -342,6 +372,44 @@ def main():
     
     if df.empty:
         st.error("Failed to load data or file is empty")
+        return
+
+    metric_specs = list_metric_specs_ordered()
+    cfg = load_config()
+    default_key = cfg.get_visualization_default_metric()
+    label_to_key = {s.label: s.key for s in metric_specs}
+    default_label = next(
+        (s.label for s in metric_specs if s.key == default_key),
+        metric_specs[0].label if metric_specs else None,
+    )
+    if default_label is None:
+        st.error("No reconstruction metrics registered.")
+        return
+
+    selected_metric_label = st.sidebar.selectbox(
+        "Reconstruction error metric",
+        list(label_to_key.keys()),
+        index=list(label_to_key.keys()).index(default_label)
+        if default_label in label_to_key
+        else 0,
+        help="Metrics are computed on missing positions only (see script 5).",
+    )
+    metric_col = label_to_key[selected_metric_label]
+    try:
+        mspec = get_metric_spec(metric_col)
+    except KeyError:
+        mspec = None
+    if mspec is None:
+        st.error(f"Unknown metric column {metric_col!r}")
+        return
+    metric_label = mspec.label
+    lower_is_better = mspec.lower_is_better
+
+    if metric_col not in df.columns:
+        st.error(
+            f"Column `{metric_col}` not in this CSV. Re-run "
+            "`src/5_calculate_reconstruction_error.py` to regenerate results with all metrics."
+        )
         return
     
     # Display file info
@@ -378,16 +446,19 @@ def main():
     st.header("📈 Overview")
     
     col1, col2, col3, col4, col5 = st.columns(5)
+    s = df_filtered[metric_col].dropna()
     with col1:
         st.metric("Total Records", len(df_filtered))
     with col2:
-        st.metric("Mean MAD", f"{df_filtered['mad'].mean():.4f}")
+        st.metric(f"Mean {metric_label}", f"{s.mean():.4f}" if len(s) else "—")
     with col3:
-        st.metric("Median MAD", f"{df_filtered['mad'].median():.4f}")
+        st.metric(f"Median {metric_label}", f"{s.median():.4f}" if len(s) else "—")
     with col4:
-        st.metric("Best MAD", f"{df_filtered['mad'].min():.4f}")
+        best_v = s.min() if lower_is_better else s.max()
+        st.metric(f"Best {metric_label}", f"{best_v:.4f}" if len(s) else "—")
     with col5:
-        st.metric("Worst MAD", f"{df_filtered['mad'].max():.4f}")
+        worst_v = s.max() if lower_is_better else s.min()
+        st.metric(f"Worst {metric_label}", f"{worst_v:.4f}" if len(s) else "—")
     
     st.markdown("---")
     
@@ -426,10 +497,13 @@ def main():
                 key='tab1_rate'
             )
         
-        plot_mad_by_model(
+        plot_metric_by_model(
             df_filtered,
+            metric_col,
+            metric_label,
+            lower_is_better,
             technique=None if filter_technique == 'All' else filter_technique,
-            rate=None if filter_rate == 'All' else filter_rate
+            rate=None if filter_rate == 'All' else filter_rate,
         )
     
     with tab2:
@@ -451,10 +525,13 @@ def main():
                 key='tab2_rate'
             )
         
-        plot_mad_by_technique(
+        plot_metric_by_technique(
             df_filtered,
+            metric_col,
+            metric_label,
+            lower_is_better,
             model=None if filter_model == 'All' else filter_model,
-            rate=None if filter_rate == 'All' else filter_rate
+            rate=None if filter_rate == 'All' else filter_rate,
         )
     
     with tab3:
@@ -476,23 +553,27 @@ def main():
                 key='tab3_technique'
             )
         
-        plot_mad_by_rate(
+        plot_metric_by_rate(
             df_filtered,
+            metric_col,
+            metric_label,
             model=None if filter_model == 'All' else filter_model,
-            technique=None if filter_technique == 'All' else filter_technique
+            technique=None if filter_technique == 'All' else filter_technique,
         )
     
     with tab4:
         st.header("Comparison by Dataset")
         
         if len(df_filtered) > 0:
-            plot_dataset_comparison(df_filtered)
+            plot_dataset_comparison(df_filtered, metric_col, metric_label, lower_is_better)
         else:
             st.warning("No data available with current filters")
     
     with tab6:
         st.header("🏅 Best Model Selection (Quality vs Efficiency Tradeoff)")
-        st.caption("Find the optimal model balancing reconstruction quality (low MAD) and computational efficiency")
+        st.caption(
+            f"Find the optimal model balancing reconstruction quality ({metric_label}) and computational efficiency"
+        )
         
         # Check if performance metrics are available
         if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
@@ -505,34 +586,32 @@ def main():
             else:
                 # Explanation
                 with st.expander("ℹ️ How is the Combined Score calculated?", expanded=False):
-                    st.markdown("""
+                    st.markdown(f"""
                     **Combined Score** balances reconstruction quality and computational efficiency:
                     
                     **Formula:**
                     ```
-                    Combined Score = α × MAD_norm + β × Efficiency_norm
+                    Combined Score = α × Quality_norm + β × Efficiency_norm
                     ```
                     
                     Where:
-                    - **MAD_norm**: Normalized MAD (0 = best model, 1 = worst model)
-                    - **Efficiency_norm**: Normalized Efficiency Score (Time + CPU + Memory + GPU, each 0-1)
+                    - **Quality_norm**: Normalized **{metric_label}** (0 = best along this metric among models shown, 1 = worst)
+                    - **Efficiency_norm**: Normalized efficiency score (resource usage; lower usage = better)
                     - **α (alpha)**: Weight for reconstruction quality (default: 0.5)
                     - **β (beta)**: Weight for efficiency (default: 0.5)
                     
                     **Interpretation:**
-                    - **Lower Combined Score** = better overall (good quality + efficient)
+                    - **Lower Combined Score** = better overall tradeoff
                     - Use **α > β** if quality is more important
                     - Use **α < β** if efficiency/speed is more important
                     
-                    **Pareto Optimal Models:**
-                    Models on the Pareto front are "optimal" - you cannot improve MAD without worsening efficiency (or vice versa).
+                    **Pareto optimal models:** no strict improvement in {metric_label} without worse efficiency (or vice versa), given each metric’s direction (lower vs higher is better).
                     """)
                 
                 st.divider()
                 
-                # Calculate normalized metrics per model
                 model_metrics = df_perf.groupby('model').agg({
-                    'mad': 'mean',
+                    metric_col: 'mean',
                     'time_seconds': 'mean',
                     'cpu_cores_used': 'mean',
                     'cpu_cores_total': 'first',
@@ -541,9 +620,12 @@ def main():
                     'gpu_memory_total_mb': 'first'
                 }).reset_index()
                 
-                # Normalize MAD (0 = best, 1 = worst)
-                mad_min, mad_max = model_metrics['mad'].min(), model_metrics['mad'].max()
-                model_metrics['mad_norm'] = (model_metrics['mad'] - mad_min) / (mad_max - mad_min + 1e-9)
+                q = model_metrics[metric_col]
+                q_min, q_max = q.min(), q.max()
+                if lower_is_better:
+                    model_metrics['quality_norm'] = (q - q_min) / (q_max - q_min + 1e-9)
+                else:
+                    model_metrics['quality_norm'] = (q_max - q) / (q_max - q_min + 1e-9)
                 
                 # Calculate Efficiency Score components
                 time_min, time_max = model_metrics['time_seconds'].min(), model_metrics['time_seconds'].max()
@@ -580,9 +662,9 @@ def main():
                 col1, col2 = st.columns(2)
                 with col1:
                     alpha = st.slider(
-                        "α (Quality weight - MAD)", 
+                        f"α (Quality weight — {metric_label})",
                         min_value=0.0, max_value=1.0, value=0.5, step=0.1,
-                        help="Higher = prioritize reconstruction quality"
+                        help="Higher = prioritize reconstruction quality",
                     )
                 with col2:
                     beta = st.slider(
@@ -591,8 +673,9 @@ def main():
                         help="Higher = prioritize computational efficiency"
                     )
                 
-                # Calculate Combined Score
-                model_metrics['combined_score'] = alpha * model_metrics['mad_norm'] + beta * model_metrics['efficiency_norm']
+                model_metrics['combined_score'] = (
+                    alpha * model_metrics['quality_norm'] + beta * model_metrics['efficiency_norm']
+                )
                 model_metrics = model_metrics.sort_values('combined_score')
                 
                 st.divider()
@@ -603,7 +686,7 @@ def main():
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("MAD", f"{best_model['mad']:.4f}")
+                    st.metric(metric_label, f"{best_model[metric_col]:.4f}")
                 with col2:
                     st.metric("Time", f"{best_model['time_seconds']:.2f}s")
                 with col3:
@@ -616,7 +699,7 @@ def main():
                 # Ranking table
                 st.subheader("📊 Model Ranking (by Combined Score)")
                 
-                ranking_df = model_metrics[['model', 'mad', 'efficiency_score', 'combined_score', 
+                ranking_df = model_metrics[['model', metric_col, 'efficiency_score', 'combined_score',
                                             'time_seconds', 'cpu_cores_used', 'memory_mb']].copy()
                 ranking_df = ranking_df.reset_index(drop=True)
                 ranking_df.index = ranking_df.index + 1  # Start from 1
@@ -627,7 +710,7 @@ def main():
                     return ['background-color: #90EE90' if i == 0 else '' for i in range(len(s))]
                 
                 styled_ranking = ranking_df.style.format({
-                    'mad': '{:.4f}',
+                    metric_col: '{:.4f}',
                     'efficiency_score': '{:.3f}',
                     'combined_score': '{:.4f}',
                     'time_seconds': '{:.2f}s',
@@ -640,8 +723,11 @@ def main():
                 st.divider()
                 
                 # Pareto Front visualization
-                st.subheader("📈 Pareto Front: MAD vs Efficiency")
-                st.caption("Models on the Pareto front (green line) are optimal - can't improve one metric without worsening the other")
+                st.subheader(f"📈 Pareto Front: {metric_label} vs Efficiency")
+                st.caption(
+                    "Models on the Pareto front (green line) are non-dominated for quality vs resource cost "
+                    "(quality direction matches the selected metric)."
+                )
                 
                 # Find Pareto optimal points
                 def is_pareto_optimal(costs):
@@ -654,19 +740,21 @@ def main():
                             is_efficient[i] = True
                     return is_efficient
                 
-                costs = model_metrics[['mad', 'efficiency_score']].values
+                model_metrics['quality_pareto'] = (
+                    model_metrics[metric_col] if lower_is_better else -model_metrics[metric_col]
+                )
+                costs = model_metrics[['quality_pareto', 'efficiency_score']].values
                 pareto_mask = is_pareto_optimal(costs)
                 model_metrics['is_pareto'] = pareto_mask
                 
-                # Sort Pareto points for line
-                pareto_points = model_metrics[model_metrics['is_pareto']].sort_values('mad')
+                pareto_points = model_metrics[model_metrics['is_pareto']].sort_values('quality_pareto')
                 
                 # Create scatter plot
                 fig = go.Figure()
                 
                 # All points
                 fig.add_trace(go.Scatter(
-                    x=model_metrics['mad'],
+                    x=model_metrics[metric_col],
                     y=model_metrics['efficiency_score'],
                     mode='markers+text',
                     marker=dict(
@@ -679,13 +767,15 @@ def main():
                     text=model_metrics['model'],
                     textposition='top center',
                     name='Models',
-                    hovertemplate='<b>%{text}</b><br>MAD: %{x:.4f}<br>Efficiency: %{y:.3f}<extra></extra>'
+                    hovertemplate=(
+                        f'<b>%{{text}}</b><br>{metric_label}: %{{x:.4f}}<br>Efficiency: %{{y:.3f}}<extra></extra>'
+                    ),
                 ))
                 
                 # Pareto front line
                 if len(pareto_points) > 1:
                     fig.add_trace(go.Scatter(
-                        x=pareto_points['mad'],
+                        x=pareto_points[metric_col],
                         y=pareto_points['efficiency_score'],
                         mode='lines',
                         line=dict(color='green', width=2, dash='dash'),
@@ -693,9 +783,8 @@ def main():
                         hoverinfo='skip'
                     ))
                 
-                # Highlight Pareto optimal points
                 fig.add_trace(go.Scatter(
-                    x=pareto_points['mad'],
+                    x=pareto_points[metric_col],
                     y=pareto_points['efficiency_score'],
                     mode='markers',
                     marker=dict(size=18, color='green', symbol='circle-open', line=dict(width=3)),
@@ -703,9 +792,10 @@ def main():
                     hoverinfo='skip'
                 ))
                 
+                qdir = "lower is better" if lower_is_better else "higher is better"
                 fig.update_layout(
-                    title='Quality vs Efficiency Tradeoff (lower = better for both axes)',
-                    xaxis_title='MAD (Reconstruction Error) →',
+                    title=f'Quality ({metric_label}, {qdir}) vs efficiency (lower is better)',
+                    xaxis_title=f'{metric_label} →',
                     yaxis_title='Efficiency Score (Resource Usage) →',
                     height=600,
                     showlegend=True
@@ -717,14 +807,21 @@ def main():
                 st.subheader("🌟 Pareto Optimal Models")
                 st.caption("These models represent the best tradeoffs - choosing between them depends on your priorities")
                 
-                pareto_df = model_metrics[model_metrics['is_pareto']][['model', 'mad', 'efficiency_score', 'time_seconds']].copy()
-                pareto_df = pareto_df.sort_values('mad')
+                pareto_df = model_metrics[model_metrics['is_pareto']][
+                    ['model', metric_col, 'efficiency_score', 'time_seconds']
+                ].copy()
+                pareto_df = pareto_df.sort_values(
+                    metric_col, ascending=lower_is_better
+                )
                 
                 for i, row in pareto_df.iterrows():
-                    st.write(f"• **{row['model']}**: MAD = {row['mad']:.4f}, Efficiency = {row['efficiency_score']:.3f}, Time = {row['time_seconds']:.2f}s")
+                    st.write(
+                        f"• **{row['model']}**: {metric_label} = {row[metric_col]:.4f}, "
+                        f"Efficiency = {row['efficiency_score']:.3f}, Time = {row['time_seconds']:.2f}s"
+                    )
     
     with tab7:
-        st.header("Heatmap: MAD by Model vs Technique")
+        st.header(f"Heatmap: {metric_label} by Model vs Technique")
         
         # Get available techniques for sorting
         if len(df_filtered) > 0:
@@ -735,12 +832,18 @@ def main():
         sort_choice = st.selectbox(
             "Sort models by",
             techniques,
-            help="Sort models by MAD performance on selected technique"
+            help=f"Sort models by {metric_label} on the selected technique",
         )
         
         if len(df_filtered) > 0:
             sort_by = None if sort_choice == 'Alphabetical' else sort_choice
-            plot_heatmap(df_filtered, metric='mad', sort_by_technique=sort_by)
+            plot_heatmap(
+                df_filtered,
+                metric_col,
+                metric_label,
+                lower_is_better,
+                sort_by_technique=sort_by,
+            )
         else:
             st.warning("No data available for heatmap with current filters")
     
@@ -785,14 +888,17 @@ def main():
                 
                 **Example**: If "interpolate_linear" row shows "+2" in "knn" column, it means interpolate_linear is significantly better than knn (p<0.01).
                 
-                **Note**: Lower MAD = better performance. Tests use independent samples t-test on multiple iterations.
+                **Note**: For the selected metric, “better” means lower values except for R² (higher is better).
+                Tests use independent samples t-tests on multiple iterations.
                 """)
             
             st.divider()
             
             # Calculate statistics
             st.subheader("Model Performance Statistics")
-            model_stats = get_model_statistics(df_filtered, metric='mad')
+            model_stats = get_model_statistics(
+                df_filtered, metric=metric_col, lower_is_better=lower_is_better
+            )
             
             # Display statistics table
             st.dataframe(
@@ -807,7 +913,13 @@ def main():
             st.caption("Each cell shows if row model is significantly different from column model")
             
             # Calculate significance matrix
-            significance_matrix = perform_pairwise_ttests(df_filtered, metric='mad', alpha_01=0.01, alpha_05=0.05)
+            significance_matrix = perform_pairwise_ttests(
+                df_filtered,
+                metric=metric_col,
+                alpha_01=0.01,
+                alpha_05=0.05,
+                lower_is_better=lower_is_better,
+            )
             
             # Create color mapping for heatmap
             # +2: dark green, +1: light green, 0: white, -1: red, -2: dark red
@@ -856,7 +968,7 @@ def main():
             # Optional: Show p-values matrix
             with st.expander("🔬 Show detailed p-values matrix", expanded=False):
                 st.caption("Exact p-values for all pairwise comparisons")
-                pvalue_matrix = get_pairwise_pvalues(df_filtered, metric='mad')
+                pvalue_matrix = get_pairwise_pvalues(df_filtered, metric=metric_col)
                 
                 # Style p-values: highlight significant ones
                 def color_pvalue(val):
@@ -876,7 +988,13 @@ def main():
         top_n = st.slider("Number of models to show", 5, 20, 10)
         
         if len(df_filtered) > 0:
-            plot_best_worst_models(df_filtered, top_n=top_n)
+            plot_best_worst_models(
+                df_filtered,
+                metric_col,
+                metric_label,
+                lower_is_better,
+                top_n=top_n,
+            )
         else:
             st.warning("No data available with current filters")
     
@@ -887,7 +1005,10 @@ def main():
         # Check if performance metrics are available in the data
         if 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `4_reconstruct_datasets.py` again to collect performance metrics, then `5_calculate_mad.py` to merge them.")
+            st.info(
+                "Run `4_reconstruct_datasets.py` again to collect performance metrics, then "
+                "`src/5_calculate_reconstruction_error.py` to merge them."
+            )
         else:
             df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
             
@@ -984,7 +1105,10 @@ def main():
         # Check if performance metrics are available in the data
         if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
-            st.info("Run `4_reconstruct_datasets.py` again to collect performance metrics, then `5_calculate_mad.py` to merge them.")
+            st.info(
+                "Run `4_reconstruct_datasets.py` again to collect performance metrics, then "
+                "`src/5_calculate_reconstruction_error.py` to merge them."
+            )
         else:
             df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()
             
@@ -1245,7 +1369,9 @@ def main():
         # Display options
         col1, col2 = st.columns(2)
         with col1:
-            sort_column = st.selectbox("Sort by", df_display.columns.tolist())
+            _cols = df_display.columns.tolist()
+            _sort_idx = _cols.index(metric_col) if metric_col in _cols else 0
+            sort_column = st.selectbox("Sort by", _cols, index=_sort_idx)
         with col2:
             sort_order = st.radio("Order", ['Ascending', 'Descending'])
         

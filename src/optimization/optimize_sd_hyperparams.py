@@ -2,8 +2,13 @@
 """
 Stable Diffusion Hyperparameter Optimization Script
 
-This script optimizes num_inference_steps and guidance_scale on available degraded 
+This script optimizes num_inference_steps and guidance_scale on available degraded
 datasets and Stable Diffusion models using Bayesian optimization (Optuna).
+
+The objective is ``optimization.reconstruction_metric`` in config/config.yaml
+(default: smape). Direction is ``optimization.reconstruction_metric_objective``:
+``minimize``, ``maximize``, or ``auto`` (use each metric's registered default).
+See package src/reconstruction_metrics/ for valid metric keys.
 
 Optimization Method:
 - Optuna: Bayesian optimization with TPE sampler (Tree-structured Parzen Estimator).
@@ -32,6 +37,12 @@ from contextlib import contextmanager
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.config_loader import load_config
+from reconstruction_metrics import (
+    compute_metrics_from_series,
+    get_metric_spec,
+    list_primary_metric_keys,
+    optimization_loss,
+)
 from reconstruction_models import RECONSTRUCTION_MODELS
 
 # Strict dependencies for this script
@@ -202,7 +213,7 @@ def parse_degraded_filename(filename: str) -> dict:
     }
 
 
-def load_datasets(source_path: str, degraded_path: str, config):
+def load_datasets(source_path: str, degraded_path: str, config) -> tuple:
     """Load and align source and degraded datasets."""
     degraded = pd.read_csv(degraded_path, index_col=0, na_values=['', ' '])
     degraded.iloc[:, 0] = pd.to_numeric(degraded.iloc[:, 0], errors='coerce')
@@ -220,19 +231,6 @@ def load_datasets(source_path: str, degraded_path: str, config):
         pass
         
     return source.iloc[:, 0], degraded.iloc[:, 0]
-
-
-def calculate_mad(source: pd.Series, degraded: pd.Series, reconstructed: pd.Series) -> float:
-    """Calculate Mean Absolute Difference for missing values only."""
-    common_index = source.index.intersection(degraded.index).intersection(reconstructed.index)
-    source_vals = source.loc[common_index]
-    reconstructed_vals = reconstructed.loc[common_index]
-    missing_mask = degraded.loc[common_index].isna()
-    
-    if not missing_mask.any(): return np.nan
-    
-    diff = (source_vals[missing_mask] - reconstructed_vals[missing_mask]).abs()
-    return diff.mean()
 
 
 def get_stable_diffusion_models() -> list:
@@ -259,12 +257,13 @@ def test_configuration(model_name: str, series: pd.Series, num_steps: int, guida
         return {'reconstructed': None, 'time': elapsed, 'status': 'error', 'error': str(e)}
 
 
-def run_optimization(args, test_cases, SD_MODELS, config):
+def run_optimization(args, test_cases, SD_MODELS, config, opt_metric_key: str, lower_is_better: bool):
     """Run Optuna optimization loop with CONTINUOUS search space."""
     print("\n" + "="*70)
     print("🎯 STARTING BAYESIAN OPTIMIZATION (OPTUNA)")
     print("   Method: Tree-structured Parzen Estimator (TPE)")
     print(f"   Trials per model: {args.n_trials}")
+    print(f"   Optimization metric: {opt_metric_key} ({'minimize' if lower_is_better else 'maximize (via minimize -metric)'})")
     print(f"   Search Space:")
     print(f"     - Steps: [{args.steps_min}, {args.steps_max}] (Integer)")
     print(f"     - Guidance: [{args.guidance_min}, {args.guidance_max}] (Float)")
@@ -296,7 +295,7 @@ def run_optimization(args, test_cases, SD_MODELS, config):
             steps = trial.suggest_int('num_inference_steps', args.steps_min, args.steps_max)
             guidance = trial.suggest_float('guidance_scale', args.guidance_min, args.guidance_max, step=0.1)
             
-            total_mad = 0
+            total_loss = 0.0
             n_success = 0
             
             for case in test_cases:
@@ -305,27 +304,41 @@ def run_optimization(args, test_cases, SD_MODELS, config):
                     result = test_configuration(model_name, degraded, steps, guidance)
                     
                     if result['status'] == 'success':
-                        mad = calculate_mad(source, degraded, result['reconstructed'])
-                        if not np.isnan(mad):
-                            total_mad += mad
-                            n_success += 1
-                            
-                            all_results.append({
-                                'model': model_name,
-                                'dataset': case['metadata']['dataset'],
-                                'num_inference_steps': steps,
-                                'guidance_scale': guidance,
-                                'mad': mad,
-                                'time': result['time'],
-                                'status': 'success',
-                                'trial': trial.number
-                            })
+                        metrics = compute_metrics_from_series(
+                            source, degraded, result['reconstructed']
+                        )
+                        if metrics is None:
+                            del source, degraded, result
+                            cleanup_memory()
+                            continue
+                        raw = metrics.get(opt_metric_key)
+                        loss = optimization_loss(raw, lower_is_better)
+                        if not np.isfinite(loss):
+                            del source, degraded, result
+                            cleanup_memory()
+                            continue
+                        total_loss += loss
+                        n_success += 1
+                        
+                        row = {
+                            'model': model_name,
+                            'dataset': case['metadata']['dataset'],
+                            'num_inference_steps': steps,
+                            'guidance_scale': guidance,
+                            'time': result['time'],
+                            'status': 'success',
+                            'trial': trial.number,
+                            'optimization_metric': opt_metric_key,
+                        }
+                        for k, v in metrics.items():
+                            row[k] = v
+                        all_results.append(row)
                     
                     del source, degraded, result
                     cleanup_memory()
                     
                     if n_success > 0:
-                        trial.report(total_mad / n_success, step=n_success)
+                        trial.report(total_loss / n_success, step=n_success)
                         if trial.should_prune():
                             raise optuna.TrialPruned()
                             
@@ -335,8 +348,9 @@ def run_optimization(args, test_cases, SD_MODELS, config):
                     cleanup_memory()
                     continue
             
-            if n_success == 0: return float('inf')
-            return total_mad / n_success
+            if n_success == 0:
+                return float('inf')
+            return total_loss / n_success
 
         sampler = TPESampler(seed=42)
         pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=0, interval_steps=1)
@@ -348,13 +362,19 @@ def run_optimization(args, test_cases, SD_MODELS, config):
             
             best = study.best_params
             best_val = study.best_value
+            best_raw = best_val if lower_is_better else -best_val
             best_params_per_model[model_name] = {
                 'num_inference_steps': best['num_inference_steps'],
                 'guidance_scale': best['guidance_scale'],
-                'mad': best_val,
-                'trials': len(study.trials)
+                'optimization_objective': best_val,
+                'metric_value': best_raw,
+                'optimization_metric': opt_metric_key,
+                'trials': len(study.trials),
             }
-            print(f"✓ Best: steps={best['num_inference_steps']}, guidance={best['guidance_scale']:.1f}, MAD={best_val:.4f}")
+            print(
+                f"✓ Best: steps={best['num_inference_steps']}, guidance={best['guidance_scale']:.1f}, "
+                f"{opt_metric_key}={best_raw:.4f}"
+            )
             
         except Exception as e:
             print(f"❌ Optimization failed for {model_name}: {e}")
@@ -384,6 +404,20 @@ def main():
         print("="*70)
         
         config = load_config()
+        opt_metric_key = config.get_optimization_reconstruction_metric()
+        try:
+            get_metric_spec(opt_metric_key)
+        except KeyError:
+            valid = ", ".join(list_primary_metric_keys())
+            print(f"❌ Unknown optimization.reconstruction_metric {opt_metric_key!r}. Use one of: {valid}")
+            return
+
+        try:
+            lower_is_better = config.get_optimization_reconstruction_lower_is_better()
+        except ValueError as e:
+            print(f"❌ {e}")
+            return
+
         missing_dir = Path(config.get_missing_dir())
         degraded_files = sorted(missing_dir.glob("*.csv"))
         
@@ -411,7 +445,13 @@ def main():
             return
             
         print(f"✓ Prepared {len(test_cases)} test cases.")
-        results, best_params = run_optimization(args, test_cases, SD_MODELS, config)
+        print(
+            f"✓ Optimizing on metric: {opt_metric_key} "
+            f"({'minimize' if lower_is_better else 'maximize'} raw values per config)"
+        )
+        results, best_params = run_optimization(
+            args, test_cases, SD_MODELS, config, opt_metric_key, lower_is_better
+        )
         
         if results:
             df = pd.DataFrame(results)
@@ -426,11 +466,15 @@ def main():
             for model, params in best_params.items():
                 print(f"\n{model}:")
                 print(f"  Best Configuration: steps={params['num_inference_steps']}, guidance={params['guidance_scale']:.1f}")
-                print(f"  Achieved MAD: {params['mad']:.4f}")
+                print(
+                    f"  Achieved {params['optimization_metric']}: {params['metric_value']:.4f}"
+                )
 
             if best_params:
                 print("\n⚙️  RECOMMENDED CONFIG.YAML:")
-                best_overall_model = min(best_params.items(), key=lambda x: x[1]['mad'])
+                best_overall_model = min(
+                    best_params.items(), key=lambda x: x[1]["optimization_objective"]
+                )
                 print(f"""
 computation:
   stable_diffusion:

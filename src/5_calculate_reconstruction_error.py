@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Calculate Reconstruction Differences
-Compares reconstructed training datasets with original training data (ground truth)
-and calculates Mean Absolute Difference (MAD).
-Results are saved to reconstruction_experiments_results/ with timestamp.
-Uses config/config.yaml for configuration.
+Calculate reconstruction error metrics
+Compares reconstructed training data with ground truth only at positions that were
+missing in the degraded series. Metrics live in the reconstruction_metrics package (one module per metric).
+(extend there to add new errors; they flow to CSV, Streamlit, and SD optimization).
 
 NOTE: This script compares reconstructed TRAINING data with original TRAINING data.
 Test data is preserved separately for prediction evaluation.
@@ -12,7 +11,6 @@ Test data is preserved separately for prediction evaluation.
 
 import os
 import sys
-import csv
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -26,10 +24,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.logger import setup_logging
 
 # Setup automatic logging to file
-setup_logging("5_calculate_mad")
+setup_logging("5_calculate_reconstruction_error")
 
 # Import config loader
 from utils.config_loader import load_config
+from reconstruction_metrics import compute_reconstruction_metrics
 
 
 def load_performance_metrics(results_dir: str) -> dict:
@@ -166,80 +165,52 @@ def get_degraded_filename(dataset_name, technique, rate_percent, iteration):
     return f"{dataset_name}_{technique}_{rate_percent}p_{iteration}.csv"
 
 
-def calculate_mad(source_file_path, degraded_file_path, reconstructed_file_path, config):
+def calculate_reconstruction_errors(source_file_path, degraded_file_path, reconstructed_file_path, config):
     """
-    Calculate Mean Absolute Difference (MAD) between source and reconstructed data.
-    ONLY for the values that were missing (destroyed) in the degraded dataset.
-    
-    Args:
-        source_file_path: Path to source CSV file (original, complete data)
-        degraded_file_path: Path to degraded CSV file (with NaN values)
-        reconstructed_file_path: Path to reconstructed CSV file (repaired data)
-        config: Config object for format settings
-        
-    Returns:
-        dict with metrics: mad, max_diff, min_diff, std_diff, n_missing, n_total
+    Compute all registered reconstruction metrics at indices missing in the degraded file.
     """
-    # Get format settings for source file
     format_settings = config.get_csv_format(os.path.basename(source_file_path))
-    
-    # Load source file (original, complete data)
+
     source_df = pd.read_csv(source_file_path, **format_settings)
-    
-    # Load degraded file (with missing values)
     degraded_df = pd.read_csv(degraded_file_path, index_col=0)
-    
-    # Load reconstructed file (repaired data)
     reconstructed_df = pd.read_csv(reconstructed_file_path, index_col=0)
-    
-    # Check if all files have the same number of rows
+
     if not (len(source_df) == len(degraded_df) == len(reconstructed_df)):
         print(f"    ⚠️  Warning: Different number of rows - source: {len(source_df)}, degraded: {len(degraded_df)}, reconstructed: {len(reconstructed_df)}")
         min_len = min(len(source_df), len(degraded_df), len(reconstructed_df))
         source_df = source_df.head(min_len)
         degraded_df = degraded_df.head(min_len)
         reconstructed_df = reconstructed_df.head(min_len)
-    
+
     if len(source_df) == 0:
         raise ValueError("Files are empty")
-    
-    # Extract values (first column after index)
+
     source_values = pd.to_numeric(source_df.iloc[:, 0], errors='coerce')
     degraded_values = pd.to_numeric(degraded_df.iloc[:, 0], errors='coerce')
     reconstructed_values = pd.to_numeric(reconstructed_df.iloc[:, 0], errors='coerce')
-    
-    # Find which values were missing in degraded dataset
+
     missing_mask = degraded_values.isna()
-    
+
     if not missing_mask.any():
         raise ValueError("No missing values in degraded dataset - nothing to compare")
-    
-    # Extract ONLY the values that were missing
+
     source_missing = source_values[missing_mask]
     reconstructed_missing = reconstructed_values[missing_mask]
-    
-    # Remove any NaN values from comparison (shouldn't happen, but safety check)
+
     valid_mask = ~(source_missing.isna() | reconstructed_missing.isna())
     source_missing = source_missing[valid_mask]
     reconstructed_missing = reconstructed_missing[valid_mask]
-    
+
     if len(source_missing) == 0:
         raise ValueError("No valid missing values to compare")
-    
-    # Calculate absolute differences ONLY for missing (reconstructed) values
-    differences = (source_missing - reconstructed_missing).abs()
-    
-    # Calculate metrics
-    metrics = {
-        'mad': differences.mean(),           # Mean Absolute Difference (only for missing values)
-        'max_diff': differences.max(),       # Maximum difference
-        'min_diff': differences.min(),       # Minimum difference
-        'std_diff': differences.std(),       # Standard deviation of differences
-        'n_missing': len(differences),       # Number of missing values reconstructed
-        'n_total': len(source_values)        # Total number of values in dataset
-    }
-    
-    return metrics
+
+    core = compute_reconstruction_metrics(
+        source_missing.to_numpy(dtype=np.float64),
+        reconstructed_missing.to_numpy(dtype=np.float64),
+    )
+    core["n_missing"] = int(core.pop("n_missing"))
+    core["n_total"] = int(len(source_values))
+    return core
 
 
 def generate_output_filename():
@@ -293,22 +264,17 @@ def process_file_wrapper(args):
         if not os.path.exists(degraded_file_path):
             return {'status': 'error', 'msg': f"Degraded file not found: {degraded_file_path}", 'filename': filename}
         
-        # Calculate metrics (comparing ONLY missing values)
-        metrics = calculate_mad(source_file_path, degraded_file_path, reconstructed_file_path, config)
-        
-        # Add result with MAD metrics
+        metrics = calculate_reconstruction_errors(
+            source_file_path, degraded_file_path, reconstructed_file_path, config
+        )
+
         result = {
             'dataset_name': metadata['dataset_name'],
             'technique': metadata['technique'],
             'rate_percent': metadata['rate_percent'],
             'iteration': metadata['iteration'],
             'model': metadata['model'],
-            'mad': metrics['mad'],
-            'max_diff': metrics['max_diff'],
-            'min_diff': metrics['min_diff'],
-            'std_diff': metrics['std_diff'],
-            'n_missing': metrics['n_missing'],
-            'n_total': metrics['n_total']
+            **metrics,
         }
         
         # Add performance metrics if available
@@ -350,7 +316,7 @@ def process_file_wrapper(args):
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
-        description="Calculate reconstruction differences (MAD) between source and reconstructed datasets",
+        description="Calculate reconstruction error metrics (MAD, MAE, RMSE, R², SMAPE, …) on missing positions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -418,7 +384,7 @@ Examples:
     performance_metrics = load_performance_metrics(output_dir)
     
     print("="*70)
-    print("CALCULATE RECONSTRUCTION DIFFERENCES (MAD)")
+    print("CALCULATE RECONSTRUCTION ERROR METRICS")
     print("="*70)
     print(f"Source directory: {source_dir}")
     print(f"  Datasets: {len(source_datasets)} files")
@@ -428,7 +394,7 @@ Examples:
     print(f"Output directory: {output_dir}")
     print(f"Output file: {output_filename}")
     print("="*70)
-    print("\nℹ️  MAD is calculated ONLY for the values that were missing (destroyed)")
+    print("\nℹ️  Errors are computed ONLY at values that were missing (destroyed) in the degraded series")
     print("="*70)
     
     # Store results
@@ -467,7 +433,7 @@ Examples:
                         metrics = res['data']
                         results.append(metrics)
                         print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
-                        print(f"  ✓ MAD: {metrics['mad']:.4f}, Max Diff: {metrics['max_diff']:.4f}, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+                        print(f"  ✓ MAD: {metrics['mad']:.4f}, RMSE: {metrics['rmse']:.4f}, SMAPE: {metrics['smape']:.2f}%, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
                     else:
                         print(f"[{processed_count}/{len(reconstructed_files)}] {filename}")
                         print(f"  ❌ Error: {res['msg']}")
@@ -490,7 +456,7 @@ Examples:
             if res['status'] == 'success':
                 metrics = res['data']
                 results.append(metrics)
-                print(f"  ✓ MAD: {metrics['mad']:.4f}, Max Diff: {metrics['max_diff']:.4f}, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
+                print(f"  ✓ MAD: {metrics['mad']:.4f}, RMSE: {metrics['rmse']:.4f}, SMAPE: {metrics['smape']:.2f}%, Missing: {metrics['n_missing']}/{metrics['n_total']} ({metrics['n_missing']/metrics['n_total']*100:.1f}%)")
             else:
                 print(f"  ❌ Error: {res['msg']}")
                 error_count += 1
@@ -507,12 +473,23 @@ Examples:
         print(f"❌ Errors: {error_count}")
         print(f"📁 Results saved to: {output_file}")
         print("="*70)
-        print("\nSummary Statistics:")
-        print("  MAD (Mean Absolute Difference):")
-        print(f"    Mean: {df_results['mad'].mean():.4f}")
-        print(f"    Median: {df_results['mad'].median():.4f}")
-        print(f"    Min: {df_results['mad'].min():.4f}")
-        print(f"    Max: {df_results['mad'].max():.4f}")
+        print("\nSummary Statistics (over all runs):")
+        for col, title in [
+            ("mad", "MAD"),
+            ("mae", "MAE"),
+            ("rmse", "RMSE"),
+            ("r2", "R²"),
+            ("smape", "SMAPE (%)"),
+        ]:
+            if col in df_results.columns:
+                s = df_results[col].dropna()
+                if len(s) == 0:
+                    continue
+                print(f"  {title}:")
+                print(f"    Mean: {s.mean():.4f}")
+                print(f"    Median: {s.median():.4f}")
+                print(f"    Min: {s.min():.4f}")
+                print(f"    Max: {s.max():.4f}")
         
         # Show performance metrics summary if available
         if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():

@@ -9,7 +9,13 @@ from scipy import stats
 from typing import Dict, Tuple, List
 
 
-def perform_pairwise_ttests(df: pd.DataFrame, metric: str = 'mad', alpha_01: float = 0.01, alpha_05: float = 0.05) -> pd.DataFrame:
+def perform_pairwise_ttests(
+    df: pd.DataFrame,
+    metric: str = 'mad',
+    alpha_01: float = 0.01,
+    alpha_05: float = 0.05,
+    lower_is_better: bool = True,
+) -> pd.DataFrame:
     """
     Perform pairwise t-tests between all models.
     
@@ -18,6 +24,7 @@ def perform_pairwise_ttests(df: pd.DataFrame, metric: str = 'mad', alpha_01: flo
         metric: Column name to compare (default: 'mad')
         alpha_01: Significance level for highly significant differences (default: 0.01)
         alpha_05: Significance level for significant differences (default: 0.05)
+        lower_is_better: If False (e.g. R²), higher mean counts as better
     
     Returns:
         DataFrame with pairwise comparison results:
@@ -53,23 +60,23 @@ def perform_pairwise_ttests(df: pd.DataFrame, metric: str = 'mad', alpha_01: flo
                 result_matrix.loc[model_a, model_b] = 0
                 continue
             
-            # Perform independent samples t-test
-            # For MAD: lower is better, so we want to know if model_a < model_b
+            # Independent samples t-test; direction uses lower_is_better
             t_stat, p_value = stats.ttest_ind(values_a, values_b)
             
             # Determine significance and direction
             mean_a = values_a.mean()
             mean_b = values_b.mean()
+            a_better = mean_a < mean_b if lower_is_better else mean_a > mean_b
             
             if p_value < alpha_01:
                 # Highly significant difference (p < 0.01)
-                if mean_a < mean_b:
+                if a_better:
                     result_matrix.loc[model_a, model_b] = 2  # model_a is significantly better
                 else:
                     result_matrix.loc[model_a, model_b] = -2  # model_a is significantly worse
             elif p_value < alpha_05:
                 # Significant difference (p < 0.05)
-                if mean_a < mean_b:
+                if a_better:
                     result_matrix.loc[model_a, model_b] = 1  # model_a is significantly better
                 else:
                     result_matrix.loc[model_a, model_b] = -1  # model_a is significantly worse
@@ -113,13 +120,14 @@ def get_pairwise_pvalues(df: pd.DataFrame, metric: str = 'mad') -> pd.DataFrame:
     return pvalue_matrix
 
 
-def get_model_statistics(df: pd.DataFrame, metric: str = 'mad') -> pd.DataFrame:
+def get_model_statistics(df: pd.DataFrame, metric: str = 'mad', lower_is_better: bool = True) -> pd.DataFrame:
     """
     Calculate summary statistics for each model.
     
     Args:
         df: DataFrame with columns: model, mad (or other metric)
         metric: Column name to analyze (default: 'mad')
+        lower_is_better: Sort order for mean column (False for R²)
     
     Returns:
         DataFrame with statistics per model (mean, std, count, etc.)
@@ -136,8 +144,7 @@ def get_model_statistics(df: pd.DataFrame, metric: str = 'mad') -> pd.DataFrame:
     # Calculate standard error
     stats_df['se'] = stats_df['std'] / np.sqrt(stats_df['count'])
     
-    # Sort by mean (ascending for MAD - lower is better)
-    stats_df = stats_df.sort_values('mean')
+    stats_df = stats_df.sort_values('mean', ascending=lower_is_better)
     
     return stats_df
 
