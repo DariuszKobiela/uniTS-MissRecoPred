@@ -562,8 +562,7 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Load configurations
+
     try:
         config = load_config(args.config)
         pred_config = load_prediction_models_config()
@@ -571,43 +570,47 @@ Examples:
     except FileNotFoundError as e:
         print(f"❌ Configuration file not found: {e}")
         return
-    
-    # Get directories
+
+    run_train_prediction_models(
+        config,
+        pred_config,
+        models=args.models,
+        iterations=args.iterations,
+        force=args.force,
+    )
+
+
+def run_train_prediction_models(config, pred_config, models=None, iterations=None, force=False) -> bool:
+    """Step 7: train prediction models (Darts + XGBoost)."""
     train_dir = config.get_splitted_train_dir()
     fixed_dir = config.get_fixed_dir()
     output_dir = "trained_prediction_models"
     metrics_dir = "prediction_experiment_results"
-    
-    # Check directories exist
+
     if not os.path.exists(train_dir):
         print(f"❌ Training data directory not found: {train_dir}")
-        return
-    
-    # Create output directories
+        return False
+
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
-    
-    # Get models to train
+
     global_models = pred_config.get_global_training_models()
     ml_models = pred_config.get_ml_models()
     trainable_models = global_models + ml_models
-    
-    if args.models:
-        trainable_models = [m for m in args.models if m in trainable_models]
+
+    if models:
+        trainable_models = [m for m in models if m in trainable_models]
         if not trainable_models:
             print(f"❌ No valid trainable models specified. Available: {global_models + ml_models}")
-            return
-    
-    # Get training iterations
-    n_iterations = args.iterations if args.iterations else pred_config.get_training_iterations()
+            return False
+
+    n_iterations = iterations if iterations is not None else pred_config.get_training_iterations()
     base_seed = pred_config.get_seed()
-    
-    # Determine which models are deterministic
+
     deterministic_models = set(pred_config.get_deterministic_models())
-    
-    # Determine overwrite setting (--force arg takes priority over config)
-    overwrite = args.force or config.get_overwrite_prediction()
-    
+
+    overwrite = force or config.get_overwrite_prediction()
+
     print("="*70)
     print("TRAIN PREDICTION MODELS")
     print("="*70)
@@ -615,139 +618,115 @@ Examples:
     print(f"Training iterations: {n_iterations}")
     print(f"Base seed: {base_seed}")
     print(f"Output directory: {output_dir}")
-    print(f"Overwrite existing: {overwrite} (config: {config.get_overwrite_prediction()}, --force: {args.force})")
+    print(f"Overwrite existing: {overwrite} (config: {config.get_overwrite_prediction()}, --force: {force})")
     print("="*70)
-    
-    # Collect all training data
+
     print("\n📋 Collecting training data...")
-    
+
     all_series = []
     csv_files = []
-    
-    # Gather file paths for parallel loading
+
     if config.get_predict_on_original_train():
         train_files = sorted(Path(train_dir).glob("*.csv"))
         csv_files.extend([str(f) for f in train_files])
         print(f"   Found {len(train_files)} files in {train_dir}")
-    
+
     if config.get_predict_on_reconstructed() and os.path.exists(fixed_dir):
         fixed_files = sorted(Path(fixed_dir).glob("*.csv"))
         csv_files.extend([str(f) for f in fixed_files])
         print(f"   Found {len(fixed_files)} files in {fixed_dir}")
-    
-    # CPU OPTIMIZATION: Load CSV files in parallel (I/O-bound, threads work well)
+
     if csv_files:
         n_loader_threads = min(16, max(1, os.cpu_count() or 1))
         print(f"   Loading {len(csv_files)} CSV files in parallel ({n_loader_threads} threads)...")
         all_series = load_series_parallel(csv_files, max_workers=n_loader_threads)
-    
+
     print(f"\n📊 Total training series: {len(all_series)}")
-    
+
     if len(all_series) == 0:
         print("❌ No training data found")
-        return
-    
-    # =========================================================================
-    # RAM OPTIMIZATION: Convert to float32 early to save ~50% memory on data
-    # =========================================================================
+        return False
+
     print("\n🔧 Converting series to float32 to reduce memory usage...")
     for i in range(len(all_series)):
         all_series[i] = all_series[i].astype(np.float32)
     gc.collect()
     print(f"   ✓ Converted {len(all_series)} series to float32")
-    
-    # Save numpy arrays for XGBoost before Darts conversion (XGBoost doesn't need Darts)
+
     xgboost_values = None
     if 'xgboost' in trainable_models:
         xgboost_values = [s.values.copy() for s in all_series]
-    
-    # =========================================================================
-    # RAM OPTIMIZATION: Pre-convert to Darts TimeSeries ONCE (not per model)
-    # This avoids ~5 GB of duplicated Darts TimeSeries per model training
-    # =========================================================================
+
     val_split = pred_config.get_validation_split()
-    
-    # Check if any Darts models need training
+
     darts_models_to_train = [m for m in trainable_models if m in global_models]
-    
+
     darts_train = []
     darts_val = []
-    
+
     if darts_models_to_train:
         print("\n🔧 Pre-converting to Darts TimeSeries (one-time conversion)...")
         darts_train, darts_val = prepare_darts_training_data(all_series, val_split)
         print(f"   ✓ Train series: {len(darts_train)}, Val series: {len(darts_val)}")
-    
-    # =========================================================================
-    # RAM OPTIMIZATION: Free original pandas Series (~5 GB saved)
-    # =========================================================================
+
     del all_series
     gc.collect()
     print("   ✓ Freed original pandas Series from memory")
-    
-    # Training metrics storage (for final summary)
+
     training_metrics = []
     saved_metrics_files = []
-    
-    # Train each model
+
     for model_name in trainable_models:
         is_deterministic = model_name in deterministic_models
         model_iterations = 1 if is_deterministic else n_iterations
-        
+
         print(f"\n{'='*70}")
         print(f"Training: {model_name.upper()}")
         batch_size_info = pred_config.get_model_batch_size(model_name)
         print(f"Iterations: {model_iterations}, Batch size: {batch_size_info}")
         print(f"{'='*70}")
-        
+
         for iteration in range(1, model_iterations + 1):
             seed = base_seed + iteration
-            
-            # Check if model already exists (skip unless overwrite=True)
+
             if model_exists(model_name, iteration, output_dir) and not overwrite:
-                existing_path = get_model_path(model_name, iteration, output_dir, 
+                existing_path = get_model_path(model_name, iteration, output_dir,
                                                'darts' if model_name in global_models else 'pickle')
                 print(f"\n⏭️  Skipping {model_name} iter{iteration} (already exists: {existing_path})")
                 print(f"   Set overwrite.prediction=true in config or use --force to retrain")
                 continue
-            
+
             print(f"\n🔧 Training {model_name} (iteration {iteration}/{model_iterations}, seed={seed})...")
-            
-            # Start performance monitoring
+
             monitor = PerformanceMonitor()
             monitor.start()
-            
+
             try:
                 training_info = {}
-                
+
                 if model_name in global_models:
-                    # Darts deep learning model (using pre-converted series)
                     model, training_info = train_global_model_darts(
                         model_name, darts_train, darts_val, pred_config, seed
                     )
                     model_path = save_model(model, model_name, iteration, output_dir, 'darts')
-                    
+
                 elif model_name == 'xgboost':
-                    # XGBoost model (using saved numpy arrays)
                     model, lag = train_xgboost_model(xgboost_values, pred_config, seed)
-                    # Save model and lag info together
                     model_data = {'model': model, 'lag': lag}
                     model_path = os.path.join(output_dir, f"{model_name}_iter{iteration}.pkl")
                     with open(model_path, 'wb') as f:
                         pickle.dump(model_data, f)
-                
-                # Stop monitoring and get metrics
+
                 metrics = monitor.stop()
-                
+
                 print(f"   ✓ Saved: {model_path}")
                 print(f"   ⏱️ Time: {metrics['time_seconds']:.2f}s")
                 if training_info.get('epochs_trained'):
                     epochs = training_info['epochs_trained']
-                    val_loss_str = (f", best_val_loss={training_info['best_val_loss']:.6f}" 
+                    val_loss_str = (f", best_val_loss={training_info['best_val_loss']:.6f}"
                                     if training_info.get('best_val_loss') is not None else "")
                     print(f"   📈 Epochs: {epochs}{val_loss_str}")
-                
-                # Build metrics dict for this model+iteration
+
                 metrics_dict = {
                     'model': model_name,
                     'iteration': iteration,
@@ -765,28 +744,24 @@ Examples:
                     'gpu_memory_total_mb': metrics.get('gpu_memory_total_mb'),
                     'model_path': model_path
                 }
-                
-                # Save metrics immediately as a separate file per model+iteration
+
                 metrics_file = save_training_metrics(
                     metrics_dict, metrics_dir, model_name, iteration
                 )
                 saved_metrics_files.append(metrics_file)
                 print(f"   📊 Metrics: {metrics_file}")
-                
-                # Also keep in memory for final summary
+
                 training_metrics.append(metrics_dict)
-                
-                # RAM OPTIMIZATION: Free model object after saving
+
                 del model
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                
+
             except Exception as e:
                 monitor.stop()
                 print(f"   ❌ Failed to train {model_name}: {e}")
-                
-                # Save error metrics as separate file too
+
                 error_metrics = {
                     'model': model_name,
                     'iteration': iteration,
@@ -798,15 +773,14 @@ Examples:
                     error_metrics, metrics_dir, model_name, iteration
                 )
                 saved_metrics_files.append(metrics_file)
-                
+
                 training_metrics.append(error_metrics)
                 gc.collect()
-    
-    # Free XGBoost data after all training
+
     if xgboost_values is not None:
         del xgboost_values
         gc.collect()
-    
+
     print("\n" + "="*70)
     print("TRAINING COMPLETE")
     print("="*70)
@@ -815,8 +789,7 @@ Examples:
     if saved_metrics_files:
         for mf in saved_metrics_files:
             print(f"   - {mf}")
-    
-    # Summary
+
     print(f"\n📊 Summary:")
     if training_metrics:
         df_metrics = pd.DataFrame(training_metrics)
@@ -828,6 +801,7 @@ Examples:
     else:
         print(f"   No models were trained (all models may have been skipped or already exist)")
     print("="*70)
+    return True
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ Configuration Loader
 Loads and manages configuration from config/config.yaml and config/prediction_models_config.yaml
 """
 
+import copy
 import yaml
 import os
 from pathlib import Path
@@ -21,6 +22,18 @@ class Config:
         """
         self.config_path = config_path
         self.config = self._load_config()
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], config_path: str = "") -> "Config":
+        """
+        Build Config from an in-memory mapping (e.g. after yaml.safe_load or RunConfig).
+
+        Does not write any file; ``config_path`` is stored for logging only.
+        """
+        obj = cls.__new__(cls)
+        obj.config_path = config_path
+        obj.config = copy.deepcopy(data)
+        return obj
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file"""
@@ -83,6 +96,49 @@ class Config:
     def get_prediction_results_dir(self) -> str:
         """Get prediction experiment results directory"""
         return self.config['data'].get('prediction_results_dir', 'prediction_experiment_results')
+
+    # =========================================================================
+    # PIPELINE (standard vs external_missing)
+    # =========================================================================
+
+    def get_pipeline_entry(self) -> str:
+        """``standard`` | ``external_missing`` — see config pipeline.entry."""
+        return str(self.config.get("pipeline", {}).get("entry", "standard")).strip().lower()
+
+    def is_pipeline_external_missing(self) -> bool:
+        return self.get_pipeline_entry() == "external_missing"
+
+    def get_external_missing_manifest_path(self) -> str:
+        """Path to YAML manifest for ingest_external_missing (may be relative to cwd)."""
+        p = self.config.get("pipeline", {}).get("external_missing", {}).get("manifest")
+        if not p:
+            return "config/external_missing_manifest.yaml"
+        return str(p).strip()
+
+    def get_external_missing_output_missing_dir(self) -> str:
+        em = self.config.get("pipeline", {}).get("external_missing", {})
+        v = em.get("output_missing_dir")
+        if v is not None and str(v).strip():
+            return str(v).strip()
+        return self.get_missing_dir()
+
+    def get_external_missing_output_test_dir(self) -> str:
+        em = self.config.get("pipeline", {}).get("external_missing", {})
+        v = em.get("output_test_dir")
+        if v is not None and str(v).strip():
+            return str(v).strip()
+        return self.get_splitted_test_dir()
+
+    def get_external_missing_output_train_dir(self) -> str:
+        em = self.config.get("pipeline", {}).get("external_missing", {})
+        v = em.get("output_train_dir")
+        if v is not None and str(v).strip():
+            return str(v).strip()
+        return self.get_splitted_train_dir()
+
+    def get_external_missing_ingest_state_path(self) -> str:
+        """Written by ingest_external_missing; used by predict script for original-train filtering."""
+        return str(Path(self.get_splitted_dir()) / "external_missing_ingest_state.json")
     
     # =========================================================================
     # DATASETS

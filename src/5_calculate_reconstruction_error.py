@@ -361,8 +361,7 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Load configuration
+
     try:
         config = load_config(args.config)
         print(f"✓ Loaded configuration from: {args.config}\n")
@@ -370,6 +369,11 @@ Examples:
         print(f"❌ Configuration file not found: {args.config}")
         return
 
+    run_calculate_reconstruction_error(config)
+
+
+def run_calculate_reconstruction_error(config) -> bool:
+    """Step 5: reconstruction error metrics CSV."""
     metric_keys = config.get_reconstruction_error_metrics_to_compute()
     primary_metric = config.get_reconstruction_primary_metric()
     valid_keys = set(list_primary_metric_keys())
@@ -377,52 +381,45 @@ Examples:
     if unknown:
         print(f"❌ Unknown reconstruction.error_metrics.compute key(s): {unknown}")
         print(f"   Valid keys: {sorted(valid_keys)}")
-        return
+        return False
     if primary_metric not in metric_keys:
         print(
             f"❌ reconstruction.error_metrics.primary_metric {primary_metric!r} "
             f"must be included in compute list: {metric_keys}"
         )
-        return
-    
-    # Get directories from config
+        return False
+
     source_dir = config.get_source_dir()
     missing_dir = config.get_missing_dir()
     fixed_dir = config.get_fixed_dir()
     output_dir = config.get_results_dir()
-    
-    # Create output directory
+
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Generate output filename with timestamp
+
     output_filename = generate_output_filename()
     output_file = os.path.join(output_dir, output_filename)
-    
-    # Auto-discover source datasets
+
     source_datasets = config.discover_datasets()
     if not source_datasets:
         print(f"❌ No source datasets found in {source_dir}")
-        return
-    
-    # Create mapping: dataset_name -> source_file_path
+        return False
+
     dataset_mapping = {Path(f).stem: f for f in source_datasets}
-    
-    # Get list of reconstructed files
+
     reconstructed_dir = Path(fixed_dir)
     if not reconstructed_dir.exists():
         print(f"❌ Fixed data directory not found: {fixed_dir}")
-        return
-    
+        return False
+
     reconstructed_files = sorted(reconstructed_dir.glob("*.csv"))
-    
+
     if not reconstructed_files:
         print(f"❌ No reconstructed datasets found in {fixed_dir}")
-        return
-    
-    # Load performance metrics from reconstruction step
+        return False
+
     print("\n📊 Loading performance metrics from reconstruction step...")
     performance_metrics = load_performance_metrics(output_dir)
-    
+
     print("="*70)
     print("CALCULATE RECONSTRUCTION ERROR METRICS")
     print("="*70)
@@ -438,39 +435,32 @@ Examples:
     print("="*70)
     print("\nℹ️  Errors are computed ONLY at values that were missing (destroyed) in the degraded series")
     print("="*70)
-    
-    # Store results
+
     results = []
     processed_count = 0
     error_count = 0
-    
-    # Determine parallel processing
+
     n_jobs = config.get_n_jobs()
     if n_jobs == -1:
         n_jobs = os.cpu_count() or 1
-        
-    # Process files
+
     if n_jobs > 1 and len(reconstructed_files) > 1:
         print(f"\n🚀 Processing with {n_jobs} parallel jobs...")
-        
-        # Prepare arguments for each job
-        # Note: we pass strings instead of Path objects where possible to ensure picklability
+
         job_args = [
-            (str(f), dataset_mapping, missing_dir, config, performance_metrics) 
+            (str(f), dataset_mapping, missing_dir, config, performance_metrics)
             for f in reconstructed_files
         ]
-        
+
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            # Submit all jobs
             future_to_file = {executor.submit(process_file_wrapper, args): args[0] for args in job_args}
-            
-            # Process results as they complete
+
             for future in concurrent.futures.as_completed(future_to_file):
                 filename = os.path.basename(future_to_file[future])
                 try:
                     res = future.result()
                     processed_count += 1
-                    
+
                     if res['status'] == 'success':
                         metrics = res['data']
                         results.append(metrics)
@@ -493,12 +483,12 @@ Examples:
         for reconstructed_file in reconstructed_files:
             filename = reconstructed_file.name
             args = (str(reconstructed_file), dataset_mapping, missing_dir, config, performance_metrics)
-            
+
             processed_count += 1
             print(f"\n[{processed_count}/{len(reconstructed_files)}] Processing: {filename}")
-            
+
             res = process_file_wrapper(args)
-            
+
             if res['status'] == 'success':
                 metrics = res['data']
                 results.append(metrics)
@@ -510,12 +500,11 @@ Examples:
             else:
                 print(f"  ❌ Error: {res['msg']}")
                 error_count += 1
-    
-    # Save results to CSV
+
     if results:
         df_results = pd.DataFrame(results)
         df_results.to_csv(output_file, index=False)
-        
+
         print("\n" + "="*70)
         print("RESULTS SAVED")
         print("="*70)
@@ -536,8 +525,7 @@ Examples:
             print(f"    Median: {s.median():.{dec}f}")
             print(f"    Min: {s.min():.{dec}f}")
             print(f"    Max: {s.max():.{dec}f}")
-        
-        # Show performance metrics summary if available
+
         if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():
             print("\n  Performance Metrics:")
             print(f"    Total Time: {df_results['time_seconds'].sum():.2f}s")
@@ -552,6 +540,8 @@ Examples:
         print("="*70)
     else:
         print("\n❌ No results to save.")
+
+    return True
 
 
 if __name__ == "__main__":

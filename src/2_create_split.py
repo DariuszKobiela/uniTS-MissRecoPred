@@ -155,6 +155,98 @@ def split_dataset(input_file: str,
     }
 
 
+def run_create_split(
+    config,
+    input_dir: str | None = None,
+    output_dir: str | None = None,
+    dataset: str | None = None,
+    test_samples: int | None = None,
+) -> bool:
+    """Step 2: temporal train/test split."""
+    input_dir = input_dir or config.get_cleaned_dir()
+    output_base_dir = output_dir or config.get_splitted_dir()
+    train_output_dir = os.path.join(output_base_dir, 'train')
+    test_output_dir = os.path.join(output_base_dir, 'test')
+    test_samples = test_samples if test_samples is not None else config.get_test_samples()
+
+    print(f"\n{'='*60}")
+    print(f"📊 DATA SPLITTING PIPELINE")
+    print(f"{'='*60}")
+    print(f"Input directory:       {input_dir}")
+    print(f"Train output directory: {train_output_dir}")
+    print(f"Test output directory:  {test_output_dir}")
+    print(f"Test samples (last N):  {test_samples}")
+
+    if dataset:
+        datasets = [dataset]
+    else:
+        if not os.path.exists(input_dir):
+            print(f"\n❌ Error: Input directory does not exist: {input_dir}")
+            return False
+
+        datasets = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
+
+    if not datasets:
+        print(f"\n⚠️  No CSV files found in {input_dir}")
+        return False
+
+    print(f"\n📋 Found {len(datasets)} dataset(s) to split")
+
+    success_count = 0
+    skip_count = 0
+    error_count = 0
+
+    total_train_samples = 0
+    total_test_samples = 0
+
+    for ds in datasets:
+        input_file = os.path.join(input_dir, ds)
+        train_output_file = os.path.join(train_output_dir, ds)
+        test_output_file = os.path.join(test_output_dir, ds)
+
+        try:
+            result = split_dataset(
+                input_file,
+                train_output_file,
+                test_output_file,
+                test_samples,
+                config
+            )
+
+            if result['status'] == 'success':
+                success_count += 1
+                total_train_samples += result['train_samples']
+                total_test_samples += result['test_samples']
+            elif result['status'] == 'skipped':
+                skip_count += 1
+            else:
+                error_count += 1
+
+        except Exception as e:
+            print(f"\n❌ Error splitting {ds}: {e}")
+            import traceback
+            traceback.print_exc()
+            error_count += 1
+
+    print(f"\n{'='*60}")
+    print(f"✅ SPLITTING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Successfully split: {success_count}/{len(datasets)} datasets")
+    print(f"Skipped (existing): {skip_count}")
+    print(f"Errors:             {error_count}")
+
+    if success_count > 0:
+        print(f"\n📊 Total samples split:")
+        print(f"   Train: {total_train_samples}")
+        print(f"   Test:  {total_test_samples}")
+
+    print(f"\n📁 Output locations:")
+    print(f"   Train: {train_output_dir}")
+    print(f"   Test:  {test_output_dir}")
+    print(f"{'='*60}\n")
+    return True
+
+
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
@@ -198,104 +290,23 @@ Examples:
         default='config/config.yaml',
         help='Path to configuration file (default: config/config.yaml)'
     )
-    
+
     args = parser.parse_args()
-    
-    # Load configuration
+
     try:
         config = load_config(args.config)
         print(f"✓ Loaded configuration from: {args.config}\n")
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {args.config}")
         return
-    
-    # Determine directories and parameters
-    input_dir = args.input_dir or config.get_cleaned_dir()
-    output_base_dir = args.output_dir or config.get_splitted_dir()
-    train_output_dir = os.path.join(output_base_dir, 'train')
-    test_output_dir = os.path.join(output_base_dir, 'test')
-    test_samples = args.test_samples or config.get_test_samples()
-    
-    print(f"\n{'='*60}")
-    print(f"📊 DATA SPLITTING PIPELINE")
-    print(f"{'='*60}")
-    print(f"Input directory:       {input_dir}")
-    print(f"Train output directory: {train_output_dir}")
-    print(f"Test output directory:  {test_output_dir}")
-    print(f"Test samples (last N):  {test_samples}")
-    
-    # Get list of datasets to split
-    if args.dataset:
-        # Split specific dataset
-        datasets = [args.dataset]
-    else:
-        # Split all CSV files in input directory
-        if not os.path.exists(input_dir):
-            print(f"\n❌ Error: Input directory does not exist: {input_dir}")
-            return
-        
-        datasets = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
-    
-    if not datasets:
-        print(f"\n⚠️  No CSV files found in {input_dir}")
-        return
-    
-    print(f"\n📋 Found {len(datasets)} dataset(s) to split")
-    
-    # Split each dataset
-    success_count = 0
-    skip_count = 0
-    error_count = 0
-    
-    total_train_samples = 0
-    total_test_samples = 0
-    
-    for dataset in datasets:
-        input_file = os.path.join(input_dir, dataset)
-        train_output_file = os.path.join(train_output_dir, dataset)
-        test_output_file = os.path.join(test_output_dir, dataset)
-        
-        try:
-            result = split_dataset(
-                input_file, 
-                train_output_file, 
-                test_output_file,
-                test_samples,
-                config
-            )
-            
-            if result['status'] == 'success':
-                success_count += 1
-                total_train_samples += result['train_samples']
-                total_test_samples += result['test_samples']
-            elif result['status'] == 'skipped':
-                skip_count += 1
-            else:
-                error_count += 1
-                
-        except Exception as e:
-            print(f"\n❌ Error splitting {dataset}: {e}")
-            import traceback
-            traceback.print_exc()
-            error_count += 1
-    
-    # Summary
-    print(f"\n{'='*60}")
-    print(f"✅ SPLITTING COMPLETE")
-    print(f"{'='*60}")
-    print(f"Successfully split: {success_count}/{len(datasets)} datasets")
-    print(f"Skipped (existing): {skip_count}")
-    print(f"Errors:             {error_count}")
-    
-    if success_count > 0:
-        print(f"\n📊 Total samples split:")
-        print(f"   Train: {total_train_samples}")
-        print(f"   Test:  {total_test_samples}")
-    
-    print(f"\n📁 Output locations:")
-    print(f"   Train: {train_output_dir}")
-    print(f"   Test:  {test_output_dir}")
-    print(f"{'='*60}\n")
+
+    run_create_split(
+        config,
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+        dataset=args.dataset,
+        test_samples=args.test_samples,
+    )
 
 
 if __name__ == "__main__":

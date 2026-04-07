@@ -17,6 +17,20 @@ data:
   prediction_results_dir: "prediction_experiment_results"  # Directory for prediction experiment results
 
 # ============================================================================
+# PIPELINE ENTRY (standard vs external missingness)
+# ============================================================================
+pipeline:
+  # standard — full pipeline from clean/split/degrade (see README)
+  # external_missing — ingest from manifest (src/ingest_external_missing.py), then 4→7→8→9; skip 3,5,6
+  entry: standard
+  external_missing:
+    manifest: "config/external_missing_manifest.yaml"
+    # Optional path overrides (default: data.* from this file)
+    # output_missing_dir: "data/3_missing_data"
+    # output_test_dir: "data/2_splitted_data/test"
+    # output_train_dir: "data/2_splitted_data/train"
+
+# ============================================================================
 # TRAIN/TEST SPLIT SETTINGS
 # ============================================================================
 split:

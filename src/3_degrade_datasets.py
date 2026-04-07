@@ -207,53 +207,67 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Load configuration
+
     try:
         config = load_config(args.config)
         print(f"✓ Loaded configuration from: {args.config}\n")
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {args.config}")
         print("   Creating default config/config.yaml...")
-        # Could create default config here
         return
-    
-    # Get datasets - priority: CLI args > config
-    if args.dataset_files:
-        dataset_files = args.dataset_files
+
+    run_degrade_datasets(
+        config,
+        dataset_files=args.dataset_files,
+        techniques=args.techniques,
+        rates=args.rates,
+        iterations=args.iterations,
+        seed=args.seed,
+        force=args.force,
+    )
+
+
+def run_degrade_datasets(
+    config,
+    dataset_files: List[str] | None = None,
+    techniques: List[str] | None = None,
+    rates: List[float] | None = None,
+    iterations: int | None = None,
+    seed: int | None = None,
+    force: bool = False,
+) -> bool:
+    """Step 3: introduce missingness in training series."""
+    if dataset_files:
+        ds_files = dataset_files
     else:
-        dataset_files = config.get_datasets()
-    
-    if not dataset_files:
+        ds_files = config.get_datasets()
+
+    if not ds_files:
         print("❌ No datasets found. Check your configuration or source directory.")
-        return
-    
-    # Get parameters - priority: CLI args > config
-    techniques = args.techniques if args.techniques else config.get_missingness_techniques()
-    rates = args.rates if args.rates else config.get_missingness_rates()
-    iterations = args.iterations if args.iterations else config.get_iterations()
-    seed = args.seed if args.seed else config.get_seed()
+        return False
+
+    techniques = techniques if techniques else config.get_missingness_techniques()
+    rates = rates if rates else config.get_missingness_rates()
+    iterations = iterations if iterations is not None else config.get_iterations()
+    seed = seed if seed is not None else config.get_seed()
     output_dir = config.get_missing_dir()
-    
-    # Create output directory
+
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Validate rates
+
     for rate in rates:
         if not 0.0 <= rate <= 1.0:
             raise ValueError(f"Invalid missing rate: {rate}. Must be between 0.0 and 1.0")
-    
-    # Calculate total operations
-    total_operations = len(dataset_files) * len(techniques) * len(rates) * iterations
-    
+
+    total_operations = len(ds_files) * len(techniques) * len(rates) * iterations
+
     print("="*70)
     print("DATASET DEGRADATION")
     print("="*70)
-    print(f"Datasets: {len(dataset_files)} files")
-    for ds in dataset_files[:5]:
+    print(f"Datasets: {len(ds_files)} files")
+    for ds in ds_files[:5]:
         print(f"  - {os.path.basename(ds)}")
-    if len(dataset_files) > 5:
-        print(f"  ... and {len(dataset_files) - 5} more")
+    if len(ds_files) > 5:
+        print(f"  ... and {len(ds_files) - 5} more")
     print(f"Techniques: {techniques}")
     print(f"Missing rates: {[f'{r*100:.0f}%' for r in rates]}")
     print(f"Iterations: {iterations}")
@@ -261,31 +275,26 @@ Examples:
     print(f"Total operations: {total_operations}")
     print(f"Output directory: {output_dir}")
     print("="*70)
-    
-    # Build list of all degradation tasks
+
     print("\n📋 Building task list...")
     tasks = []
-    for source_file in dataset_files:
-        # Check if source file exists
+    for source_file in ds_files:
         if not Path(source_file).exists():
             print(f"❌ Source file not found: {source_file}")
             continue
-        
-        # Extract dataset name from filename (without extension)
+
         dataset_name = Path(source_file).stem
-        
+
         for technique in techniques:
             for rate in rates:
                 rate_percent = int(rate * 100)
-                
+
                 for iteration in range(1, iterations + 1):
-                    # Generate output filename
                     output_filename = f"{dataset_name}_{technique}_{rate_percent}p_{iteration}.csv"
                     output_file = os.path.join(output_dir, output_filename)
-                    
-                    # Generate unique seed for this combination
-                    unique_seed = seed + iteration * 1000 + dataset_files.index(source_file) * 100 + len(technique) * 10 + rate_percent
-                    
+
+                    unique_seed = seed + iteration * 1000 + ds_files.index(source_file) * 100 + len(technique) * 10 + rate_percent
+
                     tasks.append({
                         'source_file': source_file,
                         'output_file': output_file,
@@ -293,31 +302,27 @@ Examples:
                         'rate': rate,
                         'seed': unique_seed,
                         'config': config,
-                        'force': args.force
+                        'force': force
                     })
-    
-    # Get number of parallel jobs
+
     n_jobs = config.get_n_jobs()
     print(f"🚀 Processing {len(tasks)} tasks with {n_jobs} parallel job(s)...\n")
-    
-    # Process tasks in parallel with progress bar
+
     results = Parallel(n_jobs=n_jobs, backend='loky')(
-        delayed(process_single_degradation)(task) 
+        delayed(process_single_degradation)(task)
         for task in tqdm(tasks, desc="⏳ Degrading datasets", unit="task", ncols=80)
     )
-    
-    # Count results
+
     completed = sum(1 for r in results if r['status'] == 'success')
     skipped = sum(1 for r in results if r['status'] == 'skipped')
     errors = sum(1 for r in results if r['status'] == 'error')
-    
-    # Print errors if any
+
     if errors > 0:
         print("\n❌ Errors occurred:")
         for r in results:
             if r['status'] == 'error':
                 print(f"  - {os.path.basename(r['output_file'])}: {r['message']}")
-    
+
     print("\n" + "="*70)
     print("DEGRADATION COMPLETE")
     print("="*70)
@@ -326,6 +331,7 @@ Examples:
     print(f"❌ Errors: {errors}")
     print(f"📁 Output directory: {output_dir}")
     print("="*70)
+    return True
 
 
 if __name__ == "__main__":

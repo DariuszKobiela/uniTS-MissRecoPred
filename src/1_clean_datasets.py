@@ -188,10 +188,68 @@ def clean_dataset(input_file: str, output_file: str, config) -> None:
     print(f"  ✅ Saved to: {output_file}")
 
 
+def run_clean_datasets(
+    config,
+    input_dir: str | None = None,
+    output_dir: str | None = None,
+    dataset: str | None = None,
+) -> bool:
+    """
+    Step 1: clean raw CSVs into cleaned_dir. Returns False if the step aborted early (fatal setup).
+    """
+    input_dir = input_dir or config.get_raw_source_dir()
+    output_dir = output_dir or config.get_cleaned_dir()
+
+    print(f"\n{'='*60}")
+    print(f"🧹 DATA CLEANING PIPELINE")
+    print(f"{'='*60}")
+    print(f"Input directory:  {input_dir}")
+    print(f"Output directory: {output_dir}")
+
+    if dataset:
+        datasets = [dataset]
+    else:
+        if not os.path.exists(input_dir):
+            print(f"\n❌ Error: Input directory does not exist: {input_dir}")
+            return False
+
+        datasets = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
+
+    if not datasets:
+        print(f"\n⚠️  No CSV files found in {input_dir}")
+        return False
+
+    print(f"\n📋 Found {len(datasets)} dataset(s) to clean")
+
+    success_count = 0
+    for ds in datasets:
+        input_file = os.path.join(input_dir, ds)
+        output_file = os.path.join(output_dir, ds)
+
+        try:
+            clean_dataset(input_file, output_file, config)
+            success_count += 1
+        except Exception as e:
+            print(f"\n❌ Error cleaning {ds}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print(f"\n{'='*60}")
+    print(f"✅ Cleaning complete: {success_count}/{len(datasets)} datasets cleaned successfully")
+    print(f"{'='*60}\n")
+    return True
+
+
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
         description="Clean raw datasets and save to cleaned data directory"
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config/config.yaml',
+        help='Path to configuration file (default: config/config.yaml)',
     )
     parser.add_argument(
         '--input-dir',
@@ -208,60 +266,22 @@ def main():
         type=str,
         help='Specific dataset filename to clean (default: all datasets)'
     )
-    
+
     args = parser.parse_args()
-    
-    # Load configuration
-    config = load_config()
-    
-    # Determine directories
-    # Input from 0_source_data (raw data)
-    input_dir = args.input_dir or config.get_raw_source_dir()
-    # Output to 1_cleaned_data
-    output_dir = args.output_dir or config.get_cleaned_dir()
-    
-    print(f"\n{'='*60}")
-    print(f"🧹 DATA CLEANING PIPELINE")
-    print(f"{'='*60}")
-    print(f"Input directory:  {input_dir}")
-    print(f"Output directory: {output_dir}")
-    
-    # Get list of datasets to clean
-    if args.dataset:
-        # Clean specific dataset
-        datasets = [args.dataset]
-    else:
-        # Clean all CSV files in input directory
-        if not os.path.exists(input_dir):
-            print(f"\n❌ Error: Input directory does not exist: {input_dir}")
-            return
-        
-        datasets = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
-    
-    if not datasets:
-        print(f"\n⚠️  No CSV files found in {input_dir}")
+
+    try:
+        config = load_config(args.config)
+        print(f"✓ Loaded configuration from: {args.config}\n")
+    except FileNotFoundError:
+        print(f"❌ Configuration file not found: {args.config}")
         return
-    
-    print(f"\n📋 Found {len(datasets)} dataset(s) to clean")
-    
-    # Clean each dataset
-    success_count = 0
-    for dataset in datasets:
-        input_file = os.path.join(input_dir, dataset)
-        output_file = os.path.join(output_dir, dataset)
-        
-        try:
-            clean_dataset(input_file, output_file, config)
-            success_count += 1
-        except Exception as e:
-            print(f"\n❌ Error cleaning {dataset}: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    # Summary
-    print(f"\n{'='*60}")
-    print(f"✅ Cleaning complete: {success_count}/{len(datasets)} datasets cleaned successfully")
-    print(f"{'='*60}\n")
+
+    run_clean_datasets(
+        config,
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+        dataset=args.dataset,
+    )
 
 
 if __name__ == "__main__":

@@ -421,16 +421,22 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Load configuration
+
     try:
         config = load_config(args.config)
         print(f"✓ Loaded configuration from: {args.config}\n")
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {args.config}")
         return
-    
-    # Get directories from config
+
+    pred_config = load_prediction_models_config()
+    run_calculate_prediction_error(config, pred_config)
+
+
+def run_calculate_prediction_error(config, pred_config=None) -> bool:
+    """Step 9: prediction error metrics vs test split. ``pred_config`` aligns with library API (optional)."""
+    _ = pred_config
+
     test_dir = config.get_splitted_test_dir()
     train_dir = config.get_splitted_train_dir()
     predictions_dir = os.path.join(config.get_prediction_results_dir(), "predictions")
@@ -443,40 +449,35 @@ Examples:
     except (KeyError, ValueError) as e:
         print(f"❌ Invalid prediction.error_metrics.compute: {e}")
         print(f"   Known keys: {list_primary_metric_keys()}")
-        return
+        return False
 
     primary_key = config.get_prediction_primary_metric()
     try:
         get_metric_spec(primary_key)
     except KeyError:
         print(f"❌ Unknown prediction.error_metrics.primary_metric: {primary_key!r}")
-        return
+        return False
 
-    # Check directories exist
     if not os.path.exists(test_dir):
         print(f"❌ Test data directory not found: {test_dir}")
         print("   Run 2_create_split.py first to create train/test split")
-        return
-    
+        return False
+
     if not os.path.exists(predictions_dir):
         print(f"❌ Predictions directory not found: {predictions_dir}")
         print("   Run 7_predict_datasets.py first to generate predictions")
-        return
-    
-    # Create output directory
+        return False
+
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Generate output filename with timestamp
+
     output_filename = generate_output_filename()
     output_file = os.path.join(output_dir, output_filename)
-    
-    # Discover test datasets
+
     test_files = list(Path(test_dir).glob("*.csv"))
     if not test_files:
         print(f"❌ No test datasets found in {test_dir}")
-        return
-    
-    # Create mapping: dataset_name -> test_file_path
+        return False
+
     test_data_mapping = {f.stem: str(f) for f in test_files}
 
     train_data_mapping = {}
@@ -485,18 +486,16 @@ Examples:
         train_data_mapping = {f.stem: str(f) for f in train_files}
     else:
         print(f"⚠️  Train directory not found (MASE will be NaN): {train_dir}")
-    
-    # Get list of prediction files
+
     prediction_files = sorted(Path(predictions_dir).glob("*.csv"))
-    
+
     if not prediction_files:
         print(f"❌ No prediction files found in {predictions_dir}")
-        return
-    
-    # Load performance metrics from prediction step
+        return False
+
     print("\n📊 Loading performance metrics from prediction step...")
     performance_metrics = load_performance_metrics(output_dir)
-    
+
     print("="*70)
     print("CALCULATE PREDICTION ERROR METRICS")
     print("="*70)
@@ -511,38 +510,32 @@ Examples:
     print(f"Output directory: {output_dir}")
     print(f"Output file: {output_filename}")
     print("="*70)
-    
-    # Store results
+
     results = []
     processed_count = 0
     error_count = 0
-    
-    # Determine parallel processing
+
     n_jobs = config.get_n_jobs()
     if n_jobs == -1:
         n_jobs = os.cpu_count() or 1
-    
-    # Process files
+
     if n_jobs > 1 and len(prediction_files) > 1:
         print(f"\n🚀 Processing with {n_jobs} parallel jobs...")
-        
-        # Prepare arguments for each job
+
         job_args = [
             (str(f), test_data_mapping, train_data_mapping, metric_keys, config, performance_metrics)
             for f in prediction_files
         ]
-        
+
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            # Submit all jobs
             future_to_file = {executor.submit(process_file_wrapper, args): args[0] for args in job_args}
-            
-            # Process results as they complete
+
             for future in concurrent.futures.as_completed(future_to_file):
                 filename = os.path.basename(future_to_file[future])
                 try:
                     res = future.result()
                     processed_count += 1
-                    
+
                     if res['status'] == 'success':
                         metrics = res['data']
                         results.append(metrics)
@@ -571,12 +564,12 @@ Examples:
                 config,
                 performance_metrics,
             )
-            
+
             processed_count += 1
             print(f"\n[{processed_count}/{len(prediction_files)}] Processing: {filename}")
-            
+
             res = process_file_wrapper(args)
-            
+
             if res['status'] == 'success':
                 metrics = res['data']
                 results.append(metrics)
@@ -586,12 +579,11 @@ Examples:
             else:
                 print(f"  ❌ Error: {res['msg']}")
                 error_count += 1
-    
-    # Save results to CSV
+
     if results:
         df_results = pd.DataFrame(results)
         df_results.to_csv(output_file, index=False)
-        
+
         print("\n" + "="*70)
         print("RESULTS SAVED")
         print("="*70)
@@ -599,8 +591,7 @@ Examples:
         print(f"❌ Errors: {error_count}")
         print(f"📁 Results saved to: {output_file}")
         print("="*70)
-        
-        # Summary statistics
+
         print("\nSummary Statistics:")
         for col in metric_keys:
             if col not in df_results.columns:
@@ -640,16 +631,17 @@ Examples:
                     f"    {model}: {primary_key} "
                     f"{_format_metric_preview(primary_key, vp.mean())} (n={len(subset)})"
                 )
-        
-        # Performance metrics summary if available
+
         if 'time_seconds' in df_results.columns and df_results['time_seconds'].notna().any():
             print("\n  Performance Metrics:")
             print(f"    Total Time: {df_results['time_seconds'].sum():.2f}s")
             print(f"    Avg Time: {df_results['time_seconds'].mean():.2f}s")
-        
+
         print("="*70)
     else:
         print("\n❌ No results to save.")
+
+    return True
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-.PHONY: help setup clean-datasets create-split degrade-datasets optimize optimize-quick reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full clean clean-all test test-prediction
+.PHONY: help setup clean-datasets create-split degrade-datasets ingest-external optimize optimize-quick reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
 
 # Default target
 help:
@@ -28,6 +28,8 @@ help:
 	@echo "Full pipelines:"
 	@echo "  make pipeline            - Reconstruction only (steps 1-5, no dashboards)"
 	@echo "  make pipeline-full       - Reconstruction + prediction train/predict/eval (1-5, 7-9)"
+	@echo "  make ingest-external     - Manifest → missing_dir + test (external missingness; set pipeline.entry in config)"
+	@echo "  make pipeline-external   - ingest-external + 4 + 7 + 8 + 9 (skip 1-3, 5-6; see README)"
 	@echo ""
 	@echo "Cleanup commands:"
 	@echo "  make clean       - Remove generated datasets (keep results)"
@@ -56,6 +58,14 @@ create-split:
 	@echo "==================================================================="
 	uv run python src/2_create_split.py
 	@echo "✓ Datasets split into train/test"
+
+# Ingest external missingness manifest (ingest_external_missing.py)
+ingest-external:
+	@echo "==================================================================="
+	@echo "Ingest external missingness (manifest → 3_missing_data + 2_splitted_data/test)"
+	@echo "==================================================================="
+	uv run python src/ingest_external_missing.py
+	@echo "✓ Ingest complete (set pipeline.entry: external_missing for predict behavior)"
 
 # Step 3: Degrade training datasets (3_degrade_datasets.py)
 degrade-datasets:
@@ -153,6 +163,12 @@ pipeline: clean-datasets create-split degrade-datasets reconstruct-datasets calc
 	@echo "Run 'make visualize-reconstruction-error' to open the dashboard"
 	@echo "Run 'make train-prediction-models' to train prediction models"
 
+# External missingness: ingest + reconstruct + prediction (no 1-3, 5-6)
+pipeline-external: ingest-external reconstruct-datasets train-prediction-models predict-datasets calculate-prediction-error
+	@echo "==================================================================="
+	@echo "✓ EXTERNAL-MISSING PIPELINE COMPLETE (4, 7-9)"
+	@echo "==================================================================="
+
 # Run full pipeline including prediction (steps 1-5, 7-9)
 pipeline-full: clean-datasets create-split degrade-datasets reconstruct-datasets calculate-reconstruction-error train-prediction-models predict-datasets calculate-prediction-error
 	@echo "==================================================================="
@@ -169,6 +185,7 @@ clean:
 	rm -rf data/1_cleaned_data/*
 	rm -rf data/2_splitted_data/train/*
 	rm -rf data/2_splitted_data/test/*
+	rm -f data/2_splitted_data/external_missing_ingest_state.json
 	rm -rf data/3_missing_data/*
 	rm -rf data/4_fixed_data/*
 	@echo "✓ Generated datasets removed (results preserved)"

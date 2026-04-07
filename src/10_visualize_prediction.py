@@ -6,6 +6,8 @@ Prediction model serves as a filter, not the main comparison axis.
 Part of uniTS-MissRecoPred framework.
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 import streamlit as st

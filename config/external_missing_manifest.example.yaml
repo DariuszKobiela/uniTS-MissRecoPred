@@ -1,0 +1,27 @@
+# Example manifest for pipeline.entry: external_missing + ingest_external_missing.py
+# Copy to external_missing_manifest.yaml (or set pipeline.external_missing.manifest in config).
+
+version: 1
+
+# If true, fail when the train segment has no NaN in the value column (reconstruction would be a no-op).
+require_train_missing: false
+
+datasets:
+  # --- Variant A: one time-ordered CSV; last N rows = test (must be complete, no NaN) ---
+  - id: example_series_last_n
+    series_csv: "data/external/example_full_series.csv"
+    test:
+      mode: last_n
+      n: 30
+    # Optional: synthetic metadata encoded in degraded filename (default shown)
+    # synthetic:
+    #   technique: EXTERNAL
+    #   rate_percent: 0
+    #   iteration: 1
+    # Optional: clean training series (same length as train segment) for predict_on_original_train baseline
+    # train_clean_csv: "data/external/example_train_clean.csv"
+
+  # --- Variant B: separate train (may contain NaN) and test (must be complete) ---
+  - id: example_split_files
+    train_csv: "data/external/example_train_with_gaps.csv"
+    test_csv: "data/external/example_test_complete.csv"

@@ -17,6 +17,7 @@ A modular framework for evaluating time series reconstruction methods on univari
   - [Configuration](#3-configure-experiment)
   - [Run Pipeline](#4-run-pipeline)
   - [Common Commands](#5-common-commands)
+- [Library usage](#library-usage)
 - [⚙️ Configuration](#-configuration)
 - [🔄 Workflow](#-workflow)
 - [📊 Output Files](#-output-files)
@@ -59,6 +60,7 @@ uniTS-MissRecoPred/
 │   ├── 🐍 7_predict_datasets.py            # [MAIN] Predict future values
 │   ├── 🐍 9_calculate_prediction_error.py   # [MAIN] Prediction error metrics → CSV
 │   ├── 🐍 10_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
+│   ├── 🐍 ingest_external_missing.py      # [OPTIONAL] Manifest → missing_dir + test (pipeline.entry external_missing)
 │   │
 │   ├── 📁 reconstruction_metrics/        # Reconstruction error metrics (script 5 → reconstruction_results)
 │   │   ├── 🐍 _registry.py                   # ReconstructionMetricSpec, register_builtin_metric, compute_*
@@ -67,6 +69,10 @@ uniTS-MissRecoPred/
 │   ├── 📁 prediction_metrics/              # Prediction error metrics (script 9 → prediction_results)
 │   │   ├── 🐍 _registry.py                   # PredictionMetricSpec, register_builtin_metric, compute_*
 │   │   └── 🐍 mape.py, smape.py, mase.py, mae.py, rmse.py, __init__.py  # One module per built-in metric
+│   │
+│   ├── 📁 framework/                       # Library API: RunConfig, run_* , run_pipeline_full
+│   │   ├── 🐍 config_models.py
+│   │   └── 🐍 runs.py
 │   │
 │   ├── 📁 utils/                           # Utility modules
 │   │   ├── 🐍 config_loader.py                # Configuration manager
@@ -127,6 +133,7 @@ uniTS-MissRecoPred/
 │
 ├── 📁 config/                               # Configuration files
 │   ├── ⚙️ config.yaml                       # Main configuration file
+│   ├── ⚙️ external_missing_manifest.example.yaml  # Template for external missingness ingest
 │   └── ⚙️ prediction_models_config.yaml     # Prediction models training parameters
 ├── 📝 Makefile                             # Make commands for easy pipeline execution
 ├── 📝 requirements.txt                     # Python dependencies
@@ -308,6 +315,8 @@ make setup          # Install dependencies (uv sync)
 # Full workflow
 make pipeline       # Reconstruction only (steps 1-5)
 make pipeline-full  # Reconstruction + prediction train/predict/eval (1-5, 7-9)
+make ingest-external   # External missingness manifest → data dirs (see pipeline.entry)
+make pipeline-external # ingest + reconstruct + train + predict + eval (4, 7–9)
 make visualize-reconstruction-error  # Reconstruction dashboard
 
 # Cleanup
@@ -316,6 +325,36 @@ make clean-all      # Remove everything including results
 ```
 
 **Note**: Windows users can use the manual commands or setup WSL (Windows Subsystem for Linux) to use Makefile.
+
+## Library usage
+
+The workflow stays **batch-first** (Makefile and `src/N_*.py` CLIs). The same steps are also available as a **programmatic API** under `src/framework/`.
+
+**Full API reference:** see [docs/API.md](docs/API.md) — configuration, every `run_*` step, `run_pipeline_full`, edge cases, and examples.
+
+Put **`src` on `PYTHONPATH`** (e.g. from the repo root: `PYTHONPATH=src`), or use an editable install: `uv pip install -e .` with the existing `pyproject.toml` (wheel packages the `src` tree).
+
+**Example 1 — run the full pipeline in one call (same order as `make pipeline-full`: steps 1, 2, 3, 4, 5, 7, 8, 9):**
+
+```python
+from utils.config_loader import load_config
+from framework.runs import run_pipeline_full
+
+result = run_pipeline_full(load_config("config/config.yaml"))
+print(result.ok, result.steps_completed)
+```
+
+**Example 2 — `RunConfig` as a YAML-backed dict, override a path, then build `Config`:**
+
+```python
+from framework import RunConfig
+
+rc = RunConfig.from_yaml("config/config.yaml")
+rc.data["data"]["missing_dir"] = "custom/missing_data"
+config = rc.to_config()
+```
+
+Alternatively, load YAML with `yaml.safe_load`, edit the nested dict, and call `Config.from_dict(data, config_path="")` — no file is written; `config_path` is only for logging.
 
 ## ⚙️ Configuration
 
@@ -466,6 +505,22 @@ timestamp,value
 ## 🔄 Workflow
 
 This framework follows a strict data pipeline where each script transforms data from one state to another.
+
+### Alternate entry: external missingness
+
+Use this when you already have CSV time series with **NaN gaps** on the training segment and a **complete test horizon** (no missing values in the evaluation window).
+
+1. Set `pipeline.entry: external_missing` in `config/config.yaml` and point `pipeline.external_missing.manifest` at your YAML (copy from [config/external_missing_manifest.example.yaml](config/external_missing_manifest.example.yaml)).
+2. Run `make ingest-external` (or `uv run python src/ingest_external_missing.py`). This writes:
+   - canonical degraded files into `data/3_missing_data/` (`{id}_EXTERNAL_0p_1.csv` by default),
+   - test files into `data/2_splitted_data/test/{id}.csv`,
+   - optional clean train files into `data/2_splitted_data/train/{id}.csv` if you set `train_clean_csv` per dataset,
+   - `data/2_splitted_data/external_missing_ingest_state.json` (used by `8_predict_datasets.py` to enable **original-train** predictions only for datasets that had `train_clean_csv`).
+3. Continue with **reconstruction (4)**, **train prediction models (7)**, **predict (8)**, **prediction error (9)**, optional **dashboard (10)**.
+
+**Skipped in this flow** (usually not meaningful without framework-generated degradation + ground truth): steps **3** (degrade), **5** (reconstruction error CSV), **6** (reconstruction dashboard). Steps **1–2** are skipped if you do not need cleaned/split data from raw sources.
+
+**Prediction config**: If you do not provide `train_clean_csv` for any dataset, set `prediction.predict_on_original_train: false` or only reconstructed predictions will run; with `train_clean_csv`, original-train baselines are limited to those IDs via the ingest state file.
 
 ### 📋 Pipeline Roadmap
 

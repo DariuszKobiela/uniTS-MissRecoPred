@@ -25,6 +25,7 @@ logging.getLogger("lightning").setLevel(logging.CRITICAL)
 logging.getLogger("lightning.fabric").setLevel(logging.CRITICAL)
 
 import sys
+import json
 import argparse
 import pandas as pd
 import numpy as np
@@ -446,8 +447,7 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Load configurations
+
     try:
         config = load_config(args.config)
         pred_config = load_prediction_models_config()
@@ -455,12 +455,20 @@ Examples:
     except FileNotFoundError as e:
         print(f"❌ Configuration file not found: {e}")
         return
-    
-    # Get directories
+
+    run_predict_datasets(
+        config,
+        pred_config,
+        models=args.models,
+        models_dir=args.models_dir,
+    )
+
+
+def run_predict_datasets(config, pred_config, models=None, models_dir="trained_prediction_models") -> bool:
+    """Step 8: run predictions from trained models."""
     train_dir = config.get_splitted_train_dir()
     test_dir = config.get_splitted_test_dir()
     fixed_dir = config.get_fixed_dir()
-    models_dir = args.models_dir
     output_dir = config.get_prediction_results_dir()
     predictions_dir = os.path.join(output_dir, "predictions")
     metrics_dir = os.path.join(output_dir, "performance_metrics")
@@ -478,12 +486,11 @@ Examples:
     # Determine which models to use
     all_models = list(available_models.keys()) + statistical_models
     
-    if args.models:
-        # Command line override
-        selected_models = [m for m in args.models if m in all_models]
+    if models:
+        selected_models = [m for m in models if m in all_models]
         if not selected_models:
             print(f"❌ No valid models specified. Available: {all_models}")
-            return
+            return False
     else:
         # Use config.get_prediction_models() which reads prediction_models.selected
         config_selected = config.get_prediction_models()
@@ -520,16 +527,49 @@ Examples:
     
     # Original training files
     if config.get_predict_on_original_train():
-        for file in Path(train_dir).glob("*.csv"):
-            files_to_predict.append({
-                'path': str(file),
-                'source_type': 'original',
-                'dataset': file.stem,
-                'technique': None,
-                'rate_percent': None,
-                'reconstruction_iteration': None,
-                'reconstruction_model': None
-            })
+        train_dir_path = Path(train_dir)
+        if config.is_pipeline_external_missing():
+            state_path = Path(config.get_external_missing_ingest_state_path())
+            allowed_original: set = set()
+            if state_path.is_file():
+                try:
+                    with open(state_path, encoding="utf-8") as sf:
+                        st = json.load(sf)
+                    allowed_original = {
+                        str(e["id"])
+                        for e in st.get("entries", [])
+                        if e.get("has_clean_train")
+                    }
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    print(f"⚠️  Could not read external ingest state ({state_path}): {e}")
+            else:
+                print(
+                    "ℹ️  pipeline external_missing: no ingest state file — "
+                    "skipping original-train predictions (run ingest_external_missing.py first)"
+                )
+
+            for file in train_dir_path.glob("*.csv"):
+                if file.stem in allowed_original:
+                    files_to_predict.append({
+                        'path': str(file),
+                        'source_type': 'original',
+                        'dataset': file.stem,
+                        'technique': None,
+                        'rate_percent': None,
+                        'reconstruction_iteration': None,
+                        'reconstruction_model': None
+                    })
+        else:
+            for file in train_dir_path.glob("*.csv"):
+                files_to_predict.append({
+                    'path': str(file),
+                    'source_type': 'original',
+                    'dataset': file.stem,
+                    'technique': None,
+                    'rate_percent': None,
+                    'reconstruction_iteration': None,
+                    'reconstruction_model': None
+                })
     
     # Reconstructed files
     if config.get_predict_on_reconstructed() and os.path.exists(fixed_dir):
@@ -711,6 +751,7 @@ Examples:
     if len(df_metrics) > 0 and 'time_seconds' in df_metrics.columns:
         print(f"   Total time: {df_metrics['time_seconds'].sum():.2f}s")
     print("="*70)
+    return True
 
 
 if __name__ == "__main__":
