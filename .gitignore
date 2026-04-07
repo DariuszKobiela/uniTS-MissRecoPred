@@ -43,6 +43,9 @@ experiments/
 .ipynb_checkpoints
 *.ipynb
 
+# Cursor files
+.cursor/
+
 # Generated data directories - ignore all CSV files
 data/0_source_data/*.csv
 data/1_cleaned_data/*.csv
@@ -100,6 +103,7 @@ models_cache/
 # Logs
 *.log
 logs/
+LG/
 
 # Temporary files
 *.tmp
