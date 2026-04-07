@@ -34,8 +34,8 @@ from utils.logger import setup_logging
 # Setup automatic logging to file
 setup_logging("4_reconstruct_datasets")
 
-# Import reconstruction models and config loader
-from reconstruction_models import RECONSTRUCTION_MODELS
+# Import reconstruction registry and config loader
+from framework.plugin_registry import get_reconstruction_models
 from utils.config_loader import load_config
 from utils.performance_metrics import PerformanceMonitor, format_metrics
 
@@ -152,11 +152,12 @@ def reconstruct_dataset(degraded_file: str,
     df = load_degraded_dataset(degraded_file)
     series = df.iloc[:, 0]  # First column is the time series
     
+    registry = get_reconstruction_models()
     # Get reconstruction model function
-    if reconstruction_model not in RECONSTRUCTION_MODELS:
+    if reconstruction_model not in registry:
         raise ValueError(f"Unknown reconstruction model: {reconstruction_model}")
-    
-    model_func = RECONSTRUCTION_MODELS[reconstruction_model]
+
+    model_func = registry[reconstruction_model]
     
     # Start performance monitoring
     monitor = PerformanceMonitor()
@@ -249,7 +250,7 @@ Examples:
     parser.add_argument(
         '--models',
         nargs='+',
-        choices=list(RECONSTRUCTION_MODELS.keys()) + ['all'],
+        choices=list(get_reconstruction_models().keys()) + ['all'],
         help='Reconstruction models to apply (overrides config)'
     )
     
@@ -323,7 +324,7 @@ def run_reconstruct_datasets(
 
     if models:
         if 'all' in models:
-            model_list = list(RECONSTRUCTION_MODELS.keys())
+            model_list = list(get_reconstruction_models().keys())
         else:
             model_list = models
     else:

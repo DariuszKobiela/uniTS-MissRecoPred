@@ -223,8 +223,8 @@ class Config:
         Returns:
             List of model names
         """
-        from reconstruction_models import RECONSTRUCTION_MODELS
-        
+        from framework.plugin_registry import get_reconstruction_models
+
         selected = self.config['reconstruction_models'].get('selected', [])
         excluded = self.config['reconstruction_models'].get('excluded', [])
         
@@ -238,8 +238,8 @@ class Config:
             # Use only specified models
             return [m for m in selected if m not in excluded]
         else:
-            # Use all available models except excluded
-            all_models = list(RECONSTRUCTION_MODELS.keys())
+            # Use all available models except excluded (built-ins + plugins)
+            all_models = list(get_reconstruction_models().keys())
             return [m for m in all_models if m not in excluded]
     
     # =========================================================================
@@ -254,8 +254,8 @@ class Config:
         Returns:
             List of model names
         """
-        from prediction_models import PREDICTION_MODELS
-        
+        from framework.plugin_registry import get_prediction_models
+
         prediction_config = self.config.get('prediction_models', {})
         selected = prediction_config.get('selected', [])
         excluded = prediction_config.get('excluded', [])
@@ -270,8 +270,8 @@ class Config:
             # Use only specified models
             return [m for m in selected if m not in excluded]
         else:
-            # Use all available models except excluded
-            all_models = list(PREDICTION_MODELS.keys())
+            # Use all available models except excluded (built-ins + plugins)
+            all_models = list(get_prediction_models().keys())
             return [m for m in all_models if m not in excluded]
     
     def get_predict_on_original_train(self) -> bool:

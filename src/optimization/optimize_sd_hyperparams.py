@@ -43,7 +43,7 @@ from reconstruction_metrics import (
     list_primary_metric_keys,
     optimization_loss,
 )
-from reconstruction_models import RECONSTRUCTION_MODELS
+from framework.plugin_registry import get_reconstruction_models
 
 # Strict dependencies for this script
 try:
@@ -235,16 +235,14 @@ def load_datasets(source_path: str, degraded_path: str, config) -> tuple:
 
 def get_stable_diffusion_models() -> list:
     """Discover Stable Diffusion models from registry."""
-    sd_models = [
-        name for name in RECONSTRUCTION_MODELS.keys() 
-        if name.startswith('stable_diffusion_')
-    ]
+    reg = get_reconstruction_models()
+    sd_models = [name for name in reg.keys() if name.startswith("stable_diffusion_")]
     return sorted(sd_models)
 
 
 def test_configuration(model_name: str, series: pd.Series, num_steps: int, guidance: float) -> dict:
     """Run a single reconstruction test with suppressed output."""
-    model_func = RECONSTRUCTION_MODELS[model_name]
+    model_func = get_reconstruction_models()[model_name]
     start_time = time.time()
     try:
         with suppress_output():
@@ -280,7 +278,7 @@ def run_optimization(args, test_cases, SD_MODELS, config, opt_metric_key: str, l
         # Pre-load model to show loading logs
         print(f"   🔄 Pre-loading {model_name} into memory (first run takes time)...")
         try:
-            model_func = RECONSTRUCTION_MODELS[model_name]
+            model_func = get_reconstruction_models()[model_name]
             # Create minimal dummy data to trigger load
             dummy_series = pd.Series(np.random.rand(10))
             dummy_series.iloc[1] = np.nan

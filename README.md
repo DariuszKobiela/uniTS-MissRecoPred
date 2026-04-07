@@ -1130,6 +1130,45 @@ RECONSTRUCTION_MODELS = {
 python src/4_reconstruct_datasets.py --models my_model
 ```
 
+### Plugins without forking this repository (runtime API and entry points)
+
+You can register models **without** editing `reconstruction_models/__init__.py` or `prediction_models/__init__.py`.
+
+**Option A — same process (Python):** after `PYTHONPATH=src` or `pip install -e .`, call before running the pipeline:
+
+```python
+from framework import register_reconstruction_model, register_prediction_model
+import pandas as pd
+
+def my_recon(s: pd.Series) -> pd.Series:
+    return s.fillna(s.median())
+
+register_reconstruction_model("my_recon", my_recon)
+
+def my_predict(train, horizon, **kwargs):
+    return pd.Series([float(train.iloc[-1])] * horizon, index=range(len(train), len(train) + horizon))
+
+register_prediction_model("my_predict", my_predict, gpu=False, deterministic=True)
+```
+
+Reconstruction callables should be `(pd.Series) -> pd.Series`. Stable Diffusion–style extra kwargs are only applied automatically for built-in names starting with `stable_diffusion_2`; for custom GPU models, wrap your logic in a one-argument callable or use a name under that prefix only if your API matches.
+
+**Option B — separate installable package:** in **your** `pyproject.toml`:
+
+```toml
+[project.entry-points."units_missrecopred.reconstruction"]
+my_method = "my_package.recon:impute_fn"
+
+[project.entry-points."units_missrecopred.prediction"]
+my_forecaster = "my_package.pred:predict_fn"
+```
+
+Install your package into the same environment as this framework; models appear in `get_reconstruction_models()` / `get_prediction_models()` on first use.
+
+**Prediction plugins** follow the **per-file** pattern (training happens inside predict, like `holt_winters`). Add your model id to `model_categories.per_file_training_models` in `config/prediction_models_config.yaml`, and add a parameter block for that id if needed. Step **7** does not train arbitrary new global Darts models via plugins.
+
+Full API details: [docs/API.md](docs/API.md#9-extensibility-plugins-and-entry-points).
+
 ### Add a Missingness Technique
 
 1. **Create** `missingness_techniques/my_technique.py`:

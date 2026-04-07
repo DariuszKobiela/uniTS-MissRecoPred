@@ -21,6 +21,13 @@ from framework.config_models import (  # noqa: E402
     ReconstructionErrorMetricsView,
     RunConfig,
 )
+from framework.plugin_registry import (  # noqa: E402
+    clear_plugin_registry,
+    get_prediction_models,
+    get_reconstruction_models,
+    register_prediction_model,
+    register_reconstruction_model,
+)
 from framework.runs import (  # noqa: E402
     PipelineFullResult,
     run_calculate_prediction_error,
@@ -41,6 +48,11 @@ __all__ = [
     "PredictionErrorMetricsView",
     "ReconstructionErrorMetricsView",
     "RunConfig",
+    "clear_plugin_registry",
+    "get_prediction_models",
+    "get_reconstruction_models",
+    "register_prediction_model",
+    "register_reconstruction_model",
     "run_calculate_prediction_error",
     "run_calculate_reconstruction_error",
     "run_clean_datasets",

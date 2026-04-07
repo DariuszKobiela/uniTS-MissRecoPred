@@ -12,6 +12,7 @@ This document describes the **Python library** exposed by the `framework` packag
 6. [Data dependencies between steps](#6-data-dependencies-between-steps)
 7. [Usage examples](#7-usage-examples)
 8. [FAQ and common issues](#8-faq-and-common-issues)
+9. [Extensibility (plugins and entry points)](#9-extensibility-plugins-and-entry-points)
 
 ---
 
@@ -624,6 +625,40 @@ Check `models_dir`, train models with step 7, and optionally `prediction_models.
 
 **`external_missing` mode**  
 Set `pipeline.entry: external_missing`, configure the manifest, run ingest (CLI), then use the API for steps 4, 7, 8, 9. Details: [README.md](../README.md).
+
+---
+
+## 9. Extensibility (plugins and entry points)
+
+Models can be added **without editing this repository** in two ways: **runtime registration** (same process) or **setuptools entry points** (separate installable package).
+
+### API
+
+From `framework` (or `framework.plugin_registry`):
+
+| Function | Role |
+|----------|------|
+| `register_reconstruction_model(name, fn, *, overwrite=False)` | `fn(series: pd.Series) -> pd.Series` (wrap SD-style kwargs in a closure if needed). |
+| `register_prediction_model(name, fn, *, gpu=False, deterministic=False, overwrite=False)` | Same contract as built-in predictors: `(train_series, horizon, **model_params) -> pd.Series`. |
+| `get_reconstruction_models()` / `get_prediction_models()` | Merged built-in + entry-point + runtime registrations. |
+| `clear_plugin_registry()` | Testing only — clears runtime state and entry-point cache. |
+
+Merge order: **built-ins**, then **entry points**, then **`register_*`** (each step overrides the same name).
+
+### Entry point groups
+
+Declare these under **`[project.entry-points]`** in **your** package’s `pyproject.toml` (see comments in [`pyproject.toml`](../pyproject.toml)):
+
+| Group | Meaning |
+|-------|---------|
+| `units_missrecopred.reconstruction` | Entry **name** = model id; value = `module:callable`. |
+| `units_missrecopred.prediction` | Same; loaded models default to `gpu=False`, `deterministic=False` unless you also register with `register_prediction_model(..., gpu=True, ...)`. |
+
+After `pip install` / `uv add` your package, the framework discovers plugins on first `get_*` call.
+
+### Prediction plugins and step 7
+
+Global Darts / XGBoost training in step **7** is unchanged. Plugin prediction models are intended for the **per-file** path (fit inside predict, like Holt–Winters): add the model id to `per_file_training_models` in `prediction_models_config.yaml` and optional hyperparameters under a YAML block named like the model. See [README.md](../README.md) (Adding New Models — plugins).
 
 ---
 

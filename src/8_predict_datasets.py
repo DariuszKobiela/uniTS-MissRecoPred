@@ -284,9 +284,9 @@ def predict_with_xgboost(model_data: dict, train_series: pd.Series, horizon: int
 def predict_with_statistical_model(model_name: str, train_series: pd.Series, 
                                     horizon: int, pred_config) -> np.ndarray:
     """Train and predict with statistical models (per-file)."""
-    from prediction_models import PREDICTION_MODELS
-    
-    predict_func = PREDICTION_MODELS.get(model_name)
+    from framework.plugin_registry import get_prediction_models
+
+    predict_func = get_prediction_models().get(model_name)
     if predict_func is None:
         raise ValueError(f"Unknown statistical model: {model_name}")
     

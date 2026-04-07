@@ -90,18 +90,28 @@ DETERMINISTIC_MODELS = {
 
 
 def get_available_models():
-    """Return list of available prediction model names."""
-    return list(PREDICTION_MODELS.keys())
+    """Return list of available prediction model names (built-ins and plugins)."""
+    from framework.plugin_registry import get_prediction_models
+
+    return list(get_prediction_models().keys())
 
 
 def is_gpu_model(model_name: str) -> bool:
     """Check if model benefits from GPU acceleration."""
-    return model_name in GPU_MODELS
+    if model_name in GPU_MODELS:
+        return True
+    from framework.plugin_registry import is_prediction_plugin_gpu
+
+    return is_prediction_plugin_gpu(model_name)
 
 
 def is_deterministic_model(model_name: str) -> bool:
     """Check if model is deterministic (random_state has no effect)."""
-    return model_name in DETERMINISTIC_MODELS
+    if model_name in DETERMINISTIC_MODELS:
+        return True
+    from framework.plugin_registry import is_prediction_plugin_deterministic
+
+    return is_prediction_plugin_deterministic(model_name)
 
 
 __all__ = [

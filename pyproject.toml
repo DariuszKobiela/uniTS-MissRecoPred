@@ -70,3 +70,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+# Third-party plugins register models via setuptools entry points in *their* pyproject.toml, e.g.:
+# [project.entry-points."units_missrecopred.reconstruction"]
+# my_method = "my_pkg.module:reconstruct_fn"
+# [project.entry-points."units_missrecopred.prediction"]
+# my_model = "my_pkg.module:predict_fn"

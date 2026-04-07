@@ -42,16 +42,37 @@ def get_known_prediction_models() -> list:
     if _known_pred_models_cache is None:
         try:
             pred_config = load_prediction_models_config()
-            _known_pred_models_cache = pred_config.get_all_model_names()
+            from framework.plugin_registry import get_prediction_models
+
+            names = set(pred_config.get_all_model_names())
+            names.update(get_prediction_models().keys())
+            _known_pred_models_cache = sorted(names, key=len, reverse=True)
         except Exception:
             # Fallback to hardcoded list if config fails
-            _known_pred_models_cache = [
-                'temporal_fusion_transformer', 'vanilla_transformer',
-                'nbeats_interpretable', 'holt_winters', 'prophet', 
-                'sarimax', 'xgboost', 'lstm', 'gru', 'deepar', 
-                'tcn', 'nbeats', 'transformer', 'tft'
-            ]
-    
+            try:
+                from framework.plugin_registry import get_prediction_models
+
+                _known_pred_models_cache = sorted(
+                    get_prediction_models().keys(), key=len, reverse=True
+                )
+            except Exception:
+                _known_pred_models_cache = [
+                    "temporal_fusion_transformer",
+                    "vanilla_transformer",
+                    "nbeats_interpretable",
+                    "holt_winters",
+                    "prophet",
+                    "sarimax",
+                    "xgboost",
+                    "lstm",
+                    "gru",
+                    "deepar",
+                    "tcn",
+                    "nbeats",
+                    "transformer",
+                    "tft",
+                ]
+
     # Sort by length descending (important: longer names must be matched first)
     return sorted(_known_pred_models_cache, key=len, reverse=True)
 
