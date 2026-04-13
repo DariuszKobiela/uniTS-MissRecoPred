@@ -1,9 +1,11 @@
 """
-Runtime registration and setuptools entry-point discovery for reconstruction and
-prediction models. Third-party packages can expose models without editing this repo.
+Runtime registration and setuptools entry-point discovery for missingness
+techniques, reconstruction models, and prediction models.
+Third-party packages can expose callables without editing this repo.
 
 Entry point groups (declare under ``[project.entry-points]`` in *your* package):
 
+- ``units_missrecopred.missingness`` — entry name = technique id, value = ``module:callable``
 - ``units_missrecopred.reconstruction`` — entry name = model id, value = ``module:callable``
 - ``units_missrecopred.prediction`` — same; callable signature
   ``(train_series, horizon, **model_params) -> pd.Series``
@@ -18,6 +20,80 @@ import importlib.metadata
 import warnings
 from typing import Any, Callable, Dict
 
+
+def _iter_entry_points(group: str):
+    eps = importlib.metadata.entry_points()
+    if hasattr(eps, "select"):
+        return eps.select(group=group)
+    return tuple(e for e in eps if getattr(e, "group", None) == group)
+
+
+# ---------------------------------------------------------------------------
+# Missingness techniques
+# ---------------------------------------------------------------------------
+
+_MISSINGNESS_REGISTERED: Dict[str, Callable[..., Any]] = {}
+_MISSINGNESS_FROM_EP: Dict[str, Callable[..., Any]] = {}
+_MISSINGNESS_EP_LOADED = False
+
+EP_GROUP_MISSINGNESS = "units_missrecopred.missingness"
+
+
+def _ensure_missingness_entry_points() -> None:
+    global _MISSINGNESS_EP_LOADED, _MISSINGNESS_FROM_EP
+    if _MISSINGNESS_EP_LOADED:
+        return
+    _MISSINGNESS_EP_LOADED = True
+    for ep in _iter_entry_points(EP_GROUP_MISSINGNESS):
+        try:
+            fn = ep.load()
+            if not callable(fn):
+                warnings.warn(
+                    f"Entry point {ep.name!r} in {EP_GROUP_MISSINGNESS!r} is not callable",
+                    stacklevel=2,
+                )
+                continue
+            _MISSINGNESS_FROM_EP[ep.name] = fn
+        except Exception as ex:  # noqa: BLE001
+            warnings.warn(
+                f"Failed to load entry point {ep.name!r} ({EP_GROUP_MISSINGNESS}): {ex}",
+                stacklevel=2,
+            )
+
+
+def register_missingness_technique(
+    name: str,
+    fn: Callable[..., Any],
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Register a missingness technique callable at runtime.
+
+    ``fn`` must follow the built-in signature:
+    ``(data: pd.Series, missing_rate: float, seed: int | None = None) -> pd.Series``.
+    """
+    if not callable(fn):
+        raise TypeError("fn must be callable")
+    key = str(name).strip()
+    if not key:
+        raise ValueError("name must be non-empty")
+    if key in _MISSINGNESS_REGISTERED and not overwrite:
+        raise ValueError(f"Missingness technique {key!r} is already registered (use overwrite=True)")
+    _MISSINGNESS_REGISTERED[key] = fn
+
+
+def get_missingness_techniques() -> Dict[str, Callable[..., Any]]:
+    """Built-in dict merged with entry points and runtime registrations (registered wins)."""
+    _ensure_missingness_entry_points()
+    from missingness_techniques import MISSINGNESS_TECHNIQUES
+
+    return {
+        **MISSINGNESS_TECHNIQUES,
+        **_MISSINGNESS_FROM_EP,
+        **_MISSINGNESS_REGISTERED,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Reconstruction
 # ---------------------------------------------------------------------------
@@ -28,13 +104,6 @@ _RECONSTRUCTION_EP_LOADED = False
 
 EP_GROUP_RECONSTRUCTION = "units_missrecopred.reconstruction"
 EP_GROUP_PREDICTION = "units_missrecopred.prediction"
-
-
-def _iter_entry_points(group: str):
-    eps = importlib.metadata.entry_points()
-    if hasattr(eps, "select"):
-        return eps.select(group=group)
-    return tuple(e for e in eps if getattr(e, "group", None) == group)
 
 
 def _ensure_reconstruction_entry_points() -> None:
@@ -168,7 +237,10 @@ def is_prediction_plugin_deterministic(name: str) -> bool:
 
 def clear_plugin_registry() -> None:
     """Reset runtime and entry-point caches (for tests). Call before/after tests that register plugins."""
-    global _RECONSTRUCTION_EP_LOADED, _PREDICTION_EP_LOADED
+    global _MISSINGNESS_EP_LOADED, _RECONSTRUCTION_EP_LOADED, _PREDICTION_EP_LOADED
+    _MISSINGNESS_REGISTERED.clear()
+    _MISSINGNESS_FROM_EP.clear()
+    _MISSINGNESS_EP_LOADED = False
     _RECONSTRUCTION_REGISTERED.clear()
     _RECONSTRUCTION_FROM_EP.clear()
     _RECONSTRUCTION_EP_LOADED = False

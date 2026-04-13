@@ -54,6 +54,12 @@ from framework import (
     run_pipeline_full,
     PathsConfig,
     MetricsConfig,
+    register_reconstruction_model,
+    register_prediction_model,
+    register_missingness_technique,
+    get_reconstruction_models,
+    get_prediction_models,
+    get_missingness_techniques,
 )
 from utils.config_loader import (
     Config,
@@ -638,9 +644,10 @@ From `framework` (or `framework.plugin_registry`):
 
 | Function | Role |
 |----------|------|
+| `register_missingness_technique(name, fn, *, overwrite=False)` | `fn(data: pd.Series, missing_rate: float, seed: int \| None = None) -> pd.Series`. |
 | `register_reconstruction_model(name, fn, *, overwrite=False)` | `fn(series: pd.Series) -> pd.Series` (wrap SD-style kwargs in a closure if needed). |
 | `register_prediction_model(name, fn, *, gpu=False, deterministic=False, overwrite=False)` | Same contract as built-in predictors: `(train_series, horizon, **model_params) -> pd.Series`. |
-| `get_reconstruction_models()` / `get_prediction_models()` | Merged built-in + entry-point + runtime registrations. |
+| `get_missingness_techniques()` / `get_reconstruction_models()` / `get_prediction_models()` | Merged built-in + entry-point + runtime registrations. |
 | `clear_plugin_registry()` | Testing only — clears runtime state and entry-point cache. |
 
 Merge order: **built-ins**, then **entry points**, then **`register_*`** (each step overrides the same name).
@@ -651,6 +658,7 @@ Declare these under **`[project.entry-points]`** in **your** package’s `pyproj
 
 | Group | Meaning |
 |-------|---------|
+| `units_missrecopred.missingness` | Entry **name** = technique id; value = `module:callable` with signature `(data, missing_rate, seed=None) -> pd.Series`. |
 | `units_missrecopred.reconstruction` | Entry **name** = model id; value = `module:callable`. |
 | `units_missrecopred.prediction` | Same; loaded models default to `gpu=False`, `deterministic=False` unless you also register with `register_prediction_model(..., gpu=True, ...)`. |
 

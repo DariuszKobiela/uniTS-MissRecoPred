@@ -4,7 +4,7 @@ A modular framework for evaluating time series reconstruction methods on univari
 
 **Framework name**: uniTS-MissRecoPred
 
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
 ## 📋 Table of Contents
@@ -35,7 +35,7 @@ A modular framework for evaluating time series reconstruction methods on univari
 
 ## ✨ Features
 
-- **20+ Reconstruction Models**: From simple imputation to deep learning (Stable Diffusion 2)
+- **21+ Reconstruction Models**: From simple imputation to deep learning (Stable Diffusion 2)
 - **3 Missingness Patterns**: MCAR, MAR, MNAR with configurable rates
 - **Train/Test Split**: Temporal split preserving time series structure for prediction tasks
 - **Automatic Discovery**: Auto-detects datasets, models, and techniques
@@ -57,7 +57,8 @@ uniTS-MissRecoPred/
 │   ├── 🐍 4_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
 │   ├── 🐍 5_calculate_reconstruction_error.py   # [MAIN] Reconstruction error metrics (CSV)
 │   ├── 🐍 6_visualize_reconstruction_error.py   # [MAIN] Streamlit dashboard
-│   ├── 🐍 7_predict_datasets.py            # [MAIN] Predict future values
+│   ├── 🐍 7_train_prediction_models.py      # [MAIN] Train forecasting models
+│   ├── 🐍 8_predict_datasets.py            # [MAIN] Predict future values
 │   ├── 🐍 9_calculate_prediction_error.py   # [MAIN] Prediction error metrics → CSV
 │   ├── 🐍 10_visualize_prediction.py        # [MAIN] Prediction Streamlit dashboard
 │   ├── 🐍 ingest_external_missing.py      # [OPTIONAL] Manifest → missing_dir + test (pipeline.entry external_missing)
@@ -72,6 +73,7 @@ uniTS-MissRecoPred/
 │   │
 │   ├── 📁 framework/                       # Library API: RunConfig, run_* , run_pipeline_full
 │   │   ├── 🐍 config_models.py
+│   │   ├── 🐍 plugin_registry.py             # Plugin registration: models, missingness techniques
 │   │   └── 🐍 runs.py
 │   │
 │   ├── 📁 utils/                           # Utility modules
@@ -82,7 +84,7 @@ uniTS-MissRecoPred/
 │   ├── 📁 optimization/                    # Hyperparameter optimization
 │   │   └── 🐍 optimize_sd_hyperparams.py      # SD hyperparameter tuning
 │   │
-│   ├── 📁 reconstruction_models/           # 20 reconstruction models
+│   ├── 📁 reconstruction_models/           # 21 reconstruction models
 │   │   ├── 🐍 impute_*.py                     # Simple imputation (mean, median, mode, ffill, bfill)
 │   │   ├── 🐍 interpolate_*.py                # Interpolation (linear, cubic, spline, etc.)
 │   │   ├── 🐍 knn.py                          # K-Nearest Neighbors
@@ -457,13 +459,13 @@ temporal_fusion_transformer:
 # Model categories
 model_categories:
   global_training_models:      # Trained ONCE on ALL data (deep learning)
-    - lstm, gru, deepar, tcn, nbeats, vanilla_transformer, temporal_fusion_transformer
+    - lstm, gru, deepar, tcn, nbeats, nbeats_interpretable, vanilla_transformer, temporal_fusion_transformer
   per_file_training_models:    # Trained separately per file (statistical)
     - sarimax, holt_winters, prophet
   deterministic_models:        # Always same output, 1 iteration
     - sarimax, holt_winters, prophet
   non_deterministic_models:    # Random init, N iterations for statistics
-    - lstm, gru, deepar, tcn, nbeats, vanilla_transformer, temporal_fusion_transformer, xgboost
+    - lstm, gru, deepar, tcn, nbeats, nbeats_interpretable, vanilla_transformer, temporal_fusion_transformer, xgboost
 ```
 
 **Training Iterations**: Non-deterministic models (deep learning, XGBoost) are trained N times with different random seeds for statistical analysis. Deterministic models (SARIMAX, Holt-Winters, Prophet) are trained only once.
@@ -568,22 +570,27 @@ Use this when you already have CSV time series with **NaN gaps** on the training
 *   **📥 INPUT**: Results CSV from `reconstruction_experiments_results/`
 *   **📤 OUTPUT**: Interactive Streamlit Dashboard (Web Interface).
 
-#### 7. Prediction
-*   **Script**: `src/7_predict_datasets.py`
+#### 7. Train Prediction Models
+*   **Script**: `src/7_train_prediction_models.py`
 *   **📥 INPUT**: 
     1.  **Training Data** from `data/2_splitted_data/train/` (original) and/or
     2.  **Reconstructed Data** from `data/4_fixed_data/` (reconstructed training data)
+*   **📤 OUTPUT**: Trained model artefacts
+*   **🔄 TRAINING**:
+    *   **Global training** (deep learning): One model trained on ALL data
+    *   **Per-file training** (statistical): Separate model trained for each file
+    *   **N iterations** (non-deterministic): Models trained N times with different seeds for statistical analysis
+
+#### 8. Predict Datasets
+*   **Script**: `src/8_predict_datasets.py`
+*   **📥 INPUT**: Trained models from step 7 and test data
 *   **📤 OUTPUT**: Prediction files in `prediction_experiment_results/predictions/`
     *   *Format*: `{dataset}_{model}_iter{N}.csv` (for non-deterministic models)
     *   *Format*: `{dataset}_{model}.csv` (for deterministic models)
     *   *Content*: `predicted` column with forecasted values, `iteration` column for statistical analysis
 *   **📝 METRICS OUTPUT**: `prediction_experiment_results/performance_metrics/*.csv`
-*   **🔄 TRAINING**:
-    *   **Global training** (deep learning): One model trained on ALL data, then predicts for each file
-    *   **Per-file training** (statistical): Separate model trained for each file
-    *   **N iterations** (non-deterministic): Models trained N times with different seeds for statistical analysis
 
-#### 8. Prediction Error Evaluation
+#### 9. Prediction Error Evaluation
 *   **Script**: `src/9_calculate_prediction_error.py`
 *   **📥 INPUT**: 
     1.  **Predictions** from `prediction_experiment_results/predictions/`
@@ -618,11 +625,11 @@ graph TD
     C -->|test/| E[Test Data - preserved]
     D -->|3_degrade_datasets.py| F[data/3_missing_data]
     F -->|4_reconstruct_datasets.py| G[data/4_fixed_data]
-    G -->|5_calculate_mad.py| H[reconstruction_experiments_results]
+    G -->|5_calculate_reconstruction_error.py| H[reconstruction_experiments_results]
     D -->|Ground Truth| H
     H -->|6_visualize...| I[Reconstruction Dashboard]
-    D -->|7_predict_datasets.py| J[predictions/]
-    G -->|7_predict_datasets.py| J
+    D -->|7_train_prediction_models.py| J[predictions/]
+    G -->|8_predict_datasets.py| J
     J -->|9_calculate_prediction_error.py| K[prediction_experiment_results]
     E -->|Ground truth for metrics| K
     K -->|10_visualize_prediction.py| L[Prediction Dashboard]
@@ -664,12 +671,18 @@ graph TD
 - `rate_percent` - Missing rate (%)
 - `iteration` - Iteration number
 - `model` - Reconstruction model name
-- `mad` - **Mean Absolute Difference** (only for missing values!)
+- `mad` - Mean Absolute Difference (computed only over missing positions)
+- `mae` - Mean Absolute Error
+- `rmse` - Root Mean Square Error
+- `r_squared` - Coefficient of determination (R²)
+- `smape` - Symmetric Mean Absolute Percentage Error
 - `max_diff` - Maximum difference
 - `min_diff` - Minimum difference
 - `std_diff` - Standard deviation of differences
 - `n_missing` - Number of missing values reconstructed
 - `n_total` - Total number of values in dataset
+
+The set of reconstruction metrics is configurable via the metric registry (see `src/reconstruction_metrics/`).
 
 ### Performance Metrics
 
@@ -681,7 +694,7 @@ graph TD
    - Includes timestamp for each reconstruction session
 
 2. **`reconstruction_experiments_results/reconstruction_results_YYYYMMDD_HHMMSS.csv`** - Merged results
-   - Combines MAD metrics + performance metrics
+   - Combines reconstruction error metrics + performance metrics
    - Created during evaluation (step 5)
    - Single file for easy analysis
 
@@ -762,13 +775,13 @@ python src/3_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iteration
 python src/4_reconstruct_datasets.py --models interpolate_linear knn
 
 # Calculate with custom config
-python src/5_calculate_mad.py --config config/my_config.yaml
+python src/5_calculate_reconstruction_error.py --config config/my_config.yaml
 
 # Prediction with specific models
-python src/7_predict_datasets.py --models holt_winters lstm xgboost
+python src/8_predict_datasets.py --models holt_winters lstm xgboost
 
 # Override number of training iterations
-python src/7_predict_datasets.py --iterations 10
+python src/8_predict_datasets.py --iterations 10
 ```
 
 **Quick test with Makefile** (limited data for fast testing):
@@ -815,7 +828,7 @@ python src/optimization/optimize_sd_hyperparams.py \
 - `impute_ffill` - Forward fill
 - `impute_bfill` - Backward fill
 
-#### Interpolation (9 models)
+#### Interpolation (10 models)
 - `interpolate_linear` - Linear interpolation
 - `interpolate_cubic` - Cubic interpolation
 - `interpolate_quadratic` - Quadratic interpolation
@@ -825,6 +838,7 @@ python src/optimization/optimize_sd_hyperparams.py \
 - `interpolate_pchip` - PCHIP (monotonic)
 - `interpolate_akima` - Akima (smooth curves)
 - `interpolate_spline` - Spline (order 2)
+- `interpolate_krogh` - Krogh polynomial interpolation
 
 #### Advanced (6 models)
 - `knn` - K-Nearest Neighbors
@@ -1004,7 +1018,8 @@ These models are trained once on ALL time series data (global training), then us
 | `gru` | Deep Learning | Global | ✅ | ❌ | ❌ |
 | `deepar` | Deep Learning | Global | ✅ | ✅ | ❌ |
 | `tcn` | Deep Learning | Global | ✅ | ❌ | ❌ |
-| `nbeats` | Deep Learning | Global | ✅ | ❌ | ✅ (interpretable variant) |
+| `nbeats` | Deep Learning | Global | ✅ | ❌ | ❌ |
+| `nbeats_interpretable` | Deep Learning | Global | ✅ | ❌ | ✅ (trend + seasonality decomposition) |
 | `vanilla_transformer` | Deep Learning | Global | ✅ | ❌ | ❌ |
 | `temporal_fusion_transformer` | Deep Learning | Global | ✅ | ✅ | ✅ (attention weights) |
 
@@ -1021,23 +1036,25 @@ These models are trained once on ALL time series data (global training), then us
 
 ## 📈 Visualization
 
-The Streamlit dashboard (`6_visualize_mad_comparison.py`) provides comprehensive analysis across **11 interactive tabs**:
+The Streamlit dashboard (`6_visualize_reconstruction_error.py`) provides comprehensive analysis across **11 interactive tabs**:
+
+A **metric selector** at the top of the dashboard lets users switch between any registered reconstruction metric (MAD, MAE, RMSE, R², sMAPE, or custom).
 
 ### 1. 📊 By Model
-Compare reconstruction quality (MAD) across all models with:
-- Bar charts showing average MAD per model
+Compare reconstruction quality across all models with:
+- Bar charts showing the selected metric per model
 - Model ranking visualization
 - Statistical comparisons
 
 ### 2. 🎯 By Technique
 Analyze performance differences between missingness techniques (MCAR vs MAR vs MNAR):
 - Technique comparison charts
-- Average MAD by technique
+- Average metric value by technique
 - Distribution analysis
 
 ### 3. 📉 By Missing Rate
 Evaluate how reconstruction quality changes with missing data percentage:
-- Line plots showing MAD vs missing rate
+- Line plots showing the selected metric vs missing rate
 - Performance degradation curves
 - Rate-specific analysis
 
@@ -1067,8 +1084,8 @@ Pairwise statistical significance testing:
 
 ### 8. 🏆 Best/Worst
 Quick overview of top and bottom performers:
-- Best 5 models (lowest MAD)
-- Worst 5 models (highest MAD)
+- Best 5 models (lowest error for the selected metric)
+- Worst 5 models (highest error for the selected metric)
 - Model comparison bar charts
 
 ### 9. ⏱️ Computation Time
@@ -1086,7 +1103,7 @@ Direct access to results with search and export
 ### Launch Dashboard
 
 ```bash
-streamlit run src/6_visualize_mad_comparison.py
+streamlit run src/6_visualize_reconstruction_error.py
 # Open browser at http://localhost:8501
 ```
 
@@ -1132,13 +1149,18 @@ python src/4_reconstruct_datasets.py --models my_model
 
 ### Plugins without forking this repository (runtime API and entry points)
 
-You can register models **without** editing `reconstruction_models/__init__.py` or `prediction_models/__init__.py`.
+You can register models and missingness techniques **without** editing source files.
 
 **Option A — same process (Python):** after `PYTHONPATH=src` or `pip install -e .`, call before running the pipeline:
 
 ```python
-from framework import register_reconstruction_model, register_prediction_model
+from framework import (
+    register_reconstruction_model,
+    register_prediction_model,
+    register_missingness_technique,
+)
 import pandas as pd
+import numpy as np
 
 def my_recon(s: pd.Series) -> pd.Series:
     return s.fillna(s.median())
@@ -1149,9 +1171,20 @@ def my_predict(train, horizon, **kwargs):
     return pd.Series([float(train.iloc[-1])] * horizon, index=range(len(train), len(train) + horizon))
 
 register_prediction_model("my_predict", my_predict, gpu=False, deterministic=True)
+
+def my_miss(data: pd.Series, missing_rate: float, seed: int = None) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    out = data.copy()
+    idx = rng.choice(len(out), int(len(out) * missing_rate), replace=False)
+    out.iloc[idx] = np.nan
+    return out
+
+register_missingness_technique("MY_CUSTOM", my_miss)
 ```
 
 Reconstruction callables should be `(pd.Series) -> pd.Series`. Stable Diffusion–style extra kwargs are only applied automatically for built-in names starting with `stable_diffusion_2`; for custom GPU models, wrap your logic in a one-argument callable or use a name under that prefix only if your API matches.
+
+Missingness callables should follow the signature `(pd.Series, float, int | None) -> pd.Series` (data, missing_rate, seed).
 
 **Option B — separate installable package:** in **your** `pyproject.toml`:
 
@@ -1161,15 +1194,33 @@ my_method = "my_package.recon:impute_fn"
 
 [project.entry-points."units_missrecopred.prediction"]
 my_forecaster = "my_package.pred:predict_fn"
+
+[project.entry-points."units_missrecopred.missingness"]
+my_technique = "my_package.miss:apply_fn"
 ```
 
-Install your package into the same environment as this framework; models appear in `get_reconstruction_models()` / `get_prediction_models()` on first use.
+Install your package into the same environment as this framework; models appear in `get_reconstruction_models()` / `get_prediction_models()` / `get_missingness_techniques()` on first use.
 
 **Prediction plugins** follow the **per-file** pattern (training happens inside predict, like `holt_winters`). Add your model id to `model_categories.per_file_training_models` in `config/prediction_models_config.yaml`, and add a parameter block for that id if needed. Step **7** does not train arbitrary new global Darts models via plugins.
 
 Full API details: [docs/API.md](docs/API.md#9-extensibility-plugins-and-entry-points).
 
 ### Add a Missingness Technique
+
+**Option A — runtime API (recommended for external plugins):**
+
+```python
+from framework import register_missingness_technique
+
+def apply_my_technique(data, missing_rate, seed=None):
+    ...
+
+register_missingness_technique("MY_TECHNIQUE", apply_my_technique)
+```
+
+The technique becomes available immediately in the same process and via `get_missingness_techniques()`.
+
+**Option B — add a source module to the repository:**
 
 1. **Create** `missingness_techniques/my_technique.py`:
 
@@ -1178,25 +1229,12 @@ import pandas as pd
 import numpy as np
 
 def apply_my_technique(data: pd.Series, missing_rate: float, seed: int = None) -> pd.Series:
-    """
-    Your missingness logic.
-    
-    Args:
-        data: Original series
-        missing_rate: Fraction to make missing (0.0 to 1.0)
-        seed: Random seed
-        
-    Returns:
-        Series with NaN values
-    """
     if seed is not None:
         np.random.seed(seed)
-    
     data_copy = data.copy()
     n_missing = int(len(data) * missing_rate)
     missing_indices = np.random.choice(len(data), n_missing, replace=False)
     data_copy.iloc[missing_indices] = np.nan
-    
     return data_copy
 ```
 
@@ -1299,11 +1337,10 @@ experiment\Scripts\activate.bat
 
 You should see `(experiment)` in your terminal prompt when active.
 
-### MAD Metric
-**MAD (Mean Absolute Difference)** measures reconstruction quality **ONLY for missing values**, not the entire series. This is crucial because:
-- Non-missing values should remain unchanged
-- We only care about how well the model reconstructed destroyed values
-- Lower MAD = better reconstruction
+### Reconstruction Error Metrics
+All reconstruction metrics are evaluated **only over missing positions**, not the entire series. This is crucial because non-missing values should remain unchanged; only the quality of reconstructed values matters.
+
+The default metric set includes **MAD** (Mean Absolute Difference), **MAE**, **RMSE**, **R²**, and **sMAPE**. Custom metrics can be added through the metric registry in `src/reconstruction_metrics/`. The Streamlit reconstruction dashboard provides a metric selector to switch between any registered metric.
 
 ### Train/Test Split
 The framework uses a **temporal split** for train/test data:

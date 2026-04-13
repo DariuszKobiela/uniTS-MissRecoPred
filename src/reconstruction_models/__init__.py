@@ -16,6 +16,7 @@ from .interpolate_cubic import interpolate_cubic
 from .interpolate_polynomial import interpolate_polynomial
 from .interpolate_pchip import interpolate_pchip
 from .interpolate_akima import interpolate_akima
+from .interpolate_krogh import interpolate_krogh
 from .interpolate_spline import interpolate_spline
 from .knn import knn_impute
 from .sarimax import sarimax_impute
@@ -38,6 +39,7 @@ __all__ = [
     'interpolate_polynomial',
     'interpolate_pchip',
     'interpolate_akima',
+    'interpolate_krogh',
     'interpolate_spline',
     'knn_impute',
     'sarimax_impute',
@@ -62,6 +64,7 @@ RECONSTRUCTION_MODELS = {
     'interpolate_polynomial': interpolate_polynomial,
     'interpolate_pchip': interpolate_pchip,
     'interpolate_akima': interpolate_akima,
+    'interpolate_krogh': interpolate_krogh,
     'interpolate_spline': interpolate_spline,
     'knn': knn_impute,
     'sarimax': sarimax_impute,

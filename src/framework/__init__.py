@@ -23,8 +23,10 @@ from framework.config_models import (  # noqa: E402
 )
 from framework.plugin_registry import (  # noqa: E402
     clear_plugin_registry,
+    get_missingness_techniques,
     get_prediction_models,
     get_reconstruction_models,
+    register_missingness_technique,
     register_prediction_model,
     register_reconstruction_model,
 )
@@ -49,8 +51,10 @@ __all__ = [
     "ReconstructionErrorMetricsView",
     "RunConfig",
     "clear_plugin_registry",
+    "get_missingness_techniques",
     "get_prediction_models",
     "get_reconstruction_models",
+    "register_missingness_technique",
     "register_prediction_model",
     "register_reconstruction_model",
     "run_calculate_prediction_error",

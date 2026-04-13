@@ -27,8 +27,7 @@ from utils.logger import setup_logging
 # Setup automatic logging to file
 setup_logging("3_degrade_datasets")
 
-# Import missingness techniques and config loader
-from missingness_techniques import MISSINGNESS_TECHNIQUES
+from framework.plugin_registry import get_missingness_techniques
 from utils.config_loader import load_config
 
 
@@ -122,11 +121,11 @@ def degrade_dataset(source_file: str,
     df = load_source_dataset(source_file, config)
     series = df.iloc[:, 0]  # First column is the time series
     
-    # Get missingness technique function
-    if missingness_technique not in MISSINGNESS_TECHNIQUES:
+    all_techniques = get_missingness_techniques()
+    if missingness_technique not in all_techniques:
         raise ValueError(f"Unknown missingness technique: {missingness_technique}")
     
-    technique_func = MISSINGNESS_TECHNIQUES[missingness_technique]
+    technique_func = all_techniques[missingness_technique]
     
     # Apply missingness
     print(f"\n  Applying {missingness_technique} with rate {missing_rate*100:.1f}%...")
@@ -177,7 +176,6 @@ Examples:
     parser.add_argument(
         '--techniques',
         nargs='+',
-        choices=list(MISSINGNESS_TECHNIQUES.keys()),
         help='Missingness techniques to apply (overrides config)'
     )
     
