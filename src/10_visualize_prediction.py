@@ -124,6 +124,479 @@ def load_training_metrics() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def get_available_reconstruction_results() -> list:
+    """Get list of available reconstruction result files"""
+    results_dir = Path("reconstruction_experiments_results")
+    if not results_dir.exists():
+        return []
+    return sorted(results_dir.glob("reconstruction_results_*.csv"), reverse=True)
+
+
+def load_reconstruction_performance() -> pd.DataFrame:
+    """Load the most recent reconstruction performance metrics file"""
+    files = get_available_reconstruction_results()
+    if not files:
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(files[0])
+    except Exception:
+        return pd.DataFrame()
+
+
+def _is_pareto_optimal(costs: np.ndarray) -> np.ndarray:
+    """Find Pareto optimal points (lower is better for both dimensions)."""
+    is_efficient = np.ones(costs.shape[0], dtype=bool)
+    for i, c in enumerate(costs):
+        if is_efficient[i]:
+            is_efficient[is_efficient] = (
+                np.any(costs[is_efficient] < c, axis=1)
+                | np.all(costs[is_efficient] == c, axis=1)
+            )
+            is_efficient[i] = True
+    return is_efficient
+
+
+def _add_efficiency_score_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add normalized resource columns and efficiency_score (lower = better)."""
+    out = df.copy()
+    time_min, time_max = out["time_seconds"].min(), out["time_seconds"].max()
+    out["time_norm"] = (out["time_seconds"] - time_min) / (time_max - time_min + 1e-9)
+
+    total_cores = (
+        out["cpu_cores_total"].mode()[0]
+        if "cpu_cores_total" in out.columns and out["cpu_cores_total"].notna().any()
+        else 1
+    )
+    out["cpu_norm"] = out["cpu_cores_used"] / total_cores
+
+    mem_min, mem_max = out["memory_mb"].min(), out["memory_mb"].max()
+    out["mem_norm"] = (out["memory_mb"] - mem_min) / (mem_max - mem_min + 1e-9)
+
+    if "gpu_memory_mb" in out.columns and "gpu_memory_total_mb" in out.columns:
+        out["gpu_norm"] = out.apply(
+            lambda row: (row["gpu_memory_mb"] / row["gpu_memory_total_mb"])
+            if pd.notna(row["gpu_memory_mb"])
+            and pd.notna(row["gpu_memory_total_mb"])
+            and row["gpu_memory_total_mb"] > 0
+            else 0.0,
+            axis=1,
+        )
+    else:
+        out["gpu_norm"] = 0.0
+
+    out["efficiency_score"] = (
+        out["time_norm"] + out["cpu_norm"] + out["mem_norm"] + out["gpu_norm"]
+    )
+    return out
+
+
+def render_reconstruction_efficiency_tab(
+    df_recon_perf: pd.DataFrame,
+    *,
+    technique: str | None = None,
+    rate: int | None = None,
+) -> None:
+    """Reconstruction resource efficiency by model (mirrors recon dashboard tab5)."""
+    st.header("⚡ Resource Efficiency Analysis (Reconstruction Cost)")
+    st.caption("Lower values = more efficient reconstruction (less time and resources)")
+
+    if df_recon_perf.empty:
+        st.warning(
+            "⚠️ No reconstruction performance file found in `reconstruction_experiments_results/`. "
+            "Run `python src/4_reconstruct_datasets.py` first."
+        )
+        return
+
+    if "cpu_cores_used" not in df_recon_perf.columns or df_recon_perf["cpu_cores_used"].isna().all():
+        st.warning(
+            "⚠️ No reconstruction performance metrics available. "
+            "Run reconstructions first to collect performance data."
+        )
+        return
+
+    df_perf = df_recon_perf[df_recon_perf["cpu_cores_used"].notna()].copy()
+    if technique:
+        df_perf = df_perf[df_perf["technique"] == technique]
+    if rate is not None:
+        df_perf = df_perf[df_perf["rate_percent"] == rate]
+
+    if df_perf.empty:
+        st.warning("No reconstruction performance data available with current filters")
+        return
+
+    with st.expander("ℹ️ How is the Efficiency Score calculated?", expanded=False):
+        st.markdown("""
+        The **Efficiency Score** combines four normalized metrics from the **reconstruction** stage:
+
+        **Formula:**
+        ```
+        Efficiency Score = Time_norm + CPU_norm + Memory_norm + GPU_norm
+        ```
+
+        **Components:**
+        - **Time_norm**: Normalized reconstruction time (0 to 1 scale)
+        - **CPU_norm**: CPU cores utilized relative to total available cores
+        - **Memory_norm**: Normalized RAM usage during reconstruction
+        - **GPU_norm**: GPU memory utilized relative to total GPU memory (0 for CPU-only models)
+
+        **Interpretation:**
+        - **Lower score** = more efficient reconstruction
+        - **Higher score** = slower or more resource-intensive reconstruction
+        - GPU-based models (e.g., Stable Diffusion) typically score higher due to GPU memory usage
+
+        **Use cases:**
+        - Compare reconstruction methods before downstream forecasting
+        - Select lightweight imputers for edge or batch deployments
+        - Pair with the **Best Model (Tradeoff)** tab to balance prediction quality vs cost
+        """)
+
+    st.divider()
+
+    df_scored = _add_efficiency_score_columns(df_perf)
+    efficiency = df_scored.groupby("model")["efficiency_score"].mean().reset_index()
+    efficiency = efficiency.sort_values("efficiency_score", ascending=True)
+    model_order = efficiency["model"].tolist()[::-1]
+
+    st.subheader("Overall Efficiency Score by Reconstruction Model")
+    st.caption("Reconstruction models sorted by efficiency (best to worst)")
+
+    fig = px.bar(
+        efficiency,
+        x="efficiency_score",
+        y="model",
+        orientation="h",
+        title="Overall Efficiency Score by Reconstruction Model (lower = better)",
+        labels={"efficiency_score": "Efficiency Score", "model": "Reconstruction Model"},
+        color="efficiency_score",
+        color_continuous_scale="RdYlGn_r",
+        category_orders={"model": model_order},
+    )
+    fig.update_yaxes(categoryorder="array", categoryarray=model_order)
+    fig.update_layout(height=max(400, len(efficiency) * 30), showlegend=False)
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("Time vs Memory Usage")
+    st.caption("Bubble size represents combined CPU + GPU utilization during reconstruction")
+
+    model_summary = df_perf.groupby("model").agg({
+        "time_seconds": "mean",
+        "memory_mb": "mean",
+        "cpu_cores_used": "mean",
+        "gpu_memory_mb": "mean",
+        "gpu_memory_total_mb": "mean",
+    }).reset_index()
+
+    model_summary["gpu_normalized"] = model_summary.apply(
+        lambda row: (row["gpu_memory_mb"] / row["gpu_memory_total_mb"]) * 4.0
+        if pd.notna(row["gpu_memory_mb"])
+        and pd.notna(row["gpu_memory_total_mb"])
+        and row["gpu_memory_total_mb"] > 0
+        else 0.0,
+        axis=1,
+    )
+    model_summary["combined_compute"] = (
+        model_summary["cpu_cores_used"] + model_summary["gpu_normalized"]
+    )
+    model_summary["compute_type"] = model_summary["gpu_normalized"].apply(
+        lambda x: "CPU+GPU" if x > 0 else "CPU only"
+    )
+
+    fig = px.scatter(
+        model_summary,
+        x="time_seconds",
+        y="memory_mb",
+        size="combined_compute",
+        text="model",
+        title="Reconstruction time vs memory (bubble size = CPU + GPU utilization)",
+        labels={
+            "time_seconds": "Avg Time (seconds)",
+            "memory_mb": "Avg Memory (MB)",
+            "model": "Reconstruction Model",
+        },
+        color="compute_type",
+        color_discrete_map={"CPU only": "#3498db", "CPU+GPU": "#e74c3c"},
+    )
+    fig.update_traces(textposition="top center")
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_reconstruction_tradeoff_tab(
+    df_recon: pd.DataFrame,
+    df_recon_perf: pd.DataFrame,
+    m: PredictionMetricView,
+    *,
+    prediction_model: str | None = None,
+    technique: str | None = None,
+    rate: int | None = None,
+) -> None:
+    """Best reconstruction model by prediction quality vs reconstruction cost."""
+    st.header("🏅 Best Reconstruction Model (Prediction Quality vs Reconstruction Cost)")
+    st.caption(
+        f"Find the optimal reconstruction method balancing downstream prediction quality "
+        f"({m.label}) and reconstruction computational cost"
+    )
+
+    df_quality = df_recon.copy()
+    if prediction_model:
+        df_quality = df_quality[df_quality["prediction_model"] == prediction_model]
+    if technique:
+        df_quality = df_quality[df_quality["technique"] == technique]
+    if rate is not None:
+        df_quality = df_quality[df_quality["rate_percent"] == rate]
+
+    if df_quality.empty:
+        st.warning("No prediction data available with current filters")
+        return
+
+    if df_recon_perf.empty:
+        st.warning(
+            "⚠️ No reconstruction performance file found in `reconstruction_experiments_results/`. "
+            "Run `python src/4_reconstruct_datasets.py` first."
+        )
+        return
+
+    if "cpu_cores_used" not in df_recon_perf.columns or df_recon_perf["cpu_cores_used"].isna().all():
+        st.warning(
+            "⚠️ No reconstruction performance metrics available. "
+            "Run reconstructions first to collect performance data."
+        )
+        return
+
+    df_perf = df_recon_perf[df_recon_perf["cpu_cores_used"].notna()].copy()
+    if technique:
+        df_perf = df_perf[df_perf["technique"] == technique]
+    if rate is not None:
+        df_perf = df_perf[df_perf["rate_percent"] == rate]
+    datasets = df_quality["dataset_name"].unique()
+    if len(datasets):
+        df_perf = df_perf[df_perf["dataset_name"].isin(datasets)]
+
+    if df_perf.empty:
+        st.warning("No reconstruction performance data available with current filters")
+        return
+
+    quality_agg = (
+        df_quality.groupby("reconstruction_model")[m.key]
+        .mean()
+        .reset_index()
+        .rename(columns={"reconstruction_model": "model", m.key: "quality_metric"})
+    )
+
+    perf_agg = df_perf.groupby("model").agg({
+        "time_seconds": "mean",
+        "cpu_cores_used": "mean",
+        "cpu_cores_total": "first",
+        "memory_mb": "mean",
+        "gpu_memory_mb": "mean",
+        "gpu_memory_total_mb": "first",
+    }).reset_index()
+
+    model_metrics = quality_agg.merge(perf_agg, on="model", how="inner")
+    if model_metrics.empty:
+        st.warning(
+            "Could not match reconstruction models between prediction results and "
+            "reconstruction performance data. Check that both pipelines used the same experiments."
+        )
+        missing = set(quality_agg["model"]) - set(perf_agg["model"])
+        if missing:
+            st.caption(f"Models without performance data: {', '.join(sorted(missing))}")
+        return
+
+    metric_col = "quality_metric"
+    metric_label = m.label
+    lower_is_better = m.lower_is_better
+
+    with st.expander("ℹ️ How is the Combined Score calculated?", expanded=False):
+        st.markdown(f"""
+        **Combined Score** balances downstream prediction quality and reconstruction cost:
+
+        **Formula:**
+        ```
+        Combined Score = α × Quality_norm + β × Efficiency_norm
+        ```
+
+        Where:
+        - **Quality_norm**: Normalized **{metric_label}** on held-out predictions
+          (0 = best among reconstruction models shown, 1 = worst)
+        - **Efficiency_norm**: Normalized reconstruction efficiency score
+          (time + CPU + RAM + GPU during reconstruction; lower usage = better)
+        - **α (alpha)**: Weight for prediction quality (default: 0.5)
+        - **β (beta)**: Weight for reconstruction efficiency (default: 0.5)
+
+        **Interpretation:**
+        - **Lower Combined Score** = better overall tradeoff
+        - Use **α > β** if prediction accuracy matters more
+        - Use **α < β** if reconstruction speed/resources matter more
+
+        **Pareto optimal models:** no strict improvement in {metric_label} without worse
+        reconstruction efficiency (or vice versa).
+        """)
+
+    st.divider()
+
+    q = model_metrics[metric_col]
+    q_min, q_max = q.min(), q.max()
+    if lower_is_better:
+        model_metrics["quality_norm"] = (q - q_min) / (q_max - q_min + 1e-9)
+    else:
+        model_metrics["quality_norm"] = (q_max - q) / (q_max - q_min + 1e-9)
+
+    model_metrics = _add_efficiency_score_columns(model_metrics)
+
+    eff_min, eff_max = model_metrics["efficiency_score"].min(), model_metrics["efficiency_score"].max()
+    model_metrics["efficiency_norm"] = (model_metrics["efficiency_score"] - eff_min) / (eff_max - eff_min + 1e-9)
+
+    st.subheader("⚖️ Adjust Tradeoff Weights")
+    col1, col2 = st.columns(2)
+    with col1:
+        alpha = st.slider(
+            f"α (Quality weight — {metric_label})",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            step=0.1,
+            key="tradeoff_alpha",
+            help="Higher = prioritize prediction quality",
+        )
+    with col2:
+        beta = st.slider(
+            "β (Efficiency weight)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            step=0.1,
+            key="tradeoff_beta",
+            help="Higher = prioritize reconstruction efficiency",
+        )
+
+    model_metrics["combined_score"] = (
+        alpha * model_metrics["quality_norm"] + beta * model_metrics["efficiency_norm"]
+    )
+    model_metrics = model_metrics.sort_values("combined_score")
+
+    st.divider()
+
+    best_model = model_metrics.iloc[0]
+    st.success(
+        f"🏆 **Best Reconstruction Model: {best_model['model']}** "
+        f"(Combined Score: {best_model['combined_score']:.4f})"
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(metric_label, f"{best_model[metric_col]:.4f}")
+    with col2:
+        st.metric("Recon Time", f"{best_model['time_seconds']:.2f}s")
+    with col3:
+        st.metric("CPU Cores", f"{best_model['cpu_cores_used']:.2f}")
+    with col4:
+        st.metric("Memory", f"{best_model['memory_mb']:.1f} MB")
+
+    st.divider()
+
+    st.subheader("📊 Reconstruction Model Ranking (by Combined Score)")
+    ranking_df = model_metrics[
+        ["model", metric_col, "efficiency_score", "combined_score", "time_seconds", "cpu_cores_used", "memory_mb"]
+    ].copy()
+    ranking_df = ranking_df.reset_index(drop=True)
+    ranking_df.index = ranking_df.index + 1
+    ranking_df.index.name = "Rank"
+
+    def highlight_best(_s):
+        return ["background-color: #90EE90" if i == 0 else "" for i in range(len(ranking_df))]
+
+    styled_ranking = ranking_df.style.format({
+        metric_col: "{:.4f}",
+        "efficiency_score": "{:.3f}",
+        "combined_score": "{:.4f}",
+        "time_seconds": "{:.2f}s",
+        "cpu_cores_used": "{:.2f}",
+        "memory_mb": "{:.1f}",
+    }).apply(highlight_best)
+
+    st.dataframe(styled_ranking, width="stretch")
+
+    st.divider()
+
+    st.subheader(f"📈 Pareto Front: {metric_label} vs Reconstruction Efficiency")
+    st.caption(
+        "Models on the Pareto front (green line) are non-dominated for prediction quality "
+        "vs reconstruction resource cost."
+    )
+
+    model_metrics["quality_pareto"] = (
+        model_metrics[metric_col] if lower_is_better else -model_metrics[metric_col]
+    )
+    costs = model_metrics[["quality_pareto", "efficiency_score"]].values
+    pareto_mask = _is_pareto_optimal(costs)
+    model_metrics["is_pareto"] = pareto_mask
+    pareto_points = model_metrics[model_metrics["is_pareto"]].sort_values("quality_pareto")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=model_metrics[metric_col],
+        y=model_metrics["efficiency_score"],
+        mode="markers+text",
+        marker=dict(
+            size=12,
+            color=model_metrics["combined_score"],
+            colorscale="RdYlGn_r",
+            showscale=True,
+            colorbar=dict(title="Combined<br>Score"),
+        ),
+        text=model_metrics["model"],
+        textposition="top center",
+        name="Models",
+        hovertemplate=(
+            f"<b>%{{text}}</b><br>{metric_label}: %{{x:.4f}}<br>"
+            "Efficiency: %{y:.3f}<extra></extra>"
+        ),
+    ))
+
+    if len(pareto_points) > 1:
+        fig.add_trace(go.Scatter(
+            x=pareto_points[metric_col],
+            y=pareto_points["efficiency_score"],
+            mode="lines",
+            line=dict(color="green", width=2, dash="dash"),
+            name="Pareto Front",
+            hoverinfo="skip",
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=pareto_points[metric_col],
+        y=pareto_points["efficiency_score"],
+        mode="markers",
+        marker=dict(size=18, color="green", symbol="circle-open", line=dict(width=3)),
+        name="Pareto Optimal",
+        hoverinfo="skip",
+    ))
+
+    qdir = "lower is better" if lower_is_better else "higher is better"
+    fig.update_layout(
+        title=f"Prediction quality ({metric_label}, {qdir}) vs reconstruction efficiency (lower is better)",
+        xaxis_title=f"{metric_label} →",
+        yaxis_title="Reconstruction Efficiency Score (Resource Usage) →",
+        height=600,
+        showlegend=True,
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("🌟 Pareto Optimal Reconstruction Models")
+    st.caption("Best tradeoffs — final choice depends on your quality vs cost priorities")
+
+    pareto_df = model_metrics[model_metrics["is_pareto"]][
+        ["model", metric_col, "efficiency_score", "time_seconds"]
+    ].copy()
+    pareto_df = pareto_df.sort_values(metric_col, ascending=lower_is_better)
+
+    for _, row in pareto_df.iterrows():
+        st.write(
+            f"• **{row['model']}**: {metric_label} = {row[metric_col]:.4f}, "
+            f"Efficiency = {row['efficiency_score']:.3f}, Recon Time = {row['time_seconds']:.2f}s"
+        )
+
+
 def plot_mape_by_reconstruction_model_main(
     df: pd.DataFrame,
     m: PredictionMetricView,
@@ -942,14 +1415,24 @@ def main():
     
     # Load training metrics for new tabs
     df_training = load_training_metrics()
+    df_recon_perf = load_reconstruction_performance()
+    if not df_recon_perf.empty:
+        if selected_datasets:
+            df_recon_perf = df_recon_perf[df_recon_perf["dataset_name"].isin(selected_datasets)]
+        if selected_techniques:
+            df_recon_perf = df_recon_perf[df_recon_perf["technique"].isin(selected_techniques)]
+        if selected_rates:
+            df_recon_perf = df_recon_perf[df_recon_perf["rate_percent"].isin(selected_rates)]
     
     # Visualization tabs - RECONSTRUCTION MODEL focused
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
         "🔧 By Recon Model",
         "📉 By Technique", 
         "📈 By Missing Rate",
         "🔥 Heatmaps",
         "🏆 Best/Worst",
+        "⚡ By Efficiency",
+        "🏅 Best Model (Tradeoff)",
         "📊 Statistical Tests",
         "📁 By Dataset",
         "⏱️ Performance",
@@ -1192,8 +1675,66 @@ def main():
         else:
             st.warning("No reconstructed data available")
     
-    # Tab 6: Statistical Tests
+    # Tab 6: By Efficiency
     with tab6:
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_technique_eff = st.selectbox(
+                "Filter by Technique",
+                ["All"] + all_techniques,
+                key="tab6_technique_eff",
+            )
+        with col2:
+            filter_rate_eff = st.selectbox(
+                "Filter by Missing Rate (%)",
+                ["All"] + [int(r) for r in all_rates],
+                key="tab6_rate_eff",
+            )
+
+        render_reconstruction_efficiency_tab(
+            df_recon_perf,
+            technique=None if filter_technique_eff == "All" else filter_technique_eff,
+            rate=None if filter_rate_eff == "All" else filter_rate_eff,
+        )
+
+    # Tab 7: Best Model Tradeoff
+    with tab7:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            filter_pred_model_tradeoff = st.selectbox(
+                "Filter by Prediction Model",
+                ["All"] + all_pred_models,
+                key="tab7_pred_model",
+                index=1 if all_pred_models else 0,
+                help="Select ONE prediction model to compare reconstruction methods",
+            )
+        with col2:
+            filter_technique_tradeoff = st.selectbox(
+                "Filter by Technique",
+                ["All"] + all_techniques,
+                key="tab7_technique",
+            )
+        with col3:
+            filter_rate_tradeoff = st.selectbox(
+                "Filter by Missing Rate (%)",
+                ["All"] + [int(r) for r in all_rates],
+                key="tab7_rate",
+            )
+
+        if filter_pred_model_tradeoff != "All":
+            st.info(f"📊 Showing tradeoff for prediction model: **{filter_pred_model_tradeoff}**")
+
+        render_reconstruction_tradeoff_tab(
+            df_recon,
+            df_recon_perf,
+            m,
+            prediction_model=None if filter_pred_model_tradeoff == "All" else filter_pred_model_tradeoff,
+            technique=None if filter_technique_tradeoff == "All" else filter_technique_tradeoff,
+            rate=None if filter_rate_tradeoff == "All" else filter_rate_tradeoff,
+        )
+
+    # Tab 8: Statistical Tests
+    with tab8:
         st.header("📊 Statistical Significance Tests")
         st.caption("Pairwise t-tests between RECONSTRUCTION models")
         
@@ -1321,8 +1862,8 @@ def main():
             pred_summary_df = pred_summary_df.sort_values('Better (p<0.01)', ascending=False)
             st.dataframe(pred_summary_df, width='stretch')
     
-    # Tab 7: By Dataset
-    with tab7:
+    # Tab 9: By Dataset
+    with tab9:
         st.header("📁 Comparison by Dataset")
         
         if len(df_recon) > 0:
@@ -1350,8 +1891,8 @@ def main():
         else:
             st.warning("No reconstructed data available")
     
-    # Tab 8: Performance (Time) - Training + Prediction
-    with tab8:
+    # Tab 10: Performance (Time) - Training + Prediction
+    with tab10:
         st.header("⏱️ Time Analysis (Training + Prediction)")
         
         # Load training metrics
@@ -1498,8 +2039,8 @@ def main():
                 with col3:
                     st.metric("Grand Total", f"{total_times['total_time'].sum():.1f}s")
     
-    # Tab 9: Resources (CPU, RAM, GPU) - Training + Prediction
-    with tab9:
+    # Tab 11: Resources (CPU, RAM, GPU) - Training + Prediction
+    with tab11:
         st.header("💻 Resource Usage (Training + Prediction)")
         
         # Load training metrics
@@ -1748,8 +2289,8 @@ def main():
                     fig.update_layout(height=500)
                     st.plotly_chart(fig, width='stretch')
     
-    # Tab 10: Raw Data
-    with tab10:
+    # Tab 12: Raw Data
+    with tab12:
         st.header("📋 Raw Data")
         
         data_source = st.radio("Data source", ["Reconstructed only", "All data"], horizontal=True)
