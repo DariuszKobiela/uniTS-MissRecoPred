@@ -3,6 +3,10 @@
 Train Prediction Models Script
 Trains all prediction models that require training (deep learning + XGBoost).
 
+LEGACY (rebuttal): steps 7--9 train global models and are not the authoritative
+forecasting path. Use ``make evaluate-rolling-origins`` / ``make rebuttal-forecast``
+for local rolling-origin evaluation reported in the rebuttal.
+
 This script:
 1. Trains global models (LSTM, GRU, TCN, N-BEATS, DeepAR, Vanilla Transformer, TFT, XGBoost)
 2. Trains N times for non-deterministic models (configurable)

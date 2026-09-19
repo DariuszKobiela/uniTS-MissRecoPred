@@ -3,6 +3,9 @@
 Dataset Prediction Script
 Predicts future values (test set) using trained models.
 
+LEGACY (rebuttal): this global/per-file prediction path is superseded by
+``src/8_evaluate_rolling_origins.py`` for rebuttal reporting.
+
 This script:
 1. Loads pre-trained models from trained_models/ folder
 2. Performs predictions on all training files

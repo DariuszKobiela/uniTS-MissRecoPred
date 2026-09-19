@@ -61,55 +61,121 @@ class SyntheticSeriesGenerator:
         self.rng = rng
 
     def generate(self, length: int, pattern: str) -> np.ndarray:
+        values, _ = self.generate_with_metadata(length, pattern)
+        return values
+
+    def generate_with_metadata(self, length: int, pattern: str) -> tuple[np.ndarray, dict]:
         t = np.linspace(0.0, 1.0, length)
         r = self.rng
+        params: dict = {"pattern": pattern, "length": length}
 
         if pattern == "harmonic":
-            values = r.uniform(0.5, 2.0) * np.sin(2 * np.pi * r.uniform(1, 12) * t + r.uniform(0, 2 * np.pi))
+            params.update(
+                {
+                    "amplitude": float(r.uniform(0.5, 2.0)),
+                    "frequency": float(r.uniform(1, 12)),
+                    "phase": float(r.uniform(0, 2 * np.pi)),
+                }
+            )
+            values = params["amplitude"] * np.sin(
+                2 * np.pi * params["frequency"] * t + params["phase"]
+            )
         elif pattern == "trend":
-            values = r.uniform(-3, 3) * t + r.uniform(-1, 1) * t**2
+            params.update(
+                {
+                    "linear_coef": float(r.uniform(-3, 3)),
+                    "quadratic_coef": float(r.uniform(-1, 1)),
+                }
+            )
+            values = params["linear_coef"] * t + params["quadratic_coef"] * t**2
         elif pattern == "seasonal":
+            n_components = int(r.integers(2, 6))
+            components = []
+            for _ in range(n_components):
+                components.append(
+                    {
+                        "amplitude": float(r.uniform(0.2, 1.2)),
+                        "frequency": float(r.uniform(1, 20)),
+                        "phase": float(r.uniform(0, 2 * np.pi)),
+                    }
+                )
+            params["components"] = components
             values = sum(
-                r.uniform(0.2, 1.2) * np.sin(2 * np.pi * r.uniform(1, 20) * t + r.uniform(0, 2 * np.pi))
-                for _ in range(r.integers(2, 6))
+                comp["amplitude"]
+                * np.sin(2 * np.pi * comp["frequency"] * t + comp["phase"])
+                for comp in components
             )
         elif pattern == "autoregressive":
-            phi = r.uniform(0.3, 0.98)
-            noise = r.normal(0, r.uniform(0.05, 0.4), length)
+            params.update(
+                {
+                    "phi": float(r.uniform(0.3, 0.98)),
+                    "noise_scale": float(r.uniform(0.05, 0.4)),
+                }
+            )
+            noise = r.normal(0, params["noise_scale"], length)
             values = np.zeros(length)
             for idx in range(1, length):
-                values[idx] = phi * values[idx - 1] + noise[idx]
+                values[idx] = params["phi"] * values[idx - 1] + noise[idx]
         elif pattern == "random_walk":
-            values = np.cumsum(r.normal(0, r.uniform(0.02, 0.2), length))
+            params["step_scale"] = float(r.uniform(0.02, 0.2))
+            values = np.cumsum(r.normal(0, params["step_scale"], length))
         elif pattern == "steps":
+            n_cuts = int(r.integers(2, 8))
+            cuts = sorted(r.choice(np.arange(1, length - 1), n_cuts, replace=False))
+            params["cuts"] = [int(value) for value in cuts]
             values = np.zeros(length)
-            cuts = sorted(r.choice(np.arange(1, length - 1), r.integers(2, 8), replace=False))
+            levels = []
             for left, right in zip([0, *cuts], [*cuts, length]):
-                values[left:right] = r.uniform(-2, 2)
+                level = float(r.uniform(-2, 2))
+                levels.append(level)
+                values[left:right] = level
+            params["levels"] = levels
         elif pattern == "spikes":
-            values = r.normal(0, 0.05, length)
-            indices = r.choice(length, max(1, length // 40), replace=False)
+            n_spikes = max(1, length // 40)
+            indices = r.choice(length, n_spikes, replace=False)
+            params["spike_indices"] = [int(value) for value in indices]
+            params["baseline_scale"] = 0.05
+            values = r.normal(0, params["baseline_scale"], length)
             values[indices] += r.normal(0, 2.0, len(indices))
         elif pattern == "chirp":
-            start, stop = r.uniform(1, 4), r.uniform(8, 30)
-            phase = 2 * np.pi * (start * t + 0.5 * (stop - start) * t**2)
+            params.update(
+                {
+                    "start_frequency": float(r.uniform(1, 4)),
+                    "stop_frequency": float(r.uniform(8, 30)),
+                }
+            )
+            phase = 2 * np.pi * (
+                params["start_frequency"] * t
+                + 0.5 * (params["stop_frequency"] - params["start_frequency"]) * t**2
+            )
             values = np.sin(phase)
         elif pattern == "heteroskedastic":
-            scale = np.linspace(r.uniform(0.02, 0.2), r.uniform(0.3, 1.0), length)
+            params.update(
+                {
+                    "start_scale": float(r.uniform(0.02, 0.2)),
+                    "stop_scale": float(r.uniform(0.3, 1.0)),
+                }
+            )
+            scale = np.linspace(params["start_scale"], params["stop_scale"], length)
             values = r.normal(0, scale)
         elif pattern == "mixed":
-            values = (
-                self.generate(length, "seasonal")
-                + 0.5 * self.generate(length, "trend")
-                + 0.3 * self.generate(length, "autoregressive")
-            )
+            seasonal, seasonal_params = self.generate_with_metadata(length, "seasonal")
+            trend, trend_params = self.generate_with_metadata(length, "trend")
+            ar, ar_params = self.generate_with_metadata(length, "autoregressive")
+            params["mixed_components"] = {
+                "seasonal": seasonal_params,
+                "trend": trend_params,
+                "autoregressive": ar_params,
+            }
+            values = seasonal + 0.5 * trend + 0.3 * ar
         else:
             raise ValueError(f"Unknown pattern: {pattern}")
 
-        values = values + r.normal(0, r.uniform(0.002, 0.08), length)
+        params["observation_noise_scale"] = float(r.uniform(0.002, 0.08))
+        values = values + r.normal(0, params["observation_noise_scale"], length)
         if not np.isfinite(values).all():
             raise ValueError("Synthetic generator produced non-finite values")
-        return values.astype(np.float64)
+        return values.astype(np.float64), params
 
 
 def degrade(
@@ -286,6 +352,7 @@ def main() -> None:
         for series_id in tqdm(range(args.samples), desc="Generating SD2 triplets"):
             window_samples = int(rng.choice(window_sizes))
             use_real = bool(real_series) and rng.random() < args.real_share
+            generator_params: dict = {}
             if use_real:
                 source_name, source_series = real_series[int(rng.integers(len(real_series)))]
                 clean = choose_real_window(source_series, window_samples, rng)
@@ -293,7 +360,8 @@ def main() -> None:
                 source_kind = "real"
             else:
                 pattern = str(rng.choice(SyntheticSeriesGenerator.PATTERNS))
-                clean = pd.Series(synthetic.generate(window_samples, pattern))
+                generated, generator_params = synthetic.generate_with_metadata(window_samples, pattern)
+                clean = pd.Series(generated)
                 source_name = pattern
                 source_kind = "synthetic"
             counts[source_kind] += 1
@@ -327,6 +395,8 @@ def main() -> None:
                     "source_kind": source_kind,
                     "source_name": source_name,
                     "pattern": pattern,
+                    "generator_params": generator_params if source_kind == "synthetic" else {"source_name": source_name},
+                    "generator_version": "SyntheticSeriesGenerator.v2",
                     "series_path": str(series_path.relative_to(output)),
                     "window_samples": window_samples,
                     "image_size": args.image_size,

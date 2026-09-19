@@ -320,7 +320,11 @@ make setup          # Install dependencies (uv sync)
 
 # Full workflow
 make pipeline       # Reconstruction only (steps 1-5)
-make pipeline-full  # Reconstruction + prediction train/predict/eval (1, 1.5, 2-5, 7-9)
+make pipeline-full  # Legacy: reconstruction + global prediction (1, 1.5, 2-5, 7-9)
+make pipeline-rebuttal  # Authoritative rebuttal path (see REBUTTAL_README.md)
+make evaluate-rolling-origins  # Local rolling-origin forecast evaluation
+make batch-statistics  # Friedman + Holm export for rebuttal tables
+make rebuttal-preflight  # Preflight checks before final rerun
 make ingest-external   # External missingness manifest → data dirs (see pipeline.entry)
 make pipeline-external # ingest + reconstruct + train + predict + eval (4, 7–9)
 make visualize-reconstruction-error  # Reconstruction dashboard

@@ -387,6 +387,13 @@ def main():
         print("="*70)
         
         config = load_config()
+        validation_dir = Path(config.get_splitted_sd2_validation_dir())
+        if validation_dir.is_dir() and any(validation_dir.glob("*.csv")):
+            print(
+                "❌ Legacy optimize_sd_hyperparams.py is blocked when sd2_validation exists. "
+                "Use src/optimization/analyze_sd2_design.py --run-inference for leakage-free HPO."
+            )
+            return
         opt_metric_key = config.get_optimization_reconstruction_metric()
         try:
             get_metric_spec(opt_metric_key)

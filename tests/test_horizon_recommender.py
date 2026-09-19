@@ -153,7 +153,7 @@ def test_duration_uses_most_aggregated_unit():
 
 def test_experiment_horizons_use_longest_for_split():
     mapping = {
-        "boiler_outlet_temp_univ.csv": [12, 96, 180, 720],
+        "boiler_outlet_temp_univ.csv": [12, 96, 180, 720, 1440],
         "pump_sensor_28_univ.csv": [12, 96, 360, 1440],
         "vibration_sensor_S1.csv": [12, 24],
     }
@@ -161,9 +161,9 @@ def test_experiment_horizons_use_longest_for_split():
         "boiler_outlet_temp_univ.csv", pd.date_range("2020-01-01", periods=5000, freq="5s")
     )
     rec = recommend_horizons_for_profile(boiler, experiment_horizons=mapping)
-    assert rec.horizons == [12, 96, 180, 720]
-    assert rec.h_long == 720
-    assert rec.train_length == 5000 - 720
+    assert rec.horizons == [12, 96, 180, 720, 1440]
+    assert rec.h_long == 1440
+    assert rec.train_length == 5000 - 1440
 
     lookup = load_h_long_lookup(
         metadata_document(
@@ -174,7 +174,7 @@ def test_experiment_horizons_use_longest_for_split():
             generated_at="2026-01-01T00:00:00+00:00",
         )
     )
-    assert lookup["boiler_outlet_temp_univ.csv"] == 720
+    assert lookup["boiler_outlet_temp_univ.csv"] == 1440
     assert format_horizon_span(720, 5.0) == "1 h"
     assert format_horizon_span(2160, 5.0) == "3 h"
     assert format_horizon_span(60, 60.0) == "1 h"

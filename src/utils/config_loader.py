@@ -72,6 +72,19 @@ class Config:
     def get_splitted_test_dir(self) -> str:
         """Get splitted test data directory"""
         return self.config['data'].get('splitted_test_dir', 'data/2_splitted_data/test')
+
+    def get_splitted_sd2_validation_dir(self) -> str:
+        """SD2 hyperparameter validation partition (disjoint from rolling test)."""
+        return self.config['data'].get(
+            'splitted_sd2_validation_dir',
+            'data/2_splitted_data/sd2_validation',
+        )
+
+    def get_split_manifest_path(self) -> str:
+        """JSON manifest with three-way split index ranges."""
+        default = str(Path(self.get_splitted_dir()) / 'split_manifest.json')
+        path = self.config['data'].get('split_manifest_path')
+        return str(path).strip() if path else default
     
     def get_test_samples(self) -> int:
         """Get number of samples for test set in train/test split"""
@@ -94,6 +107,38 @@ class Config:
             if horizons:
                 out[str(key)] = sorted(set(horizons))
         return out
+
+    def get_rolling_origin_counts(self) -> Dict[str, int]:
+        """Per-series rolling-origin counts from split.horizons.rolling_origins."""
+        raw = self.get_horizon_settings().get("rolling_origins") or {}
+        out: Dict[str, int] = {}
+        if not isinstance(raw, dict):
+            return out
+        for key, value in raw.items():
+            if value is None:
+                continue
+            out[str(key)] = int(value)
+        return out
+
+    def get_seasonal_periods(self) -> Dict[str, int]:
+        """Per-series seasonal period for seasonal-naive baseline."""
+        raw = self.get_horizon_settings().get("seasonal_periods") or {}
+        out: Dict[str, int] = {}
+        if not isinstance(raw, dict):
+            return out
+        for key, value in raw.items():
+            if value is None:
+                continue
+            out[str(key)] = int(value)
+        return out
+
+    def get_sd2_validation_settings(self) -> Dict[str, Any]:
+        """Settings for the SD2 validation block inside split.sd2_validation."""
+        return self.config.get('split', {}).get('sd2_validation', {}) or {}
+
+    def get_rolling_origin_settings(self) -> Dict[str, Any]:
+        """Rolling-origin evaluation settings from prediction.rolling_origins."""
+        return self.config.get('prediction', {}).get('rolling_origins', {}) or {}
 
     def get_dataset_metadata_path(self) -> str:
         """Path to dataset_metadata.json written by analyze_forecast_horizons."""

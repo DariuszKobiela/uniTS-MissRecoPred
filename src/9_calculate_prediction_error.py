@@ -5,6 +5,9 @@ Compares predicted values with actual test data (ground truth).
 Metrics are defined in prediction_metrics/ (config: prediction.error_metrics).
 Results are saved to prediction_experiment_results/ with timestamp.
 
+LEGACY (rebuttal): authoritative forecast metrics come from
+``src/8_evaluate_rolling_origins.py`` and ``src/11_batch_statistics.py``.
+
 NOTE: PREDICTIONS vs TEST ground truth. Predictions from 8_predict_datasets.py (after 7_train_prediction_models.py), test from splitted test dir.
 """
 

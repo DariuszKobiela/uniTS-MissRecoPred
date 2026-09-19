@@ -1,4 +1,4 @@
-.PHONY: help setup clean-datasets recommend-horizons create-split degrade-datasets analyze-missingness ingest-external optimize optimize-quick analyze-sd2-design analyze-sd2-ablation analyze-synthetic-real-gap optimize-sd2-design generate-sd2-training-data train-sd2-windowed reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets evaluate-rolling-origins calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
+.PHONY: help setup clean-datasets recommend-horizons create-split degrade-datasets analyze-missingness ingest-external optimize optimize-quick analyze-sd2-design analyze-sd2-ablation analyze-synthetic-real-gap optimize-sd2-design generate-sd2-training-data train-sd2-windowed reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets evaluate-rolling-origins batch-statistics rebuttal-preflight rebuttal-forecast rebuttal-validate run-manifest train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external pipeline-rebuttal clean clean-all test test-prediction test-unit
 
 # Default target
 help:
@@ -22,8 +22,12 @@ help:
 	@echo "  make visualize-reconstruction-error - Step 6:  Reconstruction results (Streamlit)"
 	@echo "  make train-prediction-models     - Step 7:  Train prediction models"
 	@echo "  make predict-datasets            - Step 8:  Run predictions"
-	@echo "  make evaluate-rolling-origins    - Refit SARIMAX/XGBoost at test origins"
-	@echo "  make calculate-prediction-error  - Step 9:  Prediction error metrics"
+	@echo "  make evaluate-rolling-origins    - Authoritative rolling-origin forecast evaluation"
+	@echo "  make batch-statistics            - Friedman + Holm post-hoc export (rebuttal)"
+	@echo "  make rebuttal-preflight          - Preflight checks before full rebuttal rerun"
+	@echo "  make rebuttal-forecast           - Rolling-origin evaluation + batch statistics"
+	@echo "  make pipeline-rebuttal           - Full rebuttal pipeline (1-6 + forecast + stats)"
+	@echo "  make calculate-prediction-error  - Step 9 (legacy): prediction error metrics"
 	@echo "  make visualize-prediction        - Step 10: Prediction results (Streamlit)"
 	@echo "  make analyze-sd2-design         - Analyze 512/1024/2048 windows and image sizes"
 	@echo "  make analyze-sd2-ablation       - Run round-trip and clean-image oracle controls"
@@ -190,13 +194,49 @@ predict-datasets:
 	@echo "✓ Prediction complete"
 
 
-# Rolling-origin evaluation on the fixed test split
+# Authoritative rolling-origin evaluation on the fixed test split
 evaluate-rolling-origins:
 	@echo "==================================================================="
-	@echo "Rolling-origin evaluation: SARIMAX and local XGBoost"
+	@echo "Rolling-origin evaluation (rebuttal authoritative path)"
 	@echo "==================================================================="
-	uv run python src/8_evaluate_rolling_origins.py
+	SD2_FAIL_CLOSED=1 uv run python src/8_evaluate_rolling_origins.py
 	@echo "✓ Rolling-origin evaluation complete"
+
+batch-statistics:
+	@echo "==================================================================="
+	@echo "Batch Friedman / Holm statistical export"
+	@echo "==================================================================="
+	uv run python src/11_batch_statistics.py \
+	  --rolling-results "$$(ls -t prediction_experiment_results/prediction_results_rolling_origins_*.csv 2>/dev/null | head -1)"
+	@echo "✓ Batch statistics exported"
+
+rebuttal-preflight:
+	@echo "==================================================================="
+	@echo "Rebuttal preflight checks"
+	@echo "==================================================================="
+	uv run pytest -q
+	uv run python -m compileall -q src tests
+	test -f config/config.yaml
+	test -f uv.lock || (echo "Missing uv.lock — run uv lock" && exit 1)
+	test -f data/2_splitted_data/split_manifest.json || (echo "Missing split manifest — run make create-split" && exit 1)
+	test -s models/sd2_windowed/best_model/model_index.json || (echo "Missing local fine-tuned SD2 model" && exit 1)
+	@echo "✓ Preflight checks passed"
+
+rebuttal-forecast: evaluate-rolling-origins batch-statistics
+	@echo "✓ Rebuttal forecast path complete"
+
+run-manifest:
+	@RUN_ID="$${RUN_ID:-rebuttal_$$(date -u +%Y%m%dT%H%M%SZ)}"; \
+	mkdir -p "runs/$$RUN_ID/manifests"; \
+	RUN_ID="$$RUN_ID" uv run python src/generate_run_manifest.py --run-id "$$RUN_ID"
+
+rebuttal-validate: rebuttal-preflight
+	@echo "✓ Final rebuttal validation passed"
+
+pipeline-rebuttal: clean-datasets recommend-horizons create-split degrade-datasets analyze-missingness analyze-sd2-design analyze-sd2-ablation generate-sd2-training-data analyze-synthetic-real-gap train-sd2-windowed reconstruct-datasets calculate-reconstruction-error rebuttal-forecast run-manifest
+	@echo "==================================================================="
+	@echo "✓ REBUTTAL PIPELINE COMPLETE"
+	@echo "==================================================================="
 # Step 9: Calculate prediction error (9_calculate_prediction_error.py)
 calculate-prediction-error:
 	@echo "==================================================================="
@@ -244,7 +284,9 @@ clean:
 	rm -rf data/1_cleaned_data/*
 	rm -rf data/1_5_horizon_recommendation/*
 	rm -rf data/2_splitted_data/train/*
+	rm -rf data/2_splitted_data/sd2_validation/*
 	rm -rf data/2_splitted_data/test/*
+	rm -f data/2_splitted_data/split_manifest.json
 	rm -f data/2_splitted_data/external_missing_ingest_state.json
 	rm -rf data/3_missing_data/*
 	rm -rf data/4_fixed_data/*
@@ -256,7 +298,9 @@ clean-all:
 	rm -rf data/1_cleaned_data/*
 	rm -rf data/1_5_horizon_recommendation/*
 	rm -rf data/2_splitted_data/train/*
+	rm -rf data/2_splitted_data/sd2_validation/*
 	rm -rf data/2_splitted_data/test/*
+	rm -f data/2_splitted_data/split_manifest.json
 	rm -rf data/3_missing_data/*
 	rm -rf data/4_fixed_data/*
 	rm -rf reconstruction_experiments_results/*.csv
@@ -267,6 +311,9 @@ clean-all:
 	rm -rf trained_prediction_models/*
 	rm -rf hyperparameter_optimization/*
 	@echo "✓ All generated files removed"
+
+test-unit:
+	uv run pytest -q
 
 # Quick test (for development)
 test:

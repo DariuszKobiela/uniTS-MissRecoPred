@@ -2,213 +2,199 @@
 """
 Data Splitting Script
 
-This script splits cleaned univariate time series datasets into training and test sets.
-The split is based on the last N samples defined in config.yaml going to the test set,
-with the remaining samples going to the training set.
+Splits cleaned univariate time series into three disjoint temporal partitions:
+  1. reconstruction-train — degradation and reconstruction experiments
+  2. sd2_validation — SD2 hyperparameter search only (never final evaluation)
+  3. rolling_test — rolling-origin forecast evaluation
 
-This temporal split preserves the time series structure and is appropriate for:
-- Reconstruction evaluation (training data)
-- Future prediction evaluation (test data)
-
-Usage:
-    python 2_create_split.py [--input-dir DIR] [--output-dir DIR] [--test-samples N]
-
-Examples:
-    # Split all datasets from default directories using config/config.yaml settings
-    python 2_create_split.py
-
-    # Split with custom test samples count
-    python 2_create_split.py --test-samples 100
-
-    # Split specific dataset
-    python 2_create_split.py --dataset vibration_sensor_S1.csv
+The rolling test holdout is the largest safe tail up to 20% of the series that
+still accommodates H_max and the configured number of rolling origins.
 """
 
 import os
 import sys
 
-# Add src directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.logger import setup_logging
 
-# Setup automatic logging to file
 setup_logging("2_create_split")
 
 import argparse
 import json
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
-# Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config_loader import load_config
-from utils.horizon_recommender import load_h_long_lookup
+from utils.horizon_recommender import (
+    HorizonConstraints,
+    load_h_long_lookup,
+    resolve_experiment_horizons,
+)
+from utils.split_plan import (
+    plan_three_way_split,
+    resolve_n_origins,
+    split_manifest_entry,
+)
 
 
-def split_time_series(df: pd.DataFrame, test_samples: int) -> tuple:
-    """
-    Split a time series DataFrame into training and test sets.
-    
-    The split is temporal: last N samples go to test, rest to train.
-    This preserves the time series structure.
-    
-    Args:
-        df: DataFrame with time series data (index + value columns)
-        test_samples: Number of last samples to use for test set
-        
-    Returns:
-        Tuple of (train_df, test_df)
-    """
-    total_samples = len(df)
-    
-    if test_samples >= total_samples:
-        raise ValueError(
-            f"test_samples ({test_samples}) must be less than total samples ({total_samples})"
-        )
-    
-    if test_samples <= 0:
-        raise ValueError(f"test_samples must be positive, got {test_samples}")
-    
-    # Split: all but last N for training, last N for test
-    train_df = df.iloc[:-test_samples].copy()
-    test_df = df.iloc[-test_samples:].copy()
-    
-    return train_df, test_df
+def split_time_series_three_way(
+    df: pd.DataFrame,
+    boundaries,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split into reconstruction train, SD2 validation, and rolling test."""
+    reconstruction = df.iloc[: boundaries.reconstruction_end].copy()
+    validation = df.iloc[boundaries.validation_start : boundaries.validation_end].copy()
+    test = df.iloc[boundaries.test_start :].copy()
+    return reconstruction, validation, test
 
 
-def load_horizon_metadata(metadata_path: str) -> dict[str, int]:
-    """Load per-series H_long from dataset_metadata.json if present."""
+def load_horizon_metadata(metadata_path: str) -> dict:
     if not os.path.exists(metadata_path):
         return {}
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        return load_h_long_lookup(payload)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        print(f"  ⚠️  Warning: Could not read horizon metadata ({metadata_path}): {exc}")
-        return {}
+    with open(metadata_path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    return payload
 
 
-def resolve_test_samples(
+def resolve_h_max(
     dataset_name: str,
-    default_test_samples: int,
     horizon_lookup: dict[str, int],
+    experiment_horizons: dict,
+    default_test_samples: int,
     total_samples: int,
-) -> tuple[int, str]:
-    """Resolve test holdout length: metadata h_long, else config fallback."""
+) -> tuple[int, list[int], str]:
+    forced = resolve_experiment_horizons(dataset_name, experiment_horizons)
+    if forced:
+        h_max = max(forced)
+        return h_max, forced, f"experiment horizons {forced}; H_max={h_max}"
     if dataset_name in horizon_lookup:
-        h_long = horizon_lookup[dataset_name]
-        if h_long >= total_samples:
-            fallback = max(1, total_samples // 5)
-            return fallback, f"h_long={h_long} too large; using 20% fallback ({fallback})"
-        return h_long, f"from dataset_metadata.json (longest horizon H_max={h_long})"
-    return default_test_samples, f"from config fallback (test_samples={default_test_samples})"
+        h_max = horizon_lookup[dataset_name]
+        return h_max, [h_max], f"metadata h_long={h_max}"
+    return default_test_samples, [default_test_samples], f"fallback test_samples={default_test_samples}"
 
 
-def split_dataset(input_file: str, 
-                  train_output_file: str, 
-                  test_output_file: str,
-                  test_samples: int,
-                  config,
-                  horizon_lookup: dict[str, int] | None = None) -> dict:
-    """
-    Split a single dataset into training and test sets.
-    
-    Args:
-        input_file: Path to input CSV file (cleaned data)
-        train_output_file: Path to output training CSV file
-        test_output_file: Path to output test CSV file
-        test_samples: Number of samples for test set
-        config: Configuration object
-        
-    Returns:
-        Dictionary with split statistics
-    """
+def split_dataset(
+    input_file: str,
+    train_output_file: str,
+    validation_output_file: str,
+    test_output_file: str,
+    config,
+    *,
+    horizon_lookup: dict[str, int] | None = None,
+    origin_counts: dict[str, int] | None = None,
+    constraints: HorizonConstraints | None = None,
+) -> dict:
     print(f"\n📂 Splitting: {os.path.basename(input_file)}")
-    
-    # Check if output files already exist with the requested holdout length
+
     train_exists = os.path.exists(train_output_file)
+    validation_exists = os.path.exists(validation_output_file)
     test_exists = os.path.exists(test_output_file)
-    
-    # Load cleaned dataset
+
     try:
         df = pd.read_csv(input_file, index_col=0)
-    except Exception as e:
-        print(f"  ❌ Error reading file: {e}")
-        return {'status': 'error', 'message': str(e)}
-    
+    except Exception as exc:
+        print(f"  ❌ Error reading file: {exc}")
+        return {"status": "error", "message": str(exc)}
+
     total_samples = len(df)
     print(f"  📊 Total samples: {total_samples}")
 
     dataset_name = os.path.basename(input_file)
     lookup = horizon_lookup or {}
-    requested_test_samples, source = resolve_test_samples(
+    origin_counts = origin_counts or {}
+    experiment_horizons = config.get_experiment_horizons()
+    sd2_val = config.get_sd2_validation_settings()
+
+    h_max, horizons, source = resolve_h_max(
         dataset_name,
-        test_samples,
         lookup,
+        experiment_horizons,
+        config.get_test_samples(),
         total_samples,
     )
-    print(f"  🎯 Test holdout: {requested_test_samples} ({source})")
-    print(
-        f"  ✂ Train = series[0 : n − {requested_test_samples}], "
-        f"test = series[n − {requested_test_samples} : n]"
+    n_origins = resolve_n_origins(
+        dataset_name,
+        origin_counts,
+        fallback=int(config.get_rolling_origin_settings().get("n_origins", 5)),
+    )
+    print(f"  🎯 H_max={h_max} ({source}), rolling origins={n_origins}")
+
+    cons = constraints or HorizonConstraints(
+        max_holdout_share=float(config.get_horizon_settings().get("max_holdout_share", 0.20)),
+        min_train_length=int(config.get_horizon_settings().get("min_train_length", 200)),
     )
 
-    if train_exists and test_exists and not config.get_overwrite_existing():
+    try:
+        boundaries = plan_three_way_split(
+            total_samples,
+            h_max,
+            n_origins,
+            constraints=cons,
+            validation_share=float(sd2_val.get("share", 0.10)),
+            validation_min_samples=int(sd2_val.get("min_samples", 64)),
+            validation_max_samples=int(sd2_val.get("max_samples", 500)),
+            min_reconstruction_length=int(config.get_horizon_settings().get("min_train_length", 200)),
+        )
+    except ValueError as exc:
+        print(f"  ❌ Split planning failed: {exc}")
+        return {"status": "error", "message": str(exc)}
+
+    for note in boundaries.notes:
+        print(f"  ℹ️  {note}")
+
+    if (
+        train_exists
+        and validation_exists
+        and test_exists
+        and not config.get_overwrite_existing()
+    ):
         try:
             existing_test_n = len(pd.read_csv(test_output_file, index_col=0))
         except Exception:
             existing_test_n = None
-        if existing_test_n == requested_test_samples:
-            print(f"  ⏭️  Skipping (files already exist with holdout={requested_test_samples})")
-            return {'status': 'skipped'}
-        print(
-            f"  🔁 Existing test length {existing_test_n} ≠ {requested_test_samples}; re-splitting"
-        )
+        if existing_test_n == boundaries.test_length:
+            print(f"  ⏭️  Skipping (files exist with test holdout={boundaries.test_length})")
+            return {"status": "skipped", "boundaries": boundaries, "horizons": horizons}
 
-    # Validate test_samples for this dataset
-    if requested_test_samples >= total_samples:
-        print(
-            f"  ⚠️  Warning: test holdout ({requested_test_samples}) >= "
-            f"total samples ({total_samples})"
-        )
-        print(f"      Using {total_samples // 5} samples for test (20% of data)")
-        actual_test_samples = max(1, total_samples // 5)
-    else:
-        actual_test_samples = requested_test_samples
-    
-    # Perform split
-    try:
-        train_df, test_df = split_time_series(df, actual_test_samples)
-    except Exception as e:
-        print(f"  ❌ Error splitting: {e}")
-        return {'status': 'error', 'message': str(e)}
-    
-    train_samples = len(train_df)
-    test_samples_actual = len(test_df)
-    
-    print(f"  📈 Train samples: {train_samples} ({train_samples/total_samples*100:.1f}%)")
-    print(f"  📉 Test samples:  {test_samples_actual} ({test_samples_actual/total_samples*100:.1f}%)")
-    
-    # Save split datasets
-    os.makedirs(os.path.dirname(train_output_file), exist_ok=True)
-    os.makedirs(os.path.dirname(test_output_file), exist_ok=True)
-    
-    train_df.to_csv(train_output_file)
-    test_df.to_csv(test_output_file)
-    
-    print(f"  ✅ Saved train: {train_output_file}")
-    print(f"  ✅ Saved test:  {test_output_file}")
-    
+    train_df, validation_df, test_df = split_time_series_three_way(df, boundaries)
+
+    print(
+        f"  📈 Reconstruction train: {len(train_df)} "
+        f"({len(train_df) / total_samples * 100:.1f}%)"
+    )
+    print(
+        f"  🧪 SD2 validation:      {len(validation_df)} "
+        f"({len(validation_df) / total_samples * 100:.1f}%)"
+    )
+    print(
+        f"  📉 Rolling test:        {len(test_df)} "
+        f"({len(test_df) / total_samples * 100:.1f}%)"
+    )
+
+    for path, frame in (
+        (train_output_file, train_df),
+        (validation_output_file, validation_df),
+        (test_output_file, test_df),
+    ):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        frame.to_csv(path)
+
+    print(f"  ✅ Saved reconstruction train: {train_output_file}")
+    print(f"  ✅ Saved SD2 validation:      {validation_output_file}")
+    print(f"  ✅ Saved rolling test:        {test_output_file}")
+
     return {
-        'status': 'success',
-        'total_samples': total_samples,
-        'train_samples': train_samples,
-        'test_samples': test_samples_actual
+        "status": "success",
+        "total_samples": total_samples,
+        "train_samples": len(train_df),
+        "validation_samples": len(validation_df),
+        "test_samples": len(test_df),
+        "boundaries": boundaries,
+        "horizons": horizons,
     }
 
 
@@ -217,31 +203,34 @@ def run_create_split(
     input_dir: str | None = None,
     output_dir: str | None = None,
     dataset: str | None = None,
-    test_samples: int | None = None,
     use_horizon_metadata: bool = True,
 ) -> bool:
-    """Step 2: temporal train/test split."""
     input_dir = input_dir or config.get_cleaned_dir()
     output_base_dir = output_dir or config.get_splitted_dir()
-    train_output_dir = os.path.join(output_base_dir, 'train')
-    test_output_dir = os.path.join(output_base_dir, 'test')
-    cli_override = test_samples is not None
-    test_samples = test_samples if test_samples is not None else config.get_test_samples()
-    metadata_path = config.get_dataset_metadata_path()
-    horizon_lookup = load_horizon_metadata(metadata_path) if use_horizon_metadata and not cli_override else {}
+    train_output_dir = config.get_splitted_train_dir()
+    validation_output_dir = config.get_splitted_sd2_validation_dir()
+    test_output_dir = config.get_splitted_test_dir()
+    manifest_path = config.get_split_manifest_path()
 
-    print(f"\n{'='*60}")
-    print(f"📊 DATA SPLITTING PIPELINE")
-    print(f"{'='*60}")
-    print(f"Input directory:       {input_dir}")
-    print(f"Train output directory: {train_output_dir}")
-    print(f"Test output directory:  {test_output_dir}")
-    print(f"Test samples fallback:  {test_samples}")
-    print(f"Horizon metadata:       {metadata_path}")
-    if horizon_lookup:
-        print(f"Per-series h_long entries: {len(horizon_lookup)}")
-    else:
-        print("Per-series h_long entries: 0 (using fallback for all series)")
+    metadata_path = config.get_dataset_metadata_path()
+    metadata = load_horizon_metadata(metadata_path) if use_horizon_metadata else {}
+    horizon_lookup = load_h_long_lookup(metadata) if metadata else {}
+    origin_counts = config.get_rolling_origin_counts()
+    constraints = HorizonConstraints(
+        max_holdout_share=float(config.get_horizon_settings().get("max_holdout_share", 0.20)),
+        min_train_length=int(config.get_horizon_settings().get("min_train_length", 200)),
+        ideal_holdout_share=float(config.get_horizon_settings().get("ideal_holdout_share", 0.15)),
+        unsafe_train_threshold=int(config.get_horizon_settings().get("unsafe_train_threshold", 190)),
+    )
+
+    print(f"\n{'=' * 60}")
+    print("THREE-WAY DATA SPLITTING")
+    print(f"{'=' * 60}")
+    print(f"Input directory:            {input_dir}")
+    print(f"Reconstruction train output: {train_output_dir}")
+    print(f"SD2 validation output:       {validation_output_dir}")
+    print(f"Rolling test output:         {test_output_dir}")
+    print(f"Split manifest:              {manifest_path}")
 
     if dataset:
         datasets = [dataset]
@@ -249,8 +238,7 @@ def run_create_split(
         if not os.path.exists(input_dir):
             print(f"\n❌ Error: Input directory does not exist: {input_dir}")
             return False
-
-        datasets = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
+        datasets = [f for f in os.listdir(input_dir) if f.endswith(".csv")]
 
     if not datasets:
         print(f"\n⚠️  No CSV files found in {input_dir}")
@@ -261,103 +249,67 @@ def run_create_split(
     success_count = 0
     skip_count = 0
     error_count = 0
-
-    total_train_samples = 0
-    total_test_samples = 0
+    manifest: dict = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "input_dir": input_dir,
+        "datasets": {},
+    }
 
     for ds in datasets:
         input_file = os.path.join(input_dir, ds)
-        train_output_file = os.path.join(train_output_dir, ds)
-        test_output_file = os.path.join(test_output_dir, ds)
-
         try:
             result = split_dataset(
                 input_file,
-                train_output_file,
-                test_output_file,
-                test_samples,
+                os.path.join(train_output_dir, ds),
+                os.path.join(validation_output_dir, ds),
+                os.path.join(test_output_dir, ds),
                 config,
                 horizon_lookup=horizon_lookup,
+                origin_counts=origin_counts,
+                constraints=constraints,
             )
-
-            if result['status'] == 'success':
+            if result["status"] == "success":
                 success_count += 1
-                total_train_samples += result['train_samples']
-                total_test_samples += result['test_samples']
-            elif result['status'] == 'skipped':
+                manifest["datasets"][ds] = split_manifest_entry(
+                    ds,
+                    result["boundaries"],
+                    result["horizons"],
+                )
+            elif result["status"] == "skipped":
                 skip_count += 1
             else:
                 error_count += 1
-
-        except Exception as e:
-            print(f"\n❌ Error splitting {ds}: {e}")
+        except Exception as exc:
+            print(f"\n❌ Error splitting {ds}: {exc}")
             import traceback
+
             traceback.print_exc()
             error_count += 1
 
-    print(f"\n{'='*60}")
-    print(f"✅ SPLITTING COMPLETE")
-    print(f"{'='*60}")
+    if manifest["datasets"]:
+        os.makedirs(os.path.dirname(os.path.abspath(manifest_path)) or ".", exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2, ensure_ascii=False)
+        print(f"\n✅ Wrote split manifest: {manifest_path}")
+
+    print(f"\n{'=' * 60}")
+    print("SPLITTING COMPLETE")
+    print(f"{'=' * 60}")
     print(f"Successfully split: {success_count}/{len(datasets)} datasets")
     print(f"Skipped (existing): {skip_count}")
     print(f"Errors:             {error_count}")
-
-    if success_count > 0:
-        print(f"\n📊 Total samples split:")
-        print(f"   Train: {total_train_samples}")
-        print(f"   Test:  {total_test_samples}")
-
-    print(f"\n📁 Output locations:")
-    print(f"   Train: {train_output_dir}")
-    print(f"   Test:  {test_output_dir}")
-    print(f"{'='*60}\n")
-    return True
+    return error_count == 0
 
 
 def main():
-    """Main execution function."""
     parser = argparse.ArgumentParser(
-        description="Split cleaned time series datasets into training and test sets",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Use configuration from config/config.yaml
-  python 2_create_split.py
-  
-  # Override test samples count
-  python 2_create_split.py --test-samples 100
-  
-  # Split specific dataset
-  python 2_create_split.py --dataset vibration_sensor_S1.csv
-        """
+        description="Split cleaned time series into reconstruction, SD2 validation, and test"
     )
-    parser.add_argument(
-        '--input-dir',
-        type=str,
-        help='Input directory containing cleaned datasets (default: from config/config.yaml)'
-    )
-    parser.add_argument(
-        '--output-dir',
-        type=str,
-        help='Output directory for split datasets (default: data/2_splitted_data)'
-    )
-    parser.add_argument(
-        '--dataset',
-        type=str,
-        help='Specific dataset filename to split (default: all datasets)'
-    )
-    parser.add_argument(
-        '--test-samples',
-        type=int,
-        help='Number of last samples for test set (default: from config/config.yaml)'
-    )
-    parser.add_argument(
-        '--config',
-        type=str,
-        default='config/config.yaml',
-        help='Path to configuration file (default: config/config.yaml)'
-    )
-
+    parser.add_argument("--input-dir", type=str)
+    parser.add_argument("--output-dir", type=str)
+    parser.add_argument("--dataset", type=str)
+    parser.add_argument("--config", type=str, default="config/config.yaml")
     args = parser.parse_args()
 
     try:
@@ -372,8 +324,6 @@ Examples:
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         dataset=args.dataset,
-        test_samples=args.test_samples,
-        use_horizon_metadata=True,
     )
 
 

@@ -9,8 +9,10 @@ data:
   cleaned_dir: "data/1_cleaned_data"         # Directory with cleaned datasets
   horizon_dir: "data/1_5_horizon_recommendation"  # Horizon metadata and reports (step 1.5)
   splitted_dir: "data/2_splitted_data"       # Directory with train/test split data
-  splitted_train_dir: "data/2_splitted_data/train"  # Training data (used for degradation)
-  splitted_test_dir: "data/2_splitted_data/test"    # Test data (used for prediction evaluation)
+  splitted_train_dir: "data/2_splitted_data/train"  # Reconstruction train (degradation)
+  splitted_sd2_validation_dir: "data/2_splitted_data/sd2_validation"  # SD2 HPO only
+  splitted_test_dir: "data/2_splitted_data/test"    # Rolling-origin final evaluation
+  split_manifest_path: "data/2_splitted_data/split_manifest.json"
   source_dir: "data/2_splitted_data/train"   # Directory with source datasets for degradation (training data)
   missing_dir: "data/3_missing_data"         # Directory for degraded datasets
   fixed_dir: "data/4_fixed_data"             # Directory for reconstructed datasets
@@ -39,6 +41,12 @@ split:
   # Step 2 prefers per-series h_long from analyze_forecast_horizons (step 1.5).
   test_samples: 30
 
+  # SD2 validation block (deterministic tail of reconstruction region, never in final eval)
+  sd2_validation:
+    share: 0.10
+    min_samples: 64
+    max_samples: 500
+
   # Horizon recommendation (analyze_forecast_horizons.py → 1_5_horizon_recommendation/)
   horizons:
     metadata_path: "data/1_5_horizon_recommendation/dataset_metadata.json"
@@ -54,9 +62,17 @@ split:
     short_series_h_long: 24
     # Experiment forecast horizons (samples). Split uses max(H) as the test tail.
     experiment:
-      boiler_outlet_temp_univ.csv: [12, 96, 180, 720]
+      boiler_outlet_temp_univ.csv: [12, 96, 180, 720, 1440]
       pump_sensor_28_univ.csv: [12, 96, 360, 1440]
       vibration_sensor_S1.csv: [12, 24]
+    rolling_origins:
+      boiler_outlet_temp_univ.csv: 5
+      pump_sensor_28_univ.csv: 5
+      vibration_sensor_S1.csv: 3
+    seasonal_periods:
+      boiler_outlet_temp_univ.csv: 720
+      pump_sensor_28_univ.csv: 1440
+      vibration_sensor_S1.csv: 12
 
 # ============================================================================
 # DATASETS
@@ -158,19 +174,23 @@ prediction:
     datasets:
       - boiler_outlet_temp_univ
       - pump_sensor_28_univ
+      - vibration_sensor_S1
     models:
-      - sarimax
       - xgboost
+      - sarimax
+      - persistence
+      - seasonal_naive
+      - xgboost_direct_missing
     n_origins: 5
     seed: 42
-    # Keep low: every worker independently fits SARIMAX/XGBoost many times.
+    # Keep low: every worker independently fits models many times per origin.
     max_workers: 1
+    lead_time_bins: true
 
   # Prediction error metrics (script 9 → prediction_results_*.csv); see src/prediction_metrics/
   error_metrics:
-    # Which metrics to compute; empty list = all registered built-ins (mape, smape, mase, mae, rmse)
-    compute: []
-    primary_metric: "mape"
+    compute: [mae, rmse, mase, mape, smape]
+    primary_metric: "mae"
     # minimize | maximize | auto (auto uses each metric's registered direction; all built-ins → minimize)
     primary_metric_objective: "auto"
 

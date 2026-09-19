@@ -550,9 +550,10 @@ def metadata_document(
     output_dir: str,
     constraints: HorizonConstraints,
     generated_at: str,
+    split_entries: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "generated_at": generated_at,
         "input_dir": input_dir,
         "output_dir": output_dir,
@@ -586,6 +587,11 @@ def metadata_document(
                 "short_cycle_label": rec.short_cycle_label,
                 "long_cycle_label": rec.long_cycle_label,
                 "notes": rec.notes,
+                **(
+                    dict(split_entries.get(rec.series_id, {}))
+                    if split_entries and rec.series_id in split_entries
+                    else {}
+                ),
             }
             for rec in series_recs
         },

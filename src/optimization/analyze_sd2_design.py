@@ -81,6 +81,49 @@ def load_series(path: Path, train_length: int | None = None) -> pd.Series:
     return series.reset_index(drop=True)
 
 
+def load_split_manifest(config) -> dict | None:
+    manifest_path = Path(config.get_split_manifest_path())
+    if not manifest_path.is_file():
+        return None
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def resolve_hpo_source_dir(config) -> Path:
+    """SD2 HPO must read only the sd2_validation partition when available."""
+    validation_dir = Path(config.get_splitted_sd2_validation_dir())
+    if validation_dir.is_dir() and any(validation_dir.glob("*.csv")):
+        return validation_dir
+    return Path(config.get_cleaned_dir())
+
+
+def write_hpo_disjointness_proof(
+    output_dir: Path,
+    *,
+    split_manifest: dict | None,
+    hpo_source_dir: Path,
+    rolling_test_dir: Path,
+) -> Path:
+    """Persist evidence that HPO indices do not overlap rolling-test indices."""
+    proof = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "hpo_source_dir": str(hpo_source_dir),
+        "rolling_test_dir": str(rolling_test_dir),
+        "datasets": {},
+    }
+    if split_manifest:
+        for dataset, payload in split_manifest.get("datasets", {}).items():
+            proof["datasets"][dataset] = {
+                "sd2_validation": payload.get("sd2_validation"),
+                "rolling_test": payload.get("rolling_test"),
+                "disjoint": payload.get("sd2_validation", {}).get("end_exclusive", 0)
+                <= payload.get("rolling_test", {}).get("start", 0),
+            }
+    path = output_dir / "sd2_hpo_disjointness_proof.json"
+    path.write_text(json.dumps(proof, indent=2), encoding="utf-8")
+    return path
+
+
 def expected_marked_axis_fraction(effective_samples: int, image_size: int, missing_rate: float) -> float:
     if effective_samples <= image_size:
         return min(1.0, effective_samples * missing_rate / image_size)
@@ -294,8 +337,10 @@ def run_representation_ablations(
 def run_empirical_search(
     args: argparse.Namespace,
     metadata: dict,
-    cleaned_dir: Path,
+    hpo_dir: Path,
     output_dir: Path,
+    *,
+    production_context_samples: int = 64,
 ) -> tuple[pd.DataFrame, list[dict]]:
     import optuna
     import torch
@@ -327,7 +372,9 @@ def run_empirical_search(
         encoding = encoding_from_model(model_name)
         for filename, info in metadata["series"].items():
             dataset = Path(filename).stem
-            source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
+            source = load_series(hpo_dir / filename)
+            if source.empty:
+                raise ValueError(f"Empty SD2 validation series: {hpo_dir / filename}")
 
             def objective(trial):
                 window_samples = trial.suggest_categorical("window_samples", args.window_sizes)
@@ -358,7 +405,7 @@ def run_empirical_search(
                                 num_inference_steps=steps,
                                 guidance_scale=guidance,
                                 window_samples=window_samples,
-                                context_samples=0,
+                                context_samples=production_context_samples,
                                 image_size=image_size,
                                 prompt=prompt,
                             )
@@ -436,9 +483,11 @@ def run_empirical_search(
 def run_seed_sensitivity(
     args: argparse.Namespace,
     metadata: dict,
-    cleaned_dir: Path,
+    hpo_dir: Path,
     output_dir: Path,
     winners: list[dict],
+    *,
+    production_context_samples: int = 64,
 ) -> pd.DataFrame:
     """Repeat winning settings over explicit SD2 seeds on one case per dataset."""
     registry = get_reconstruction_models()
@@ -448,7 +497,7 @@ def run_seed_sensitivity(
             name for name in metadata["series"] if Path(name).stem == winner["dataset"]
         )
         info = metadata["series"][filename]
-        source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
+        source = load_series(hpo_dir / filename)
         clean = validation_slice(source, int(winner["window_samples"]), 0, 1)
         mechanism = "MCAR"
         rate = args.rates[len(args.rates) // 2]
@@ -463,7 +512,7 @@ def run_seed_sensitivity(
                         num_inference_steps=int(winner["num_inference_steps"]),
                         guidance_scale=float(winner["guidance_scale"]),
                         window_samples=int(winner["window_samples"]),
-                        context_samples=0,
+                        context_samples=production_context_samples,
                         image_size=int(winner["image_size"]),
                         prompt=winner["prompt"],
                     )
@@ -706,8 +755,16 @@ def main() -> None:
     metadata_path = Path(config.config["split"]["horizons"]["metadata_path"])
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     cleaned_dir = Path(config.get_cleaned_dir())
+    hpo_dir = resolve_hpo_source_dir(config)
+    split_manifest = load_split_manifest(config)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    production_context = int(
+        config.config.get("computation", {})
+        .get("stable_diffusion", {})
+        .get("windowing", {})
+        .get("context_samples", args.context_samples)
+    )
 
     rows = build_analytical_rows(
         metadata,
@@ -728,8 +785,32 @@ def main() -> None:
         ablations = run_representation_ablations(args, metadata, cleaned_dir, output_dir)
 
     if args.run_inference:
-        empirical, empirical_winners = run_empirical_search(args, metadata, cleaned_dir, output_dir)
-        run_seed_sensitivity(args, metadata, cleaned_dir, output_dir, empirical_winners)
+        if hpo_dir == cleaned_dir:
+            print(
+                "⚠️  SD2 validation partition not found; HPO falls back to cleaned data. "
+                "Run make create-split before GPU HPO for leakage-free selection."
+            )
+        write_hpo_disjointness_proof(
+            output_dir,
+            split_manifest=split_manifest,
+            hpo_source_dir=hpo_dir,
+            rolling_test_dir=Path(config.get_splitted_test_dir()),
+        )
+        empirical, empirical_winners = run_empirical_search(
+            args,
+            metadata,
+            hpo_dir,
+            output_dir,
+            production_context_samples=production_context,
+        )
+        run_seed_sensitivity(
+            args,
+            metadata,
+            hpo_dir,
+            output_dir,
+            empirical_winners,
+            production_context_samples=production_context,
+        )
         recommendations = empirical_winners
         runtime_path = output_dir / "sd2_runtime_overrides.json"
         if runtime_path.is_file():

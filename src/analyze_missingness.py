@@ -12,6 +12,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from utils.config_loader import load_config
+from utils.empirical_mask_coverage import report_empirical_mask_coverage
 from utils.experiment_naming import decode_missingness_label
 from utils.missingness_analysis import summarize_missingness
 
@@ -72,6 +73,20 @@ def run_analyze_missingness(
         output_path / "missingness_realizations.csv", index=False
     )
     pd.DataFrame(gaps).to_csv(output_path / "missingness_gaps.csv", index=False)
+
+    sd_cfg = config.config.get("computation", {}).get("stable_diffusion", {})
+    windowing = sd_cfg.get("windowing", {}) or {}
+    mask_frame = report_empirical_mask_coverage(
+        input_path,
+        image_size=int(sd_cfg.get("image_size", 512)),
+        window_samples=int(windowing.get("default_window_samples", 512)),
+        context_samples=int(windowing.get("context_samples", 64)),
+    )
+    if not mask_frame.empty:
+        mask_path = output_path / "empirical_mask_coverage.csv"
+        mask_frame.to_csv(mask_path, index=False)
+        print(f"✓ Empirical mask coverage: {mask_path}")
+
     print(f"✓ Realizations: {len(summaries)}")
     print(f"✓ Individual gaps: {len(gaps)}")
     print(f"✓ Reports: {output_path}")
