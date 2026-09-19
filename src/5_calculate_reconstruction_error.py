@@ -271,6 +271,7 @@ def process_file_wrapper(args):
             return {'status': 'error', 'msg': f"Unknown dataset: {dataset_name}", 'filename': filename}
         
         source_file_path = dataset_mapping[dataset_name]
+        canonical_name = Path(source_file_path).stem
         
         # Check if source file exists
         if not os.path.exists(source_file_path):
@@ -294,7 +295,7 @@ def process_file_wrapper(args):
         )
 
         result = {
-            'dataset_name': metadata['dataset_name'],
+            'dataset_name': canonical_name,
             'technique': metadata['technique'],
             'rate_percent': metadata['rate_percent'],
             'iteration': metadata['iteration'],
@@ -303,13 +304,15 @@ def process_file_wrapper(args):
         }
         
         # Add performance metrics if available
-        perf_key = str((
-            metadata['dataset_name'],
+        perf_tuple = (
             metadata['technique'],
             metadata['rate_percent'],
             metadata['iteration'],
             metadata['model']
-        ))
+        )
+        perf_key = str((canonical_name, *perf_tuple))
+        if perf_key not in performance_metrics:
+            perf_key = str((metadata['dataset_name'], *perf_tuple))
         
         if perf_key in performance_metrics:
             perf = performance_metrics[perf_key]
@@ -404,7 +407,8 @@ def run_calculate_reconstruction_error(config) -> bool:
         print(f"❌ No source datasets found in {source_dir}")
         return False
 
-    dataset_mapping = {Path(f).stem: f for f in source_datasets}
+    dataset_mapping = config.build_source_dataset_mapping()
+    aliases = config.get_dataset_aliases()
 
     reconstructed_dir = Path(fixed_dir)
     if not reconstructed_dir.exists():
@@ -427,6 +431,8 @@ def run_calculate_reconstruction_error(config) -> bool:
     print(f"Primary (summaries): {primary_metric}")
     print(f"Source directory: {source_dir}")
     print(f"  Datasets: {len(source_datasets)} files")
+    if aliases:
+        print(f"  Filename aliases: {aliases}")
     print(f"Missing data directory: {missing_dir}")
     print(f"Fixed data directory: {fixed_dir}")
     print(f"  Reconstructed: {len(reconstructed_files)} files")

@@ -56,6 +56,10 @@ class Config:
     def get_cleaned_dir(self) -> str:
         """Get cleaned data directory"""
         return self.config['data'].get('cleaned_dir', 'data/1_cleaned_data')
+
+    def get_horizon_dir(self) -> str:
+        """Directory for step 1.5 horizon metadata and reports."""
+        return self.config['data'].get('horizon_dir', 'data/1_5_horizon_recommendation')
     
     def get_splitted_dir(self) -> str:
         """Get splitted data base directory"""
@@ -72,6 +76,43 @@ class Config:
     def get_test_samples(self) -> int:
         """Get number of samples for test set in train/test split"""
         return self.config.get('split', {}).get('test_samples', 100)
+
+    def get_horizon_settings(self) -> Dict[str, Any]:
+        """Horizon recommendation settings (split.horizons)."""
+        return self.config.get('split', {}).get('horizons', {}) or {}
+
+    def get_experiment_horizons(self) -> Dict[str, List[int]]:
+        """Per-series experiment horizon lists from split.horizons.experiment."""
+        raw = self.get_horizon_settings().get("experiment") or {}
+        out: Dict[str, List[int]] = {}
+        if not isinstance(raw, dict):
+            return out
+        for key, values in raw.items():
+            if values is None:
+                continue
+            horizons = [int(v) for v in values]
+            if horizons:
+                out[str(key)] = sorted(set(horizons))
+        return out
+
+    def get_dataset_metadata_path(self) -> str:
+        """Path to dataset_metadata.json written by analyze_forecast_horizons."""
+        hz = self.get_horizon_settings()
+        default = str(Path(self.get_horizon_dir()) / "dataset_metadata.json")
+        path = hz.get('metadata_path')
+        return str(path).strip() if path else default
+
+    def get_horizon_report_csv_path(self) -> str:
+        hz = self.get_horizon_settings()
+        default = str(Path(self.get_horizon_dir()) / "horizon_recommendations.csv")
+        path = hz.get('report_csv_path')
+        return str(path).strip() if path else default
+
+    def get_horizon_report_md_path(self) -> str:
+        hz = self.get_horizon_settings()
+        default = str(Path(self.get_horizon_dir()) / "horizon_recommendations.md")
+        path = hz.get('report_md_path')
+        return str(path).strip() if path else default
     
     def get_source_dir(self) -> str:
         """Get source data directory (training datasets for degradation)"""
@@ -177,6 +218,25 @@ class Config:
         
         datasets = sorted(source_dir.glob("*.csv"))
         return [str(f) for f in datasets]
+
+    def get_dataset_aliases(self) -> Dict[str, str]:
+        """Map short filename stems (degraded/reconstructed) to train stems."""
+        raw = self.config.get("datasets", {}).get("aliases") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(k).strip(): str(v).strip()
+            for k, v in raw.items()
+            if str(k).strip() and str(v).strip()
+        }
+
+    def build_source_dataset_mapping(self) -> Dict[str, str]:
+        """Stem → source path, including ``datasets.aliases``."""
+        mapping = {Path(f).stem: f for f in self.discover_datasets()}
+        for short, full in self.get_dataset_aliases().items():
+            if full in mapping:
+                mapping[short] = mapping[full]
+        return mapping
     
     def get_csv_format(self, filename: str) -> Dict[str, Any]:
         """
@@ -492,6 +552,7 @@ class Config:
         print("\n📁 Data Directories:")
         print(f"  Raw Source:             {self.get_raw_source_dir()}")
         print(f"  Cleaned:                {self.get_cleaned_dir()}")
+        print(f"  Horizon:                {self.get_horizon_dir()}")
         print(f"  Splitted:               {self.get_splitted_dir()}")
         print(f"    Train:                {self.get_splitted_train_dir()}")
         print(f"    Test:                 {self.get_splitted_test_dir()}")
@@ -502,7 +563,9 @@ class Config:
         print(f"  Prediction Results:     {self.get_prediction_results_dir()}")
         
         print(f"\n📊 Train/Test Split:")
-        print(f"  Test samples:  {self.get_test_samples()} (last N samples per dataset)")
+        print(f"  Test samples (fallback): {self.get_test_samples()} (last N samples per dataset)")
+        print(f"  Horizon dir:           {self.get_horizon_dir()}")
+        print(f"  Horizon metadata:      {self.get_dataset_metadata_path()}")
         
         datasets = self.get_datasets()
         print(f"\n📊 Datasets ({len(datasets)}):")

@@ -7,6 +7,7 @@
 data:
   raw_source_dir: "data/0_source_data"       # Directory with raw datasets (input)
   cleaned_dir: "data/1_cleaned_data"         # Directory with cleaned datasets
+  horizon_dir: "data/1_5_horizon_recommendation"  # Horizon metadata and reports (step 1.5)
   splitted_dir: "data/2_splitted_data"       # Directory with train/test split data
   splitted_train_dir: "data/2_splitted_data/train"  # Training data (used for degradation)
   splitted_test_dir: "data/2_splitted_data/test"    # Test data (used for prediction evaluation)
@@ -34,10 +35,28 @@ pipeline:
 # TRAIN/TEST SPLIT SETTINGS
 # ============================================================================
 split:
-  # Number of last samples to use as test set for each time series
-  # The remaining samples go to training set
-  # This temporal split preserves time series structure for prediction tasks
-  test_samples: 30  # Last 100 samples for test, rest for training
+  # Fallback when dataset_metadata.json is missing or has no entry for a series.
+  # Step 2 prefers per-series h_long from analyze_forecast_horizons (step 1.5).
+  test_samples: 30
+
+  # Horizon recommendation (analyze_forecast_horizons.py → 1_5_horizon_recommendation/)
+  horizons:
+    metadata_path: "data/1_5_horizon_recommendation/dataset_metadata.json"
+    report_csv_path: "data/1_5_horizon_recommendation/horizon_recommendations.csv"
+    report_md_path: "data/1_5_horizon_recommendation/horizon_recommendations.md"
+    max_holdout_share: 0.20
+    min_train_length: 200
+    ideal_holdout_share: 0.15
+    unsafe_train_threshold: 190
+    h_short: 12
+    h_long: 96
+    short_series_h_short: 12
+    short_series_h_long: 24
+    # Experiment forecast horizons (samples). Split uses max(H) as the test tail.
+    experiment:
+      boiler_outlet_temp_univ.csv: [12, 96, 180, 720]
+      pump_sensor_28_univ.csv: [12, 96, 360, 1440]
+      vibration_sensor_S1.csv: [12, 24]
 
 # ============================================================================
 # DATASETS
@@ -46,6 +65,12 @@ datasets:
   # Leave empty to auto-discover all CSV files in source_dir
   # Or specify exact files to use
   selected: []  # Empty = use all datasets from source_dir
+
+  # Short stems in data/3_missing_data and data/4_fixed_data → train file stems
+  aliases:
+    boiler: boiler_outlet_temp_univ
+    pump: pump_sensor_28_univ
+    vibr: vibration_sensor_S1
   
   # CSV format settings
   format:
@@ -70,10 +95,16 @@ reconstruction_models:
   
   # You can also exclude specific models:
   excluded:
-    # - "stable_diffusion_2_gaf"  # Uncomment to exclude (requires GPU)
+    # Base SD2 (stabilityai/stable-diffusion-2-inpainting) and fine-tuned
+    # (Daro77/...-gaf-mtf-rp-spec) variants both require GPU.
+    # - "stable_diffusion_2_gaf"
+    # - "stable_diffusion_2_gaf_finetuned"
     # - "stable_diffusion_2_mtf"
+    # - "stable_diffusion_2_mtf_finetuned"
     # - "stable_diffusion_2_rp"
+    # - "stable_diffusion_2_rp_finetuned"
     # - "stable_diffusion_2_spec"
+    # - "stable_diffusion_2_spec_finetuned"
 
 # ============================================================================
 # RECONSTRUCTION ERROR METRICS (script 5 → reconstruction_results_*.csv)
@@ -81,7 +112,10 @@ reconstruction_models:
 reconstruction:
   error_metrics:
     # Which metrics to compute; empty list = all registered built-ins (mad, mae, rmse, r2, smape)
-    compute: []
+    compute:
+      - mad
+      - mae
+      - smape
     primary_metric: "smape"
     # minimize | maximize | auto (auto uses each metric's registered direction)
     primary_metric_objective: "auto"
@@ -147,8 +181,8 @@ missingness_techniques:
 missingness_rates:
   # Fractions of data to remove (0.0 to 1.0)
   rates:
-  - 0.03   # 5%
-  - 0.08   # 10%
+  - 0.03   # 3%
+  - 0.08   # 8%
   - 0.20
 
   # Number of iterations (different random patterns per configuration)
@@ -197,6 +231,27 @@ computation:
     num_inference_steps: 42
     guidance_scale: 7.5
     device: "cuda"  # "cuda" or "cpu"
+    # SD2 was trained natively at 512 px. Test 1024/2048 only through the
+    # optimization script; their VRAM cost grows approximately with pixel area.
+    image_size: 512
+    image_size_by_dataset: {}
+    # Created only by GPU optimization. If present, its dataset x model values
+    # override the conservative defaults below.
+    runtime_overrides_path: "data/1_6_sd2_optimization/sd2_runtime_overrides.json"
+    windowing:
+      enabled: true
+      default_window_samples: 512
+      context_samples: 64
+      # Filled from the optimization report when dataset-specific winners differ.
+      by_dataset:
+        boiler: 512
+        pump: 512
+        vibr: 512
+    prompts:
+      gaf: "high quality gramian angular field mathematical visualization"
+      mtf: "high quality markov transition field mathematical visualization"
+      rp: "high quality continuous recurrence distance plot mathematical visualization"
+      spec: "high quality spectrogram mathematical visualization"
 
 # ============================================================================
 # OVERWRITE SETTINGS

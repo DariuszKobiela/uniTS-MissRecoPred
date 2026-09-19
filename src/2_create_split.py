@@ -36,6 +36,7 @@ from utils.logger import setup_logging
 setup_logging("2_create_split")
 
 import argparse
+import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -45,6 +46,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config_loader import load_config
+from utils.horizon_recommender import load_h_long_lookup
 
 
 def split_time_series(df: pd.DataFrame, test_samples: int) -> tuple:
@@ -78,11 +80,41 @@ def split_time_series(df: pd.DataFrame, test_samples: int) -> tuple:
     return train_df, test_df
 
 
+def load_horizon_metadata(metadata_path: str) -> dict[str, int]:
+    """Load per-series H_long from dataset_metadata.json if present."""
+    if not os.path.exists(metadata_path):
+        return {}
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        return load_h_long_lookup(payload)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        print(f"  ⚠️  Warning: Could not read horizon metadata ({metadata_path}): {exc}")
+        return {}
+
+
+def resolve_test_samples(
+    dataset_name: str,
+    default_test_samples: int,
+    horizon_lookup: dict[str, int],
+    total_samples: int,
+) -> tuple[int, str]:
+    """Resolve test holdout length: metadata h_long, else config fallback."""
+    if dataset_name in horizon_lookup:
+        h_long = horizon_lookup[dataset_name]
+        if h_long >= total_samples:
+            fallback = max(1, total_samples // 5)
+            return fallback, f"h_long={h_long} too large; using 20% fallback ({fallback})"
+        return h_long, f"from dataset_metadata.json (longest horizon H_max={h_long})"
+    return default_test_samples, f"from config fallback (test_samples={default_test_samples})"
+
+
 def split_dataset(input_file: str, 
                   train_output_file: str, 
                   test_output_file: str,
                   test_samples: int,
-                  config) -> dict:
+                  config,
+                  horizon_lookup: dict[str, int] | None = None) -> dict:
     """
     Split a single dataset into training and test sets.
     
@@ -98,13 +130,9 @@ def split_dataset(input_file: str,
     """
     print(f"\n📂 Splitting: {os.path.basename(input_file)}")
     
-    # Check if output files already exist
+    # Check if output files already exist with the requested holdout length
     train_exists = os.path.exists(train_output_file)
     test_exists = os.path.exists(test_output_file)
-    
-    if train_exists and test_exists and not config.get_overwrite_existing():
-        print(f"  ⏭️  Skipping (files already exist, overwrite_existing=false)")
-        return {'status': 'skipped'}
     
     # Load cleaned dataset
     try:
@@ -115,14 +143,43 @@ def split_dataset(input_file: str,
     
     total_samples = len(df)
     print(f"  📊 Total samples: {total_samples}")
-    
+
+    dataset_name = os.path.basename(input_file)
+    lookup = horizon_lookup or {}
+    requested_test_samples, source = resolve_test_samples(
+        dataset_name,
+        test_samples,
+        lookup,
+        total_samples,
+    )
+    print(f"  🎯 Test holdout: {requested_test_samples} ({source})")
+    print(
+        f"  ✂ Train = series[0 : n − {requested_test_samples}], "
+        f"test = series[n − {requested_test_samples} : n]"
+    )
+
+    if train_exists and test_exists and not config.get_overwrite_existing():
+        try:
+            existing_test_n = len(pd.read_csv(test_output_file, index_col=0))
+        except Exception:
+            existing_test_n = None
+        if existing_test_n == requested_test_samples:
+            print(f"  ⏭️  Skipping (files already exist with holdout={requested_test_samples})")
+            return {'status': 'skipped'}
+        print(
+            f"  🔁 Existing test length {existing_test_n} ≠ {requested_test_samples}; re-splitting"
+        )
+
     # Validate test_samples for this dataset
-    if test_samples >= total_samples:
-        print(f"  ⚠️  Warning: test_samples ({test_samples}) >= total samples ({total_samples})")
+    if requested_test_samples >= total_samples:
+        print(
+            f"  ⚠️  Warning: test holdout ({requested_test_samples}) >= "
+            f"total samples ({total_samples})"
+        )
         print(f"      Using {total_samples // 5} samples for test (20% of data)")
         actual_test_samples = max(1, total_samples // 5)
     else:
-        actual_test_samples = test_samples
+        actual_test_samples = requested_test_samples
     
     # Perform split
     try:
@@ -161,13 +218,17 @@ def run_create_split(
     output_dir: str | None = None,
     dataset: str | None = None,
     test_samples: int | None = None,
+    use_horizon_metadata: bool = True,
 ) -> bool:
     """Step 2: temporal train/test split."""
     input_dir = input_dir or config.get_cleaned_dir()
     output_base_dir = output_dir or config.get_splitted_dir()
     train_output_dir = os.path.join(output_base_dir, 'train')
     test_output_dir = os.path.join(output_base_dir, 'test')
+    cli_override = test_samples is not None
     test_samples = test_samples if test_samples is not None else config.get_test_samples()
+    metadata_path = config.get_dataset_metadata_path()
+    horizon_lookup = load_horizon_metadata(metadata_path) if use_horizon_metadata and not cli_override else {}
 
     print(f"\n{'='*60}")
     print(f"📊 DATA SPLITTING PIPELINE")
@@ -175,7 +236,12 @@ def run_create_split(
     print(f"Input directory:       {input_dir}")
     print(f"Train output directory: {train_output_dir}")
     print(f"Test output directory:  {test_output_dir}")
-    print(f"Test samples (last N):  {test_samples}")
+    print(f"Test samples fallback:  {test_samples}")
+    print(f"Horizon metadata:       {metadata_path}")
+    if horizon_lookup:
+        print(f"Per-series h_long entries: {len(horizon_lookup)}")
+    else:
+        print("Per-series h_long entries: 0 (using fallback for all series)")
 
     if dataset:
         datasets = [dataset]
@@ -210,7 +276,8 @@ def run_create_split(
                 train_output_file,
                 test_output_file,
                 test_samples,
-                config
+                config,
+                horizon_lookup=horizon_lookup,
             )
 
             if result['status'] == 'success':
@@ -306,6 +373,7 @@ Examples:
         output_dir=args.output_dir,
         dataset=args.dataset,
         test_samples=args.test_samples,
+        use_horizon_metadata=True,
     )
 
 

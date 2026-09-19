@@ -52,6 +52,12 @@ def run_clean_datasets(config: Config, **kwargs: Any) -> bool:
     return _load_script_module("1_clean_datasets.py").run_clean_datasets(config, **kwargs)
 
 
+def run_analyze_forecast_horizons(config: Config, **kwargs: Any) -> bool:
+    return _load_script_module("analyze_forecast_horizons.py").run_analyze_forecast_horizons(
+        config, **kwargs
+    )
+
+
 def run_create_split(config: Config, **kwargs: Any) -> bool:
     return _load_script_module("2_create_split.py").run_create_split(config, **kwargs)
 
@@ -102,6 +108,7 @@ def run_pipeline_full(
     steps: List[str] = []
     order = [
         ("clean_datasets", lambda: run_clean_datasets(config)),
+        ("analyze_forecast_horizons", lambda: run_analyze_forecast_horizons(config)),
         ("create_split", lambda: run_create_split(config)),
         ("degrade_datasets", lambda: run_degrade_datasets(config)),
         ("reconstruct_datasets", lambda: run_reconstruct_datasets(config)),

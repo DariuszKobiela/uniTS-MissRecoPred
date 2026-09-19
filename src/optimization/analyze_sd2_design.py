@@ -1,0 +1,593 @@
+#!/usr/bin/env python3
+# ruff: noqa: E402
+"""Analyze and optionally optimize the local-window SD2 reconstruction design."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import numpy as np
+import pandas as pd
+
+from framework.plugin_registry import get_reconstruction_models
+from missingness_techniques.mar import apply_mar
+from missingness_techniques.mcar import apply_mcar
+from missingness_techniques.mnar import apply_mnar
+from reconstruction_metrics import compute_metrics_from_series, get_metric_spec
+from reconstruction_models.sd2_settings import DEFAULT_PROMPTS
+from reconstruction_models.sd2_windowing import plan_reconstruction_windows
+from utils.config_loader import load_config
+
+PROMPT_CANDIDATES = {
+    "gaf": [
+        DEFAULT_PROMPTS["gaf"],
+        "grayscale gramian angular field of a continuous sensor signal, preserve mathematical structure",
+        "scientific time series gramian angular field, coherent diagonal and smooth local texture",
+    ],
+    "mtf": [
+        DEFAULT_PROMPTS["mtf"],
+        "grayscale markov transition field of a sensor signal, preserve transition probabilities",
+        "scientific time series markov transition field, coherent state-transition texture",
+    ],
+    "rp": [
+        DEFAULT_PROMPTS["rp"],
+        "grayscale continuous recurrence distance plot, symmetric matrix with zero diagonal",
+        "scientific sensor recurrence distance matrix, preserve symmetry and local dynamics",
+    ],
+    "spec": [
+        DEFAULT_PROMPTS["spec"],
+        "grayscale time frequency spectrogram of a continuous industrial sensor signal",
+        "scientific sensor spectrogram, coherent frequency bands and temporal continuity",
+    ],
+}
+MECHANISMS = {"MCAR": apply_mcar, "MAR": apply_mar, "MNAR": apply_mnar}
+
+
+def parse_int_list(value: str) -> list[int]:
+    return [int(item) for item in value.split(",") if item.strip()]
+
+
+def parse_float_list(value: str) -> list[float]:
+    return [float(item) for item in value.split(",") if item.strip()]
+
+
+def human_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f} s"
+    if seconds < 3600:
+        return f"{seconds / 60:.1f} min"
+    if seconds < 86400:
+        return f"{seconds / 3600:.1f} h"
+    return f"{seconds / 86400:.1f} d"
+
+
+def load_series(path: Path, train_length: int | None = None) -> pd.Series:
+    frame = pd.read_csv(path, index_col=0)
+    series = pd.to_numeric(frame.iloc[:, 0], errors="coerce")
+    series = series.dropna()
+    if train_length:
+        series = series.iloc[:train_length]
+    return series.reset_index(drop=True)
+
+
+def expected_marked_axis_fraction(effective_samples: int, image_size: int, missing_rate: float) -> float:
+    if effective_samples <= image_size:
+        return min(1.0, effective_samples * missing_rate / image_size)
+    samples_per_pixel = effective_samples / image_size
+    return 1.0 - (1.0 - missing_rate) ** samples_per_pixel
+
+
+def audit_legacy_dataset(path: Path) -> dict:
+    summary_path = path / "dataset_summary.json"
+    if not summary_path.exists():
+        return {"usable": False, "reason": "dataset_summary.json is missing"}
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    samples = summary.get("samples", [])
+    rates = [float(item["missing_rate"]) for item in samples if "missing_rate" in item]
+    lengths = [int(item["length"]) for item in samples if "length" in item]
+
+    def numeric_summary(values: list[float] | list[int]) -> dict[str, float]:
+        if not values:
+            return {}
+        return {"min": min(values), "mean": sum(values) / len(values), "max": max(values)}
+
+    resolutions: dict[str, dict[str, int]] = {}
+    for encoding in ("gaf", "mtf", "rp", "spec"):
+        counts: dict[str, int] = {}
+        for image_path in (path / "original").glob(f"*_{encoding}.png"):
+            from PIL import Image
+
+            with Image.open(image_path) as image:
+                key = f"{image.width}x{image.height}"
+            counts[key] = counts.get(key, 0) + 1
+        resolutions[encoding] = counts
+
+    return {
+        "usable": False,
+        "total_series": len(samples),
+        "original_images": len(list((path / "original").glob("*.png"))),
+        "missing_images": len(list((path / "missing").glob("*.png"))),
+        "metadata_files": len(list((path / "masks").glob("*_metadata.json"))),
+        "resolutions": resolutions,
+        "pattern_distribution": dict(Counter(item.get("pattern_type", "unknown") for item in samples)),
+        "missing_type_distribution": dict(Counter(item.get("missing_type", "unknown") for item in samples)),
+        "missing_rate": numeric_summary(rates),
+        "series_length": numeric_summary(lengths),
+        "reasons": [
+            "encodings were generated by the superseded GAF/MTF/RP/SPEC code",
+            "there are no explicit binary inpainting-mask PNG files",
+            "missing images were inferred from image differences after interpolation",
+            "image resolutions vary with source length and are later upscaled",
+            "the dataset does not use the same local-window contract as inference",
+        ],
+        "salvage": [
+            "pattern and missingness metadata can guide the new generator",
+            "the 2,000 synthetic-series distribution can be reproduced from its seed",
+            "old images may be retained only as a legacy ablation, not mixed with new training",
+        ],
+    }
+
+
+def build_analytical_rows(
+    metadata: dict,
+    cleaned_dir: Path,
+    window_sizes: list[int],
+    image_sizes: list[int],
+    rates: list[float],
+    context_samples: int,
+) -> list[dict]:
+    rows = []
+    for filename, info in metadata["series"].items():
+        dataset = Path(filename).stem
+        train_length = int(info.get("train_length") or info["n"])
+        sampling_seconds = float(info["sampling_interval_seconds"])
+        long_horizon = int(info.get("h_long") or 1)
+
+        for window_samples in window_sizes:
+            effective = min(window_samples, train_length)
+            safe_context = min(context_samples, max(0, (effective - 1) // 2))
+            calls = len(plan_reconstruction_windows(train_length, window_samples, safe_context))
+            for image_size in image_sizes:
+                for rate in rates:
+                    axis_mask = expected_marked_axis_fraction(effective, image_size, rate)
+                    matrix_mask = 1.0 - (1.0 - axis_mask) ** 2
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "sampling_seconds": sampling_seconds,
+                            "train_length": train_length,
+                            "window_samples": window_samples,
+                            "effective_window_samples": effective,
+                            "window_span": human_duration(effective * sampling_seconds),
+                            "image_size": image_size,
+                            "samples_per_pixel": effective / image_size,
+                            "missing_rate": rate,
+                            "axis_mask_fraction": axis_mask,
+                            "gaf_mtf_rp_mask_fraction": matrix_mask,
+                            "gaf_mtf_rp_context_fraction": 1.0 - matrix_mask,
+                            "spec_context_fraction": 1.0 - axis_mask,
+                            "windows_per_file": calls,
+                            "long_horizon_coverage": min(effective / long_horizon, 1.0),
+                            "relative_pixel_memory": (image_size / 512.0) ** 2,
+                            "sd2_native_resolution": image_size == 512,
+                        }
+                    )
+    return rows
+
+
+def structural_recommendations(rows: pd.DataFrame) -> list[dict]:
+    recommendations = []
+    grouped = rows.groupby(["dataset", "window_samples", "image_size"], sort=True)
+    summary = grouped.agg(
+        context=("gaf_mtf_rp_context_fraction", "mean"),
+        long_horizon_coverage=("long_horizon_coverage", "first"),
+        windows_per_file=("windows_per_file", "first"),
+        relative_memory=("relative_pixel_memory", "first"),
+        native=("sd2_native_resolution", "first"),
+        effective_window=("effective_window_samples", "first"),
+    ).reset_index()
+
+    for dataset, candidates in summary.groupby("dataset"):
+        candidates = candidates.copy()
+        max_effective_window = float(candidates["effective_window"].max())
+        throughput = candidates["effective_window"] / max_effective_window
+        native_factor = np.where(candidates["native"], 1.0, 0.35)
+        candidates["structural_score"] = (
+            0.55 * candidates["context"] + 0.35 * candidates["long_horizon_coverage"] + 0.10 * throughput
+        ) * native_factor
+        best = candidates.sort_values(
+            ["structural_score", "relative_memory", "window_samples"],
+            ascending=[False, True, True],
+        ).iloc[0]
+        recommendations.append(
+            {
+                "dataset": dataset,
+                "window_samples": int(best["window_samples"]),
+                "image_size": int(best["image_size"]),
+                "structural_score": float(best["structural_score"]),
+                "status": "provisional_analytical",
+            }
+        )
+    return recommendations
+
+
+def encoding_from_model(model_name: str) -> str:
+    for encoding in PROMPT_CANDIDATES:
+        if f"_{encoding}" in model_name:
+            return encoding
+    raise ValueError(f"Unknown encoding in {model_name}")
+
+
+def validation_slice(source: pd.Series, window_samples: int, case_number: int, n_cases: int) -> pd.Series:
+    length = min(window_samples, len(source))
+    if length == len(source):
+        return source.copy().reset_index(drop=True)
+    fraction = (case_number + 1) / (n_cases + 1)
+    center = int(fraction * len(source))
+    start = min(max(0, center - length // 2), len(source) - length)
+    return source.iloc[start : start + length].reset_index(drop=True)
+
+
+def run_empirical_search(
+    args: argparse.Namespace,
+    metadata: dict,
+    cleaned_dir: Path,
+    output_dir: Path,
+) -> tuple[pd.DataFrame, list[dict]]:
+    import optuna
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("--run-inference requires a CUDA GPU")
+
+    registry = get_reconstruction_models()
+    models = args.models or [
+        "stable_diffusion_2_gaf",
+        "stable_diffusion_2_mtf",
+        "stable_diffusion_2_rp",
+        "stable_diffusion_2_spec",
+    ]
+    missing_models = [model for model in models if model not in registry]
+    if missing_models:
+        raise ValueError(f"Unknown models: {missing_models}")
+
+    metric_spec = get_metric_spec(args.metric)
+    trial_rows: list[dict] = []
+    winners: list[dict] = []
+
+    for model_name in models:
+        encoding = encoding_from_model(model_name)
+        for filename, info in metadata["series"].items():
+            dataset = Path(filename).stem
+            source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
+
+            def objective(trial):
+                window_samples = trial.suggest_categorical("window_samples", args.window_sizes)
+                image_size = trial.suggest_categorical("image_size", args.image_sizes)
+                prompt_index = trial.suggest_int("prompt_index", 0, len(PROMPT_CANDIDATES[encoding]) - 1)
+                steps = trial.suggest_categorical("num_inference_steps", args.steps)
+                guidance = trial.suggest_categorical("guidance_scale", args.guidance)
+                prompt = PROMPT_CANDIDATES[encoding][prompt_index]
+                losses = []
+
+                for case_number in range(args.cases_per_dataset):
+                    clean = validation_slice(
+                        source,
+                        window_samples,
+                        case_number,
+                        args.cases_per_dataset,
+                    )
+                    mechanism_name = list(MECHANISMS)[case_number % len(MECHANISMS)]
+                    rate = args.rates[case_number % len(args.rates)]
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        degraded = MECHANISMS[mechanism_name](clean, rate, seed=args.seed + case_number)
+                    started = time.perf_counter()
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            reconstructed = registry[model_name](
+                                degraded,
+                                num_inference_steps=steps,
+                                guidance_scale=guidance,
+                                window_samples=window_samples,
+                                context_samples=0,
+                                image_size=image_size,
+                                prompt=prompt,
+                            )
+                        metrics = compute_metrics_from_series(clean, degraded, reconstructed)
+                        elapsed = time.perf_counter() - started
+                        raw = float(metrics[args.metric])
+                        loss = raw if metric_spec.lower_is_better else -raw
+                        losses.append(loss)
+                        trial_rows.append(
+                            {
+                                "model": model_name,
+                                "encoding": encoding,
+                                "dataset": dataset,
+                                "trial": trial.number,
+                                "case": case_number,
+                                "mechanism": mechanism_name,
+                                "missing_rate": rate,
+                                "window_samples": window_samples,
+                                "image_size": image_size,
+                                "prompt_index": prompt_index,
+                                "prompt": prompt,
+                                "num_inference_steps": steps,
+                                "guidance_scale": guidance,
+                                "metric": args.metric,
+                                "metric_value": raw,
+                                "seconds": elapsed,
+                                "status": "success",
+                            }
+                        )
+                    except Exception as exc:
+                        if "out of memory" in str(exc).lower():
+                            torch.cuda.empty_cache()
+                        trial_rows.append(
+                            {
+                                "model": model_name,
+                                "encoding": encoding,
+                                "dataset": dataset,
+                                "trial": trial.number,
+                                "case": case_number,
+                                "window_samples": window_samples,
+                                "image_size": image_size,
+                                "prompt": prompt,
+                                "status": "error",
+                                "error": str(exc),
+                            }
+                        )
+                        return float("inf")
+                return float(np.mean(losses)) if losses else float("inf")
+
+            study = optuna.create_study(
+                direction="minimize",
+                sampler=optuna.samplers.TPESampler(seed=args.seed),
+            )
+            study.optimize(objective, n_trials=args.n_trials)
+            winner = dict(study.best_params)
+            winner.update(
+                {
+                    "model": model_name,
+                    "encoding": encoding,
+                    "dataset": dataset,
+                    "prompt": PROMPT_CANDIDATES[encoding][winner.pop("prompt_index")],
+                    "objective": float(study.best_value),
+                    "metric": args.metric,
+                    "status": "empirical_gpu",
+                }
+            )
+            winners.append(winner)
+
+    result = pd.DataFrame(trial_rows)
+    result.to_csv(output_dir / "sd2_inference_trials.csv", index=False)
+    return result, winners
+
+
+def write_report(
+    output_dir: Path,
+    analytical: pd.DataFrame,
+    recommendations: list[dict],
+    audit: dict,
+    search_space: dict,
+    empirical: pd.DataFrame | None = None,
+) -> None:
+    lines = [
+        "# SD2 window, resolution, prompt and parameter analysis",
+        "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "## Interpretation",
+        "",
+        "- window_samples is the number of time-series samples processed locally.",
+        "- image_size is the square SD2 input resolution.",
+        "- SD2 native resolution is 512x512; larger images are experimental.",
+        "- analytical recommendations are provisional until the GPU validation is run.",
+        "",
+        "## Analytical method",
+        "",
+        "- Structural score = (0.55 x retained matrix context + 0.35 x long-horizon coverage + 0.10 x relative effective-window size) x native-resolution factor.",
+        "- Native-resolution factor is 1.0 at 512 px and a conservative 0.35 at 1024/2048 px because SD2 was trained at 512 px.",
+        "- Pixel memory is used as a tie-breaker; reported calls/file are worst-case planned windows.",
+        "- This score compares geometry, context and cost. It is not a reconstruction-accuracy measurement.",
+        "- The runtime config remains at the conservative 512/512 baseline until GPU validation supplies empirical winners.",
+        "",
+        "## Recommendations",
+        "",
+        "| dataset | window samples | image size | status |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for item in recommendations:
+        lines.append(f"| {item['dataset']} | {item['window_samples']} | {item['image_size']} | {item['status']} |")
+
+    lines.extend(
+        [
+            "",
+            "## Existing training dataset audit",
+            "",
+            f"- Base series: {audit.get('total_series', 0)}",
+            f"- Original images: {audit.get('original_images', 0)}",
+            f"- Missing images: {audit.get('missing_images', 0)}",
+            f"- Directly usable for the corrected pipeline: {audit.get('usable', False)}",
+            f"- Pattern distribution: {json.dumps(audit.get('pattern_distribution', {}), sort_keys=True)}",
+            f"- Missing-pattern distribution: {json.dumps(audit.get('missing_type_distribution', {}), sort_keys=True)}",
+            f"- Missing-rate summary: {json.dumps(audit.get('missing_rate', {}), sort_keys=True)}",
+            f"- Series-length summary: {json.dumps(audit.get('series_length', {}), sort_keys=True)}",
+            "",
+        ]
+    )
+    for reason in audit.get("reasons", [audit.get("reason", "unknown")]):
+        lines.append(f"- Limitation: {reason}")
+    for item in audit.get("salvage", []):
+        lines.append(f"- Reusable: {item}")
+
+    lines.extend(
+        [
+            "",
+            "## Candidate summary",
+            "",
+            "| dataset | window | span | image | samples/pixel | mean retained matrix context | potential calls/file | memory vs 512 |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    summary = (
+        analytical.groupby(["dataset", "window_samples", "image_size"])
+        .agg(
+            context=("gaf_mtf_rp_context_fraction", "mean"),
+            calls=("windows_per_file", "first"),
+            span=("window_span", "first"),
+            samples_per_pixel=("samples_per_pixel", "first"),
+            memory=("relative_pixel_memory", "first"),
+        )
+        .reset_index()
+    )
+    for row in summary.itertuples():
+        lines.append(
+            f"| {row.dataset} | {row.window_samples} | {row.span} | {row.image_size} | "
+            f"{row.samples_per_pixel:.2f} | {row.context:.1%} | {row.calls} | {row.memory:.1f}x |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## GPU optimization search space",
+            "",
+            f"- Window samples: {search_space['window_samples']}",
+            f"- Image sizes: {search_space['image_size']}",
+            f"- Inference steps: {search_space['num_inference_steps']}",
+            f"- Guidance scales: {search_space['guidance_scale']}",
+            f"- Missing rates: {search_space['missing_rates']}",
+            f"- Trials per model/dataset: {search_space['trials_per_model_dataset']}",
+            f"- Validation cases per trial: {search_space['cases_per_trial']}",
+            "",
+            "Representation-specific prompt candidates:",
+        ]
+    )
+    for encoding, prompts in search_space["prompts"].items():
+        lines.append(f"- {encoding.upper()}: " + " | ".join(prompts))
+
+    if empirical is not None:
+        successful = int((empirical.get("status") == "success").sum())
+        lines.extend(
+            [
+                "",
+                "## GPU validation",
+                "",
+                f"Successful validation cases: {successful}",
+                "Detailed results: sd2_inference_trials.csv",
+            ]
+        )
+
+    (output_dir / "sd2_design_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--output-dir", default="data/1_6_sd2_optimization")
+    parser.add_argument("--window-sizes", default="512,1024,2048")
+    parser.add_argument("--image-sizes", default="512,1024,2048")
+    parser.add_argument("--steps", default="20,30,42,50")
+    parser.add_argument("--guidance", default="1.0,3.0,5.0,7.5")
+    parser.add_argument("--rates", default="0.03,0.08,0.20")
+    parser.add_argument("--context-samples", type=int, default=64)
+    parser.add_argument("--metric", default="smape")
+    parser.add_argument("--n-trials", type=int, default=12)
+    parser.add_argument("--cases-per-dataset", type=int, default=3)
+    parser.add_argument("--models", nargs="*")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--run-inference", action="store_true")
+    args = parser.parse_args()
+
+    args.window_sizes = parse_int_list(args.window_sizes)
+    args.image_sizes = parse_int_list(args.image_sizes)
+    args.steps = parse_int_list(args.steps)
+    args.guidance = parse_float_list(args.guidance)
+    args.rates = parse_float_list(args.rates)
+
+    config = load_config(args.config)
+    metadata_path = Path(config.config["split"]["horizons"]["metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    cleaned_dir = Path(config.get_cleaned_dir())
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = build_analytical_rows(
+        metadata,
+        cleaned_dir,
+        args.window_sizes,
+        args.image_sizes,
+        args.rates,
+        args.context_samples,
+    )
+    analytical = pd.DataFrame(rows)
+    analytical.to_csv(output_dir / "sd2_design_analysis.csv", index=False)
+    recommendations = structural_recommendations(analytical)
+    audit = audit_legacy_dataset(Path("stdiff_training_data"))
+
+    empirical = None
+    if args.run_inference:
+        empirical, empirical_winners = run_empirical_search(args, metadata, cleaned_dir, output_dir)
+        recommendations = empirical_winners
+        runtime_path = output_dir / "sd2_runtime_overrides.json"
+        if runtime_path.is_file():
+            previous_runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            overrides: dict[str, dict[str, dict]] = previous_runtime.get("overrides", {})
+        else:
+            overrides = {}
+
+        runtime_keys = (
+            "window_samples",
+            "image_size",
+            "num_inference_steps",
+            "guidance_scale",
+            "prompt",
+        )
+        for winner in empirical_winners:
+            overrides.setdefault(winner["dataset"], {})[winner["model"]] = {
+                key: winner[key] for key in runtime_keys
+            }
+        runtime_payload = {
+            "schema_version": "1.0",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "empirical GPU optimization",
+            "overrides": overrides,
+        }
+        runtime_path.write_text(json.dumps(runtime_payload, indent=2), encoding="utf-8")
+
+    search_space = {
+        "window_samples": args.window_sizes,
+        "image_size": args.image_sizes,
+        "num_inference_steps": args.steps,
+        "guidance_scale": args.guidance,
+        "missing_rates": args.rates,
+        "prompts": PROMPT_CANDIDATES,
+        "trials_per_model_dataset": args.n_trials,
+        "cases_per_trial": args.cases_per_dataset,
+    }
+
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "recommendations": recommendations,
+        "search_space": search_space,
+        "legacy_dataset_audit": audit,
+        "note": "Analytical winners are provisional; use --run-inference for model-based selection.",
+    }
+    (output_dir / "sd2_recommendations.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_report(output_dir, analytical, recommendations, audit, search_space, empirical)
+    print(f"Analysis written to {output_dir}")
+
+
+if __name__ == "__main__":
+    main()

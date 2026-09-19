@@ -32,6 +32,7 @@ from framework.plugin_registry import (  # noqa: E402
 )
 from framework.runs import (  # noqa: E402
     PipelineFullResult,
+    run_analyze_forecast_horizons,
     run_calculate_prediction_error,
     run_calculate_reconstruction_error,
     run_clean_datasets,
@@ -57,6 +58,7 @@ __all__ = [
     "register_missingness_technique",
     "register_prediction_model",
     "register_reconstruction_model",
+    "run_analyze_forecast_horizons",
     "run_calculate_prediction_error",
     "run_calculate_reconstruction_error",
     "run_clean_datasets",

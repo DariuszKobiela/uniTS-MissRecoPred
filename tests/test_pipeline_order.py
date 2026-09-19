@@ -28,6 +28,7 @@ def test_run_pipeline_full_invokes_steps_in_order(mock_configs):
     with patch.multiple(
         runs,
         run_clean_datasets=track("clean"),
+        run_analyze_forecast_horizons=track("horizons"),
         run_create_split=track("split"),
         run_degrade_datasets=track("degrade"),
         run_reconstruct_datasets=track("reconstruct"),
@@ -42,6 +43,7 @@ def test_run_pipeline_full_invokes_steps_in_order(mock_configs):
     assert result.ok
     assert order == [
         "clean",
+        "horizons",
         "split",
         "degrade",
         "reconstruct",
@@ -58,6 +60,7 @@ def test_run_pipeline_full_stops_on_first_failure(mock_configs):
     with patch.multiple(
         runs,
         run_clean_datasets=MagicMock(return_value=False),
+        run_analyze_forecast_horizons=MagicMock(return_value=True),
         run_create_split=MagicMock(return_value=True),
         run_degrade_datasets=MagicMock(return_value=True),
         run_reconstruct_datasets=MagicMock(return_value=True),

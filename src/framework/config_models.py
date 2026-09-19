@@ -42,6 +42,10 @@ class PathsConfig:
         return self._data.get("cleaned_dir", "data/1_cleaned_data")
 
     @property
+    def horizon_dir(self) -> str:
+        return self._data.get("horizon_dir", "data/1_5_horizon_recommendation")
+
+    @property
     def splitted_dir(self) -> str:
         return self._data.get("splitted_dir", "data/2_splitted_data")
 

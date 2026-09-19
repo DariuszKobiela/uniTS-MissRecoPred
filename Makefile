@@ -1,4 +1,4 @@
-.PHONY: help setup clean-datasets create-split degrade-datasets ingest-external optimize optimize-quick reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
+.PHONY: help setup clean-datasets recommend-horizons create-split degrade-datasets ingest-external optimize optimize-quick analyze-sd2-design optimize-sd2-design generate-sd2-training-data train-sd2-windowed reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
 
 # Default target
 help:
@@ -12,6 +12,7 @@ help:
 	@echo ""
 	@echo "Pipeline commands (run in order):"
 	@echo "  make clean-datasets              - Step 1:  Clean and validate raw datasets"
+	@echo "  make recommend-horizons          - Step 1.5: Recommend forecast horizons (metadata)"
 	@echo "  make create-split                - Step 2:  Split data into train/test sets"
 	@echo "  make degrade-datasets            - Step 3:  Introduce missingness in training data"
 	@echo "  make optimize                    - Optional: SD hyperparameters (Optuna)"
@@ -22,6 +23,10 @@ help:
 	@echo "  make predict-datasets            - Step 8:  Run predictions"
 	@echo "  make calculate-prediction-error  - Step 9:  Prediction error metrics"
 	@echo "  make visualize-prediction        - Step 10: Prediction results (Streamlit)"
+	@echo "  make analyze-sd2-design         - Analyze 512/1024/2048 windows and image sizes"
+	@echo "  make optimize-sd2-design        - GPU tune window/image/prompt/steps/guidance"
+	@echo "  make generate-sd2-training-data - Generate corrected inpainting triplets"
+	@echo "  make train-sd2-windowed         - Fine-tune the SD2 inpainting UNet (CUDA)"
 	@echo ""
 	@echo "Aliases: calculate-mad -> calculate-reconstruction-error, visualize-mad -> visualize-reconstruction-error"
 	@echo ""
@@ -50,6 +55,14 @@ clean-datasets:
 	@echo "==================================================================="
 	uv run python src/1_clean_datasets.py
 	@echo "✓ Datasets cleaned"
+
+# Step 1.5: Recommend forecast horizons (analyze_forecast_horizons.py)
+recommend-horizons:
+	@echo "==================================================================="
+	@echo "Step 1.5: Analyzing series and recommending forecast horizons"
+	@echo "==================================================================="
+	uv run python src/analyze_forecast_horizons.py
+	@echo "✓ Horizon recommendations written"
 
 # Step 2: Split datasets into train/test (2_create_split.py)
 create-split:
@@ -91,6 +104,27 @@ optimize-quick:
 	@echo "==================================================================="
 	uv run python src/optimization/optimize_sd_hyperparams.py --n-trials 20 --max-files 5
 	@echo "✓ Quick optimization complete"
+
+# Analyze window/image-size trade-offs without GPU inference
+analyze-sd2-design:
+	@echo "Analyzing SD2 windows, image resolutions, masks, and legacy training data"
+	uv run python src/optimization/analyze_sd2_design.py
+
+# Empirical GPU optimization: window, image, prompt, steps, and guidance
+optimize-sd2-design:
+	@echo "Running GPU validation of the SD2 design (potentially expensive)"
+	uv run python src/optimization/analyze_sd2_design.py --run-inference
+
+# Generate explicit clean/conditioning/mask triplets for windowed SD2
+generate-sd2-training-data:
+	@echo "Generating the corrected windowed SD2 training dataset"
+	uv run python src/training/generate_sd2_windowed_dataset.py --samples 2000
+
+# Fine-tune the inpainting UNet; requires CUDA
+train-sd2-windowed:
+	@echo "Fine-tuning SD2 on the corrected windowed dataset"
+	uv run python src/training/finetune_sd2_windowed.py
+
 
 # Step 4: Reconstruct datasets (4_reconstruct_datasets.py)
 reconstruct-datasets:
@@ -155,7 +189,7 @@ visualize-prediction:
 	uv run streamlit run src/10_visualize_prediction.py
 
 # Run reconstruction pipeline (steps 1-5)
-pipeline: clean-datasets create-split degrade-datasets reconstruct-datasets calculate-reconstruction-error
+pipeline: clean-datasets recommend-horizons create-split degrade-datasets reconstruct-datasets calculate-reconstruction-error
 	@echo "==================================================================="
 	@echo "✓ RECONSTRUCTION PIPELINE COMPLETE"
 	@echo "==================================================================="
@@ -170,7 +204,7 @@ pipeline-external: ingest-external reconstruct-datasets train-prediction-models 
 	@echo "==================================================================="
 
 # Run full pipeline including prediction (steps 1-5, 7-9)
-pipeline-full: clean-datasets create-split degrade-datasets reconstruct-datasets calculate-reconstruction-error train-prediction-models predict-datasets calculate-prediction-error
+pipeline-full: clean-datasets recommend-horizons create-split degrade-datasets reconstruct-datasets calculate-reconstruction-error train-prediction-models predict-datasets calculate-prediction-error
 	@echo "==================================================================="
 	@echo "✓ FULL PIPELINE COMPLETE"
 	@echo "==================================================================="
@@ -183,6 +217,7 @@ pipeline-full: clean-datasets create-split degrade-datasets reconstruct-datasets
 clean:
 	@echo "Cleaning generated datasets..."
 	rm -rf data/1_cleaned_data/*
+	rm -rf data/1_5_horizon_recommendation/*
 	rm -rf data/2_splitted_data/train/*
 	rm -rf data/2_splitted_data/test/*
 	rm -f data/2_splitted_data/external_missing_ingest_state.json
@@ -194,6 +229,7 @@ clean:
 clean-all:
 	@echo "Cleaning all generated files..."
 	rm -rf data/1_cleaned_data/*
+	rm -rf data/1_5_horizon_recommendation/*
 	rm -rf data/2_splitted_data/train/*
 	rm -rf data/2_splitted_data/test/*
 	rm -rf data/3_missing_data/*

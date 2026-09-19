@@ -44,6 +44,7 @@ from framework import (
     RunConfig,
     PipelineFullResult,
     run_clean_datasets,
+    run_analyze_forecast_horizons,
     run_create_split,
     run_degrade_datasets,
     run_reconstruct_datasets,
@@ -155,7 +156,7 @@ def run_pipeline_full(
 
 Defined in [`src/framework/runs.py`](../src/framework/runs.py).
 
-**Step order** (same as `make pipeline-full`): **1 → 2 → 3 → 4 → 5 → 7 → 8 → 9**.
+**Step order** (same as `make pipeline-full`): **1 → 1.5 → 2 → 3 → 4 → 5 → 7 → 8 → 9**.
 
 - If `pred_config is None`, **`load_prediction_models_config()`** is used with the default path.
 - Does **not** run step **6** (reconstruction dashboard) or **10** (prediction dashboard) — those are separate Streamlit apps.
@@ -169,7 +170,7 @@ Defined in [`src/framework/runs.py`](../src/framework/runs.py).
 | `message` | `str` | Short message. |
 | `steps_completed` | `list[str] \| None` | Names of steps completed before a failure (or all steps on success). |
 
-Step names: `clean_datasets`, `create_split`, `degrade_datasets`, `reconstruct_datasets`, `calculate_reconstruction_error`, `train_prediction_models`, `predict_datasets`, `calculate_prediction_error`.
+Step names: `clean_datasets`, `analyze_forecast_horizons`, `create_split`, `degrade_datasets`, `reconstruct_datasets`, `calculate_reconstruction_error`, `train_prediction_models`, `predict_datasets`, `calculate_prediction_error`.
 
 ---
 
@@ -206,6 +207,33 @@ def run_clean_datasets(
 
 ---
 
+### `run_analyze_forecast_horizons`
+
+Source: [`src/analyze_forecast_horizons.py`](../src/analyze_forecast_horizons.py).
+
+```python
+def run_analyze_forecast_horizons(
+    config,
+    input_dir: str | None = None,
+    dataset: str | None = None,
+    metadata_path: str | None = None,
+    report_csv_path: str | None = None,
+    report_md_path: str | None = None,
+) -> bool
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `input_dir` | Defaults to `config.get_cleaned_dir()`. |
+| `dataset` | If set, analyze only that filename. |
+| `metadata_path` | Defaults to `config.get_dataset_metadata_path()`. |
+| `report_csv_path` | Defaults to `config.get_horizon_report_csv_path()`. |
+| `report_md_path` | Defaults to `config.get_horizon_report_md_path()`. |
+
+Writes `data/1_5_horizon_recommendation/dataset_metadata.json` with per-series sampling interval, `h_short`, `h_long`, and constraint status. Step 2 reads `h_long` from this file when present.
+
+---
+
 ### `run_create_split`
 
 Source: [`src/2_create_split.py`](../src/2_create_split.py).
@@ -225,7 +253,8 @@ def run_create_split(
 | `input_dir` | Defaults to `config.get_cleaned_dir()`. |
 | `output_dir` | Defaults to `config.get_splitted_dir()` (subdirs `train/` and `test/`). |
 | `dataset` | Optionally a single filename. |
-| `test_samples` | Defaults to `config.get_test_samples()`. |
+| `test_samples` | Defaults to `config.get_test_samples()`. When set explicitly, overrides metadata. |
+| `use_horizon_metadata` | Default `True`. When `False` or CLI `--test-samples` is set, ignores `dataset_metadata.json`. |
 
 ---
 
@@ -385,6 +414,8 @@ flowchart TD
     raw[raw_source_dir CSV]
     s1[run_clean_datasets]
     cleaned[cleaned_dir]
+    s15[run_analyze_forecast_horizons]
+    meta[1_5_horizon_recommendation]
     s2[run_create_split]
     train[splitted train]
     test[splitted test]
@@ -401,7 +432,10 @@ flowchart TD
     s9[run_calculate_prediction_error]
     pred_csv[prediction results CSV]
 
-    raw --> s1 --> cleaned --> s2 --> train
+    raw --> s1 --> cleaned --> s15 --> meta
+    cleaned --> s15
+    meta --> s2
+    cleaned --> s2 --> train
     s2 --> test
     train --> s3 --> missing --> s4 --> fixed
     fixed --> s5 --> rec_csv
@@ -485,11 +519,12 @@ run_calculate_reconstruction_error(config)
 
 ```python
 from utils.config_loader import load_config
-from framework import run_clean_datasets, run_create_split
+from framework import run_clean_datasets, run_analyze_forecast_horizons, run_create_split
 
 config = load_config("config/config.yaml")
 name = "my_series.csv"
 run_clean_datasets(config, dataset=name)
+run_analyze_forecast_horizons(config, dataset=name)
 run_create_split(config, dataset=name, test_samples=120)
 ```
 
@@ -585,6 +620,7 @@ run_create_split(config)
 from utils.config_loader import load_config, load_prediction_models_config
 from framework import (
     run_clean_datasets,
+    run_analyze_forecast_horizons,
     run_create_split,
     run_degrade_datasets,
     run_reconstruct_datasets,
@@ -593,6 +629,7 @@ from framework import (
 config = load_config("config/config.yaml")
 
 run_clean_datasets(config)
+run_analyze_forecast_horizons(config)
 run_create_split(config)
 run_degrade_datasets(config)
 run_reconstruct_datasets(config)

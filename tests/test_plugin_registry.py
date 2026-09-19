@@ -22,6 +22,17 @@ def _reset_registry():
     clear_plugin_registry()
 
 
+def test_builtin_sd2_base_and_finetuned_pairs():
+    reg = get_reconstruction_models()
+    encodings = ("gaf", "mtf", "rp", "spec")
+    for enc in encodings:
+        base = f"stable_diffusion_2_{enc}"
+        tuned = f"{base}_finetuned"
+        assert base in reg
+        assert tuned in reg
+        assert reg[base] is not reg[tuned]
+
+
 def test_register_reconstruction_model_appears_in_get():
     def fake_rec(s: pd.Series) -> pd.Series:
         return s

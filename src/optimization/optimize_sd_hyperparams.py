@@ -105,27 +105,9 @@ def clear_model_cache():
     """Clear Stable Diffusion model cache to free memory."""
     print("   🧹 Clearing model cache and forcing garbage collection...")
     try:
-        from reconstruction_models import (
-            stable_diffusion_2_gaf, 
-            stable_diffusion_2_mtf, 
-            stable_diffusion_2_rp, 
-            stable_diffusion_2_spec
-        )
-        
-        modules = [
-            stable_diffusion_2_gaf, 
-            stable_diffusion_2_mtf, 
-            stable_diffusion_2_rp, 
-            stable_diffusion_2_spec
-        ]
-        
-        for module in modules:
-            if hasattr(module, '_MODEL_CACHE'):
-                keys = list(module._MODEL_CACHE.keys())
-                for k in keys:
-                    del module._MODEL_CACHE[k]
-                module._MODEL_CACHE.clear()
-        
+        from reconstruction_models.sd2_pipeline import clear_model_cache as clear_sd2_cache
+
+        clear_sd2_cache()
         cleanup_memory()
         
     except Exception as e:

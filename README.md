@@ -52,6 +52,7 @@ uniTS-MissRecoPred/
 │
 ├── 📁 src/                                 # Source code directory
 │   ├── 🐍 1_clean_datasets.py              # [MAIN] Clean and validate raw data
+│   ├── 🐍 analyze_forecast_horizons.py     # [MAIN] Recommend H_short/H_long horizons
 │   ├── 🐍 2_create_split.py                # [MAIN] Split into train/test sets
 │   ├── 🐍 3_degrade_datasets.py            # [MAIN] Introduce missing data (training)
 │   ├── 🐍 4_reconstruct_datasets.py        # [MAIN] Reconstruct missing data
@@ -84,7 +85,7 @@ uniTS-MissRecoPred/
 │   ├── 📁 optimization/                    # Hyperparameter optimization
 │   │   └── 🐍 optimize_sd_hyperparams.py      # SD hyperparameter tuning
 │   │
-│   ├── 📁 reconstruction_models/           # 21 reconstruction models
+│   ├── 📁 reconstruction_models/           # 25 reconstruction models
 │   │   ├── 🐍 impute_*.py                     # Simple imputation (mean, median, mode, ffill, bfill)
 │   │   ├── 🐍 interpolate_*.py                # Interpolation (linear, cubic, spline, etc.)
 │   │   ├── 🐍 knn.py                          # K-Nearest Neighbors
@@ -112,6 +113,7 @@ uniTS-MissRecoPred/
 ├── 📁 data/
 │   ├── 📁 0_source_data/                   # Original datasets (auto-discovered)
 │   ├── 📁 1_cleaned_data/                  # Cleaned datasets (generated)
+│   ├── 📁 1_5_horizon_recommendation/      # Horizon metadata + reports (generated)
 │   ├── 📁 2_splitted_data/                 # Train/test split (generated)
 │   │   ├── 📁 train/                          # Training data (for reconstruction)
 │   │   └── 📁 test/                           # Test data (for prediction)
@@ -255,6 +257,7 @@ make pipeline
 
 # Option 2: Run step by step
 make clean-datasets              # Step 1: Clean and validate raw data
+make recommend-horizons          # Step 1.5: Recommend forecast horizons (metadata)
 make create-split                # Step 2: Split into train/test sets
 make degrade-datasets            # Step 3: Introduce missingness in training data
 # OPTIONAL: Optimize Stable Diffusion hyperparameters (run once)
@@ -274,6 +277,7 @@ make visualize-prediction        # Step 10: Prediction dashboard (Streamlit)
 
 ```bash
 python src/1_clean_datasets.py        # Clean and validate raw data
+python src/analyze_forecast_horizons.py  # Recommend H_short/H_long per series
 python src/2_create_split.py          # Split into train/test sets
 python src/3_degrade_datasets.py      # Create degraded training datasets
 python src/optimization/optimize_sd_hyperparams.py # OPTIONAL: Optimize Stable Diffusion
@@ -316,7 +320,7 @@ make setup          # Install dependencies (uv sync)
 
 # Full workflow
 make pipeline       # Reconstruction only (steps 1-5)
-make pipeline-full  # Reconstruction + prediction train/predict/eval (1-5, 7-9)
+make pipeline-full  # Reconstruction + prediction train/predict/eval (1, 1.5, 2-5, 7-9)
 make ingest-external   # External missingness manifest → data dirs (see pipeline.entry)
 make pipeline-external # ingest + reconstruct + train + predict + eval (4, 7–9)
 make visualize-reconstruction-error  # Reconstruction dashboard
@@ -336,7 +340,7 @@ The workflow stays **batch-first** (Makefile and `src/N_*.py` CLIs). The same st
 
 Put **`src` on `PYTHONPATH`** (e.g. from the repo root: `PYTHONPATH=src`), or use an editable install: `uv pip install -e .` with the existing `pyproject.toml` (wheel packages the `src` tree).
 
-**Example 1 — run the full pipeline in one call (same order as `make pipeline-full`: steps 1, 2, 3, 4, 5, 7, 8, 9):**
+**Example 1 — run the full pipeline in one call (same order as `make pipeline-full`: steps 1, 1.5, 2, 3, 4, 5, 7, 8, 9):**
 
 ```python
 from utils.config_loader import load_config
@@ -502,7 +506,7 @@ timestamp,value
 *   **Separators**: Use comma `,` as separator and dot `.` as decimal point.
 *   **Cleanliness**: Although `1_clean_datasets.py` attempts to fix issues, provide clean data to avoid ambiguity.
 *   **Length**: For Stable Diffusion models, ensure sufficient length (e.g., > 100 points) for meaningful patterns.
-*   **Test samples**: Ensure your time series has more samples than `test_samples` configured in config/config.yaml.
+*   **Horizons**: Run `analyze_forecast_horizons.py` after cleaning; artifacts go to `data/1_5_horizon_recommendation/`. Step 2 uses per-series `h_long` from `dataset_metadata.json` (fallback: `split.test_samples` in config/config.yaml).
 
 ## 🔄 Workflow
 
@@ -533,13 +537,21 @@ Use this when you already have CSV time series with **NaN gaps** on the training
 *   **📤 OUTPUT**: Standardized CSV files in `data/1_cleaned_data/`
     *   *Format*: UTF-8, Comma-separated, Index + Value, No missing values, Validated types.
 
+#### 1.5 Forecast horizon analysis
+*   **Script**: `src/analyze_forecast_horizons.py`
+*   **📥 INPUT**: Cleaned CSV files in `data/1_cleaned_data/`
+*   **📤 OUTPUT**: `data/1_5_horizon_recommendation/`
+    *   `dataset_metadata.json` — per-series sampling interval, `h_short`, `h_long`, `train_length`, status
+    *   `horizon_recommendations.csv` / `horizon_recommendations.md` — human-readable report
+*   **Note**: The sampling interval is inferred from the series (mean of the most common gap when irregular). Horizons are computed dynamically, then capped so holdout ≤ 20% and training length ≳ 200. Unsafe candidates are shortened until Safe.
+
 #### 2. Train/Test Split
 *   **Script**: `src/2_create_split.py`
-*   **📥 INPUT**: Cleaned CSV files in `data/1_cleaned_data/`
+*   **📥 INPUT**: Cleaned CSV files in `data/1_cleaned_data/` (+ `data/1_5_horizon_recommendation/dataset_metadata.json`)
 *   **📤 OUTPUT**: Split CSV files in `data/2_splitted_data/`
-    *   `train/` - Training data (all but last N samples) - used for reconstruction experiments
-    *   `test/` - Test data (last N samples) - preserved for prediction evaluation
-*   **Note**: N is configured via `split.test_samples` in config/config.yaml
+    *   `train/` - Training data (all but last `h_long` samples) - used for reconstruction experiments
+    *   `test/` - Test data (last `h_long` samples) - preserved for prediction evaluation
+*   **Note**: Per-series holdout length comes from `dataset_metadata.json`; fallback is `split.test_samples` in config/config.yaml
 
 #### 3. Degradation (Introduction of Missing Data)
 *   **Script**: `src/3_degrade_datasets.py`
@@ -840,13 +852,11 @@ python src/optimization/optimize_sd_hyperparams.py \
 - `interpolate_spline` - Spline (order 2)
 - `interpolate_krogh` - Krogh polynomial interpolation
 
-#### Advanced (6 models)
+#### Advanced (10 models)
 - `knn` - K-Nearest Neighbors
 - `sarimax` - SARIMA with Kalman smoothing
-- `stable_diffusion_2_gaf` - Stable Diffusion 2 + GAF encoding
-- `stable_diffusion_2_mtf` - Stable Diffusion 2 + MTF encoding
-- `stable_diffusion_2_rp` - Stable Diffusion 2 + RP encoding
-- `stable_diffusion_2_spec` - Stable Diffusion 2 + Spectrogram
+- `stable_diffusion_2_gaf` / `_mtf` / `_rp` / `_spec` — base Stable Diffusion 2 inpainting (`stabilityai/stable-diffusion-2-inpainting`; experiment `*unet`)
+- `stable_diffusion_2_gaf_finetuned` / `_mtf_finetuned` / `_rp_finetuned` / `_spec_finetuned` — same encodings with the UNet fine-tuned on GAF+MTF+RP+SPEC (`Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec`; experiment `*sd2all4`)
 
 ### Missingness Techniques
 
@@ -1268,7 +1278,7 @@ make clean-all
 ```
 
 **What gets cleaned:**
-- `make clean`: Removes `data/1_cleaned_data/`, `data/2_splitted_data/train/*`, `data/2_splitted_data/test/*`, `data/3_missing_data/`, `data/4_fixed_data/`
+- `make clean`: Removes `data/1_cleaned_data/`, `data/1_5_horizon_recommendation/`, `data/2_splitted_data/train/*`, `data/2_splitted_data/test/*`, `data/3_missing_data/`, `data/4_fixed_data/`
 - `make clean-all`: Removes all of the above + `reconstruction_experiments_results/*.csv`
 
 ### Remove Virtual Environment
@@ -1305,7 +1315,7 @@ To recreate, just follow the setup steps again.
 **Parallel (`n_jobs: 4`)**:
 - **Degradation**: ~2-3 minutes ⚡ **(3-4x faster)**
 - **Reconstruction (16 CPU models)**: ~30-60 minutes ⚡ **(3-4x faster)**
-- **Reconstruction (4 GPU models)**: ~30-90 minutes (sequential)
+- **Reconstruction (8 GPU models)**: ~60-180 minutes (sequential; base + fine-tuned SD2)
 - **Calculation**: ~10-20 minutes
 - **Total Pipeline**: ~1.5-2.5 hours ⚡ **(~2x faster overall)**
 
