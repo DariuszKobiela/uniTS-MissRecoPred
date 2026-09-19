@@ -20,9 +20,9 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 
-from missingness_techniques.mar import apply_mar
-from missingness_techniques.mcar import apply_mcar
-from missingness_techniques.mnar import apply_mnar
+from missingness_techniques.structured import apply_structured_missingness
+from utils.experiment_naming import MISSINGNESS_STRUCTURES
+from utils.missingness_analysis import summarize_missingness
 from reconstruction_models.sd2_settings import DEFAULT_PROMPTS
 from reconstruction_models.stable_diffusion_2_gaf import series_to_gaf
 from reconstruction_models.stable_diffusion_2_mtf import series_to_mtf
@@ -30,7 +30,7 @@ from reconstruction_models.stable_diffusion_2_rp import series_to_rp
 from reconstruction_models.stable_diffusion_2_spec import series_to_spectrogram
 
 ENCODINGS = ("gaf", "mtf", "rp", "spec")
-MECHANISMS = {"MCAR": apply_mcar, "MAR": apply_mar, "MNAR": apply_mnar}
+MECHANISMS = ("MCAR", "MAR", "MNAR")
 
 
 def parse_int_list(value: str) -> list[int]:
@@ -112,47 +112,20 @@ class SyntheticSeriesGenerator:
         return values.astype(np.float64)
 
 
-def structural_missing(
-    series: pd.Series,
-    kind: str,
-    rate: float,
-    rng: np.random.Generator,
-) -> pd.Series:
-    result = series.copy()
-    count = max(1, int(round(len(series) * rate)))
-    if kind == "BLOCK":
-        blocks = int(rng.integers(1, min(5, count) + 1))
-        sizes = rng.multinomial(count, np.full(blocks, 1.0 / blocks))
-        selected: set[int] = set()
-        for size in sizes:
-            if size:
-                start = int(rng.integers(0, max(1, len(series) - size + 1)))
-                selected.update(range(start, min(start + size, len(series))))
-        result.iloc[sorted(selected)] = np.nan
-    elif kind == "PERIODIC":
-        period = max(2, int(round(1.0 / rate)))
-        offset = int(rng.integers(0, period))
-        result.iloc[offset::period] = np.nan
-    elif kind == "EDGE":
-        if rng.random() < 0.5:
-            result.iloc[:count] = np.nan
-        else:
-            result.iloc[-count:] = np.nan
-    else:
-        raise ValueError(kind)
-    return result
-
-
 def degrade(
     clean: pd.Series,
     mechanism: str,
+    structure: str,
     rate: float,
     seed: int,
 ) -> pd.Series:
-    if mechanism in MECHANISMS:
-        with contextlib.redirect_stdout(io.StringIO()):
-            return MECHANISMS[mechanism](clean, rate, seed=seed)
-    return structural_missing(clean, mechanism, rate, np.random.default_rng(seed))
+    return apply_structured_missingness(
+        clean,
+        rate,
+        mechanism,
+        structure,
+        seed=seed,
+    )
 
 
 def sample_to_pixel(sample: int, length: int, image_size: int) -> int:
@@ -230,7 +203,7 @@ def prepare_output(path: Path, overwrite: bool) -> None:
         if not overwrite:
             raise FileExistsError(f"{path} is not empty; use --overwrite or choose another output")
         shutil.rmtree(path)
-    for directory in ("clean", "conditioning", "masks"):
+    for directory in ("clean", "conditioning", "masks", "series"):
         (path / directory).mkdir(parents=True, exist_ok=True)
 
 
@@ -264,7 +237,8 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--window-sizes", default="512,1024,2048")
     parser.add_argument("--rates", default="0.03,0.08,0.20")
-    parser.add_argument("--mechanisms", default="MCAR,MAR,MNAR,BLOCK,PERIODIC,EDGE")
+    parser.add_argument("--mechanisms", default="MCAR,MAR,MNAR")
+    parser.add_argument("--structures", default="scattered,contiguous,mixed")
     parser.add_argument("--source", choices=["synthetic", "mixed"], default="synthetic")
     parser.add_argument("--real-share", type=float, default=0.25)
     parser.add_argument("--cleaned-dir", default="data/1_cleaned_data")
@@ -283,15 +257,19 @@ def main() -> None:
     window_sizes = parse_int_list(args.window_sizes)
     rates = parse_float_list(args.rates)
     mechanisms = [item.strip().upper() for item in args.mechanisms.split(",") if item.strip()]
+    structures = [item.strip().lower() for item in args.structures.split(",") if item.strip()]
     if not window_sizes or any(size < 16 for size in window_sizes):
         raise ValueError("--window-sizes must contain values >=16")
     if not rates or any(rate <= 0.0 or rate >= 1.0 for rate in rates):
         raise ValueError("--rates must contain values in (0, 1)")
     if not mechanisms:
         raise ValueError("--mechanisms must not be empty")
-    unknown = set(mechanisms) - (set(MECHANISMS) | {"BLOCK", "PERIODIC", "EDGE"})
+    unknown = set(mechanisms) - set(MECHANISMS)
     if unknown:
         raise ValueError(f"Unknown mechanisms: {sorted(unknown)}")
+    unknown_structures = set(structures) - set(MISSINGNESS_STRUCTURES)
+    if not structures or unknown_structures:
+        raise ValueError(f"Unknown structures: {sorted(unknown_structures)}")
 
     output = Path(args.output)
     rng = np.random.default_rng(args.seed)
@@ -319,11 +297,15 @@ def main() -> None:
                 source_name = pattern
                 source_kind = "synthetic"
             counts[source_kind] += 1
+            series_path = output / "series" / f"{series_id:06d}.npy"
+            np.save(series_path, clean.to_numpy(dtype=np.float64))
 
             mechanism = str(rng.choice(mechanisms))
+            structure = str(rng.choice(structures))
             rate = float(rng.choice(rates))
             pair_seed = args.seed + series_id
-            corrupted = degrade(clean, mechanism, rate, pair_seed)
+            corrupted = degrade(clean, mechanism, structure, rate, pair_seed)
+            gap_summary, _ = summarize_missingness(corrupted)
             filled = corrupted.interpolate(method="linear", limit_direction="both")
             filled = filled.fillna(float(clean.mean()))
             missing = corrupted.isna().to_numpy()
@@ -345,11 +327,19 @@ def main() -> None:
                     "source_kind": source_kind,
                     "source_name": source_name,
                     "pattern": pattern,
+                    "series_path": str(series_path.relative_to(output)),
                     "window_samples": window_samples,
                     "image_size": args.image_size,
                     "mechanism": mechanism,
+                    "structure": structure,
                     "missing_rate_requested": rate,
                     "missing_rate_actual": float(missing.mean()),
+                    "n_gaps": gap_summary["n_gaps"],
+                    "gap_length_samples_mean": gap_summary["gap_length_samples_mean"],
+                    "gap_length_samples_median": gap_summary["gap_length_samples_median"],
+                    "gap_length_samples_p90": gap_summary["gap_length_samples_p90"],
+                    "gap_length_samples_max": gap_summary["gap_length_samples_max"],
+                    "singleton_gap_percent": gap_summary["singleton_gap_percent"],
                     "seed": pair_seed,
                     "prompt": DEFAULT_PROMPTS[encoding],
                     "clean": str(target_path.relative_to(output)),
@@ -367,6 +357,7 @@ def main() -> None:
         "window_sizes": window_sizes,
         "rates": rates,
         "mechanisms": mechanisms,
+        "structures": structures,
         "encodings": list(ENCODINGS),
         "source_counts": counts,
         "contract": {

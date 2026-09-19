@@ -1,4 +1,4 @@
-.PHONY: help setup clean-datasets recommend-horizons create-split degrade-datasets ingest-external optimize optimize-quick analyze-sd2-design optimize-sd2-design generate-sd2-training-data train-sd2-windowed reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
+.PHONY: help setup clean-datasets recommend-horizons create-split degrade-datasets analyze-missingness ingest-external optimize optimize-quick analyze-sd2-design analyze-sd2-ablation analyze-synthetic-real-gap optimize-sd2-design generate-sd2-training-data train-sd2-windowed reconstruct-datasets calculate-reconstruction-error calculate-mad visualize-reconstruction-error visualize-mad train-prediction-models predict-datasets evaluate-rolling-origins calculate-prediction-error visualize-prediction pipeline pipeline-full pipeline-external clean clean-all test test-prediction
 
 # Default target
 help:
@@ -14,18 +14,22 @@ help:
 	@echo "  make clean-datasets              - Step 1:  Clean and validate raw datasets"
 	@echo "  make recommend-horizons          - Step 1.5: Recommend forecast horizons (metadata)"
 	@echo "  make create-split                - Step 2:  Split data into train/test sets"
-	@echo "  make degrade-datasets            - Step 3:  Introduce missingness in training data"
+	@echo "  make degrade-datasets            - Step 3:  Introduce mechanism × structure missingness"
+	@echo "  make analyze-missingness         - Report per-realization and per-gap diagnostics"
 	@echo "  make optimize                    - Optional: SD hyperparameters (Optuna)"
 	@echo "  make reconstruct-datasets        - Step 4:  Reconstruct missing training values"
 	@echo "  make calculate-reconstruction-error - Step 5:  Reconstruction error metrics (CSV)"
 	@echo "  make visualize-reconstruction-error - Step 6:  Reconstruction results (Streamlit)"
 	@echo "  make train-prediction-models     - Step 7:  Train prediction models"
 	@echo "  make predict-datasets            - Step 8:  Run predictions"
+	@echo "  make evaluate-rolling-origins    - Refit SARIMAX/XGBoost at test origins"
 	@echo "  make calculate-prediction-error  - Step 9:  Prediction error metrics"
 	@echo "  make visualize-prediction        - Step 10: Prediction results (Streamlit)"
 	@echo "  make analyze-sd2-design         - Analyze 512/1024/2048 windows and image sizes"
+	@echo "  make analyze-sd2-ablation       - Run round-trip and clean-image oracle controls"
 	@echo "  make optimize-sd2-design        - GPU tune window/image/prompt/steps/guidance"
 	@echo "  make generate-sd2-training-data - Generate corrected inpainting triplets"
+	@echo "  make analyze-synthetic-real-gap - Quantify synthetic vs real signal gap"
 	@echo "  make train-sd2-windowed         - Fine-tune the SD2 inpainting UNet (CUDA)"
 	@echo ""
 	@echo "Aliases: calculate-mad -> calculate-reconstruction-error, visualize-mad -> visualize-reconstruction-error"
@@ -88,6 +92,10 @@ degrade-datasets:
 	uv run python src/3_degrade_datasets.py
 	@echo "✓ Degraded datasets created"
 
+# Reviewer-facing gap diagnostics (also written automatically by step 3)
+analyze-missingness:
+	uv run python src/analyze_missingness.py
+
 # Optional: Optimize Stable Diffusion hyperparameters (Full)
 optimize:
 	@echo "==================================================================="
@@ -110,6 +118,11 @@ analyze-sd2-design:
 	@echo "Analyzing SD2 windows, image resolutions, masks, and legacy training data"
 	uv run python src/optimization/analyze_sd2_design.py
 
+# CPU-only encode/decode ceiling and ideal clean-image oracle
+analyze-sd2-ablation:
+	@echo "Running SD2 representation round-trip and oracle ablations"
+	uv run python src/optimization/analyze_sd2_design.py --run-ablation
+
 # Empirical GPU optimization: window, image, prompt, steps, and guidance
 optimize-sd2-design:
 	@echo "Running GPU validation of the SD2 design (potentially expensive)"
@@ -119,6 +132,10 @@ optimize-sd2-design:
 generate-sd2-training-data:
 	@echo "Generating the corrected windowed SD2 training dataset"
 	uv run python src/training/generate_sd2_windowed_dataset.py --samples 2000
+
+analyze-synthetic-real-gap:
+	@echo "Analyzing the synthetic-to-real signal gap"
+	uv run python src/analysis/analyze_synthetic_real_gap.py
 
 # Fine-tune the inpainting UNet; requires CUDA
 train-sd2-windowed:
@@ -172,6 +189,14 @@ predict-datasets:
 	uv run python src/8_predict_datasets.py
 	@echo "✓ Prediction complete"
 
+
+# Rolling-origin evaluation on the fixed test split
+evaluate-rolling-origins:
+	@echo "==================================================================="
+	@echo "Rolling-origin evaluation: SARIMAX and local XGBoost"
+	@echo "==================================================================="
+	uv run python src/8_evaluate_rolling_origins.py
+	@echo "✓ Rolling-origin evaluation complete"
 # Step 9: Calculate prediction error (9_calculate_prediction_error.py)
 calculate-prediction-error:
 	@echo "==================================================================="

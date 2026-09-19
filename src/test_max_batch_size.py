@@ -353,10 +353,10 @@ def create_model(model_name: str, batch_size: int, model_params: Dict,
 # BATCH SIZE TESTING
 # =============================================================================
 
-def test_batch_size(model_name: str, batch_size: int, model_params: Dict,
-                    train_series: List, val_series: List,
-                    min_series_len: int,
-                    dataloader_kwargs: Optional[Dict] = None) -> Dict[str, Any]:
+def evaluate_batch_size(model_name: str, batch_size: int, model_params: Dict,
+                        train_series: List, val_series: List,
+                        min_series_len: int,
+                        dataloader_kwargs: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Test a single batch_size for a model by running 1 epoch.
     
@@ -612,7 +612,7 @@ Examples:
         for batch_size in batch_sizes:
             print(f"\n  batch_size={batch_size:,}...", end=" ", flush=True)
             
-            result = test_batch_size(
+            result = evaluate_batch_size(
                 model_name, batch_size, model_params,
                 train_series, val_series, min_series_len,
                 dataloader_kwargs=dataloader_kwargs

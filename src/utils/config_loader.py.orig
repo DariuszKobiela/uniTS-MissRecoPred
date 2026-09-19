@@ -468,28 +468,6 @@ class Config:
     def get_missingness_rates(self) -> List[float]:
         """Get list of missingness rates"""
         return self.config['missingness_rates']['rates']
-
-    def get_missingness_structures(self) -> List[str]:
-        """Get temporal missingness structures (scattered/contiguous/mixed)."""
-        raw = self.config.get("missingness_structures", {}).get("selected")
-        structures = list(raw) if raw else ["scattered"]
-        valid = {"scattered", "contiguous", "mixed"}
-        normalized = [str(value).strip().lower() for value in structures]
-        unknown = set(normalized) - valid
-        if unknown:
-            raise ValueError(f"Unknown missingness structures: {sorted(unknown)}")
-        return normalized
-
-    def get_missingness_structure_settings(self) -> Dict[str, Any]:
-        """Parameters controlling block lengths and the mixed point share."""
-        raw = self.config.get("missingness_structures", {}) or {}
-        contiguous = raw.get("contiguous", {}) or {}
-        mixed = raw.get("mixed", {}) or {}
-        return {
-            "min_block_length": int(contiguous.get("min_block_length", 3)),
-            "max_block_length": int(contiguous.get("max_block_length", 24)),
-            "mixed_scattered_fraction": float(mixed.get("scattered_fraction", 0.5)),
-        }
     
     def get_iterations(self) -> int:
         """Get number of iterations"""

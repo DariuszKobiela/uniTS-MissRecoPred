@@ -68,6 +68,16 @@ The GPU run writes:
 
 - detailed cases to `data/1_6_sd2_optimization/sd2_inference_trials.csv`;
 - winners to `data/1_6_sd2_optimization/sd2_runtime_overrides.json`.
+- per-seed winner evaluations to `sd2_seed_sensitivity.csv`;
+- mean, standard deviation, minimum, and maximum over seeds to
+  `sd2_seed_sensitivity_summary.csv`.
+
+Every SD2 call receives an explicit Diffusers generator seed. Local windows use
+successive seeds beginning at the configured `computation.stable_diffusion.seed`.
+GPU optimization uses a fixed seed during parameter selection and then repeats
+each winning model--dataset setting with five seeds (42--46 by default) on a
+representative MCAR case. Use `--sd2-seeds` to provide any set of three to five
+seeds.
 
 The main reconstruction pipeline reads the latter path from `config.yaml` and
 automatically applies the winning settings for each dataset and SD2 model.
@@ -80,6 +90,37 @@ After fine-tuning, optimize the new local model variants separately:
       stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
 
 Repeated GPU runs merge model-specific winners into the same overrides file.
+
+## Round-trip and oracle ablations
+
+Run the CPU-only representation controls with:
+
+    make analyze-sd2-ablation
+
+For a smaller diagnostic run:
+
+    uv run python src/optimization/analyze_sd2_design.py --run-ablation \
+      --window-sizes 512 --image-sizes 512 --cases-per-dataset 1
+
+The command writes
+`data/1_6_sd2_optimization/sd2_representation_ablations.csv` and adds a
+summary to `sd2_design_report.md`. It evaluates two explicitly separated
+controls:
+
+- `round_trip`: clean series → representation → 8-bit grayscale image →
+  inverse representation. Diffusion is bypassed and every sample is scored.
+  This measures information loss from resampling, representation, image
+  quantization, and decoding.
+- `oracle_clean_image`: after generating MCAR/MAR/MNAR gaps, the ideal encoded
+  clean image is substituted for the unknown SD2 output. Only missing samples
+  are scored. Clean-image metadata required by lossy inverses (MTF states and
+  STFT phase) is also supplied.
+
+The oracle result is an experimental upper bound for each representation and
+decoder. It uses unavailable ground truth deliberately and therefore must not
+be reported as a deployable reconstruction method or compared as an ordinary
+imputer. The difference between the oracle and full SD2 result estimates the
+error introduced downstream of the representation ceiling.
 
 ## Existing training data
 
@@ -116,6 +157,11 @@ image is produced from the corrupted series after the same linear fill used by
 inference. The mask is a real binary PNG: white is regenerated and black is
 preserved.
 
+Missingness is sampled on two independent axes: `MCAR/MAR/MNAR` mechanism and
+`scattered/contiguous/mixed` temporal structure. Manifest rows also contain the
+realized number of gaps, mean/median/p90/maximum gap length, and singleton-gap
+percentage. Override the defaults with `--mechanisms` and `--structures`.
+
 A small test dataset can be generated with:
 
     uv run python src/training/generate_sd2_windowed_dataset.py \
@@ -126,6 +172,24 @@ The default source is synthetic to avoid target-series leakage. The optional
 used only in an explicitly described domain-adaptation experiment. Training on
 the clean target series before evaluating their corrupted copies would otherwise
 make the comparison optimistic.
+
+The generator also stores each numeric clean window once under `series/`.
+These arrays support an auditable synthetic-to-real gap analysis; they are not
+additional SD2 training examples.
+
+Run the analysis after generating the training data and cleaning the real
+datasets:
+
+    make analyze-synthetic-real-gap
+
+It reports mean, standard deviation, skewness, kurtosis, ACF at multiple lags,
+trend and seasonality strength, spectral entropy, dominant frequency, length,
+first-difference dynamics, and turning-point rate. Outputs include the
+per-window feature table, a standardized two-dimensional PCA projection, and a
+grouped cross-validated synthetic-versus-real classifier. Cross-validation
+groups windows by their source series to reduce leakage. A classifier ROC AUC
+near 0.5 indicates substantial overlap, whereas a value near 1.0 indicates an
+easily detectable domain gap.
 
 ## Fine-tuning
 

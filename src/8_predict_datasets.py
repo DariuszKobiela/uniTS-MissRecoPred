@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import config loader and prediction models
 from utils.config_loader import load_config, load_prediction_models_config
+from utils.experiment_naming import decode_missingness_label, encode_missingness_label
 from utils.performance_metrics import PerformanceMonitor
 from utils.logger import setup_logging, EpochLogger
 
@@ -73,13 +74,13 @@ def load_dataset(file_path: str) -> pd.DataFrame:
     df = pd.read_csv(file_path, index_col=0)
     df.iloc[:, 0] = pd.to_numeric(df.iloc[:, 0], errors='coerce')
     
-    try:
-        df.index = pd.to_datetime(df.index)
-    except (ValueError, TypeError):
-        try:
-            df.index = pd.to_numeric(df.index)
-        except (ValueError, TypeError):
-            pass
+    numeric_index = pd.to_numeric(df.index, errors='coerce')
+    if not np.isnan(np.asarray(numeric_index, dtype=np.float64)).any():
+        df.index = pd.Index(numeric_index)
+    else:
+        datetime_index = pd.to_datetime(df.index, errors='coerce')
+        if not datetime_index.isna().any():
+            df.index = pd.DatetimeIndex(datetime_index)
     
     return df
 
@@ -110,7 +111,7 @@ def parse_reconstructed_filename(filename: str) -> dict:
     if rate_idx is None or rate_idx < 1 or rate_idx + 2 >= len(parts):
         raise ValueError(f"Invalid filename format: {filename}")
     
-    technique = parts[rate_idx - 1]
+    technique, structure = decode_missingness_label(parts[rate_idx - 1])
     rate_percent = int(parts[rate_idx].replace('p', ''))
     iteration = int(parts[rate_idx + 1])
     dataset = '_'.join(parts[:rate_idx - 1])
@@ -119,6 +120,7 @@ def parse_reconstructed_filename(filename: str) -> dict:
     return {
         'dataset': dataset,
         'technique': technique,
+        'structure': structure,
         'rate_percent': rate_percent,
         'iteration': iteration,
         'reconstruction_model': reconstruction_model
@@ -282,7 +284,7 @@ def predict_with_xgboost(model_data: dict, train_series: pd.Series, horizon: int
 
 
 def predict_with_statistical_model(model_name: str, train_series: pd.Series, 
-                                    horizon: int, pred_config) -> np.ndarray:
+                                    horizon: int, pred_config) -> tuple[np.ndarray, dict]:
     """Train and predict with statistical models (per-file)."""
     from framework.plugin_registry import get_prediction_models
 
@@ -296,26 +298,28 @@ def predict_with_statistical_model(model_name: str, train_series: pd.Series,
     # Statistical models predict function returns predictions directly
     predictions = predict_func(train_series, horizon, **model_params)
     
-    return np.array(predictions)
+    return np.array(predictions), dict(getattr(predictions, "attrs", {}))
 
 
-def save_predictions(predictions: np.ndarray, output_path: str, 
-                     train_series: pd.Series, iteration: int = 1):
-    """Save predictions to CSV file."""
-    # Create index for predictions (continuing from training data)
-    if hasattr(train_series.index, 'freq') and train_series.index.freq:
-        pred_index = pd.date_range(
-            start=train_series.index[-1] + train_series.index.freq,
-            periods=len(predictions),
-            freq=train_series.index.freq
+def save_predictions(
+    predictions: np.ndarray,
+    output_path: str,
+    prediction_index: pd.Index,
+    iteration: int = 1,
+):
+    """Save predictions against the exact corresponding test index."""
+    values = np.asarray(predictions).reshape(-1)
+    if len(values) != len(prediction_index):
+        raise ValueError(
+            f"Prediction length {len(values)} does not match test index length "
+            f"{len(prediction_index)}"
         )
-    else:
-        pred_index = range(len(train_series), len(train_series) + len(predictions))
-    
+    if not prediction_index.is_unique:
+        raise ValueError("Test prediction index contains duplicates")
     df = pd.DataFrame({
-        'predicted': predictions,
+        'predicted': values,
         'iteration': iteration
-    }, index=pred_index)
+    }, index=prediction_index)
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     df.to_csv(output_path)
@@ -348,6 +352,9 @@ def process_single_file_statistical(args):
         monitor = PerformanceMonitor()
         monitor.start()
         
+        horizon = int(file_info['horizon'])
+        test_index = load_dataset(file_info['test_path']).index
+
         # Make predictions
         if model_name == 'xgboost':
             # Load XGBoost model
@@ -357,9 +364,15 @@ def process_single_file_statistical(args):
                 trained_model = pickle.load(f)
             predictions = predict_with_xgboost(trained_model, train_series, horizon)
         else:
-            predictions = predict_with_statistical_model(
+            predictions, forecast_metadata = predict_with_statistical_model(
                 model_name, train_series, horizon, pred_config
             )
+            if forecast_metadata.get("fallback_used"):
+                print(
+                    f"\n   ⚠️  {model_name} fallback for {file_info['dataset']}: "
+                    f"{forecast_metadata.get('fallback_type')} — "
+                    f"{forecast_metadata.get('fallback_reason')}"
+                )
         
         # Stop monitoring
         metrics = monitor.stop()
@@ -368,7 +381,10 @@ def process_single_file_statistical(args):
         if file_info['source_type'] == 'original':
             base_name = f"{file_info['dataset']}_original_{model_name}"
         else:
-            base_name = (f"{file_info['dataset']}_{file_info['technique']}_"
+            label = encode_missingness_label(
+                file_info['technique'], file_info['structure']
+            )
+            base_name = (f"{file_info['dataset']}_{label}_"
                         f"{file_info['rate_percent']}p_{file_info['reconstruction_iteration']}_"
                         f"{file_info['reconstruction_model']}_{model_name}")
         
@@ -376,13 +392,14 @@ def process_single_file_statistical(args):
         output_path = os.path.join(predictions_dir, output_filename)
         
         # Save predictions
-        save_predictions(predictions, output_path, train_series, iteration)
+        save_predictions(predictions, output_path, test_index, iteration)
         
         # Return metrics
         return {
             'dataset_name': file_info['dataset'],
             'source_type': file_info['source_type'],
             'technique': file_info['technique'],
+            'structure': file_info['structure'],
             'rate_percent': file_info['rate_percent'],
             'reconstruction_iteration': file_info['reconstruction_iteration'],
             'reconstruction_model': file_info['reconstruction_model'],
@@ -396,6 +413,22 @@ def process_single_file_statistical(args):
             'gpu_percent': metrics.get('gpu_percent'),
             'gpu_memory_mb': metrics.get('gpu_memory_mb'),
             'gpu_memory_total_mb': metrics.get('gpu_memory_total_mb'),
+            'forecast_fallback_used': forecast_metadata.get('fallback_used', False)
+                if model_name != 'xgboost' else False,
+            'forecast_fallback_type': forecast_metadata.get('fallback_type', 'none')
+                if model_name != 'xgboost' else 'none',
+            'forecast_fallback_reason': forecast_metadata.get('fallback_reason', '')
+                if model_name != 'xgboost' else '',
+            'forecast_requested_order': forecast_metadata.get('requested_order', '')
+                if model_name != 'xgboost' else '',
+            'forecast_requested_seasonal_order': forecast_metadata.get(
+                'requested_seasonal_order', ''
+            ) if model_name != 'xgboost' else '',
+            'forecast_fitted_order': forecast_metadata.get('fitted_order', '')
+                if model_name != 'xgboost' else '',
+            'forecast_fitted_seasonal_order': forecast_metadata.get(
+                'fitted_seasonal_order', ''
+            ) if model_name != 'xgboost' else '',
         }
         
     except Exception as e:
@@ -503,13 +536,12 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
             # Use all available models
             selected_models = all_models
     
-    # Get prediction horizon from test data
-    test_files = list(Path(test_dir).glob("*.csv"))
-    if test_files:
-        test_df = load_dataset(str(test_files[0]))
-        horizon = len(test_df)
-    else:
-        horizon = 30
+    test_files = sorted(Path(test_dir).glob("*.csv"))
+    if not test_files:
+        print(f"❌ No test datasets found in {test_dir}")
+        return False
+    test_data_mapping = {path.stem: str(path) for path in test_files}
+    aliases = config.get_dataset_aliases()
     
     print("="*70)
     print("PREDICT DATASETS")
@@ -518,7 +550,7 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
     print(f"Available trained models: {list(available_models.keys())}")
     print(f"Statistical models (per-file): {statistical_models}")
     print(f"Selected models: {selected_models}")
-    print(f"Prediction horizon: {horizon}")
+    print("Prediction horizon: resolved separately for every dataset")
     print(f"Output directory: {predictions_dir}")
     print("="*70)
     
@@ -555,6 +587,7 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                         'source_type': 'original',
                         'dataset': file.stem,
                         'technique': None,
+                        'structure': None,
                         'rate_percent': None,
                         'reconstruction_iteration': None,
                         'reconstruction_model': None
@@ -566,6 +599,7 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                     'source_type': 'original',
                     'dataset': file.stem,
                     'technique': None,
+                    'structure': None,
                     'rate_percent': None,
                     'reconstruction_iteration': None,
                     'reconstruction_model': None
@@ -581,6 +615,7 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                     'source_type': 'reconstructed',
                     'dataset': metadata['dataset'],
                     'technique': metadata['technique'],
+                    'structure': metadata['structure'],
                     'rate_percent': metadata['rate_percent'],
                     'reconstruction_iteration': metadata['iteration'],
                     'reconstruction_model': metadata['reconstruction_model']
@@ -588,8 +623,20 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
             except ValueError:
                 pass
     
+    for file_info in files_to_predict:
+        dataset = file_info['dataset']
+        canonical = aliases.get(dataset, dataset)
+        test_path = test_data_mapping.get(canonical) or test_data_mapping.get(dataset)
+        if test_path is None:
+            raise ValueError(f"No test dataset found for {dataset!r}")
+        test_frame = load_dataset(test_path)
+        if not test_frame.index.is_unique:
+            raise ValueError(f"Test index contains duplicates for {dataset!r}")
+        file_info['test_path'] = test_path
+        file_info['horizon'] = len(test_frame)
+
     print(f"\n📊 Files to predict: {len(files_to_predict)}")
-    
+
     # Storage for prediction metrics
     prediction_metrics = []
     
@@ -620,7 +667,7 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                 # Prepare arguments for parallel processing
                 pred_config_dict = {'models_dir': models_dir}
                 args_list = [
-                    (file_info, model_name, horizon, pred_config_dict, predictions_dir, iteration)
+                    (file_info, model_name, file_info["horizon"], pred_config_dict, predictions_dir, iteration)
                     for file_info in files_to_predict
                 ]
                 
@@ -685,6 +732,8 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                         monitor.start()
                         
                         # Make predictions with Darts model
+                        horizon = int(file_info['horizon'])
+                        test_index = load_dataset(file_info['test_path']).index
                         predictions = predict_with_darts_model(
                             trained_model, train_series, horizon
                         )
@@ -696,7 +745,10 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                         if file_info['source_type'] == 'original':
                             base_name = f"{file_info['dataset']}_original_{model_name}"
                         else:
-                            base_name = (f"{file_info['dataset']}_{file_info['technique']}_"
+                            label = encode_missingness_label(
+                                file_info['technique'], file_info['structure']
+                            )
+                            base_name = (f"{file_info['dataset']}_{label}_"
                                         f"{file_info['rate_percent']}p_{file_info['reconstruction_iteration']}_"
                                         f"{file_info['reconstruction_model']}_{model_name}")
                         
@@ -708,13 +760,14 @@ def run_predict_datasets(config, pred_config, models=None, models_dir="trained_p
                         output_path = os.path.join(predictions_dir, output_filename)
                         
                         # Save predictions
-                        save_predictions(predictions, output_path, train_series, iteration)
+                        save_predictions(predictions, output_path, test_index, iteration)
                         
                         # Store metrics
                         prediction_metrics.append({
                             'dataset_name': file_info['dataset'],
                             'source_type': file_info['source_type'],
                             'technique': file_info['technique'],
+                            'structure': file_info['structure'],
                             'rate_percent': file_info['rate_percent'],
                             'reconstruction_iteration': file_info['reconstruction_iteration'],
                             'reconstruction_model': file_info['reconstruction_model'],

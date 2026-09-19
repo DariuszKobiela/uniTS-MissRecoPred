@@ -190,18 +190,6 @@ missingness_techniques:
   # - MAR (Missing At Random)
   # - MNAR (Missing Not At Random)
 
-# Temporal topology is independent of the MCAR/MAR/MNAR mechanism.
-missingness_structures:
-  selected:
-  - scattered
-  - contiguous
-  - mixed
-  contiguous:
-    min_block_length: 3
-    max_block_length: 24
-  mixed:
-    scattered_fraction: 0.5
-
 # ============================================================================
 # MISSINGNESS RATES
 # ============================================================================
@@ -255,7 +243,6 @@ computation:
   
   # Stable Diffusion settings (if using SD models)
   stable_diffusion:
-    seed: 42  # Explicit Diffusers generator seed; each local window increments it by one
     num_inference_steps: 42
     guidance_scale: 7.5
     device: "cuda"  # "cuda" or "cpu"

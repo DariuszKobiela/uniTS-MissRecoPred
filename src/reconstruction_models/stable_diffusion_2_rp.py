@@ -5,11 +5,13 @@ Stable Diffusion 2 inpainting with RP (Recurrence Plot).
 - ``stable_diffusion_2_rp_finetuned`` — fine-tuned SD2 (experiment ``*rpsd2all4``).
 """
 
+from itertools import count
+
 import numpy as np
 import pandas as pd
 from PIL import Image
 
-from .sd2_pipeline import MODEL_ID_BASE, MODEL_ID_FINETUNED, get_model
+from .sd2_pipeline import MODEL_ID_BASE, MODEL_ID_FINETUNED, get_model, seeded_generator
 from .sd2_windowing import reconstruct_in_windows
 
 DEFAULT_PROMPT = "high quality continuous recurrence distance plot mathematical visualization"
@@ -96,6 +98,7 @@ def _inpaint_rp_window(
     variant: str,
     image_size: int,
     prompt: str,
+    seed: int,
 ) -> pd.Series:
     mask = data.isna()
 
@@ -142,6 +145,7 @@ def _inpaint_rp_window(
         mask_image=mask_pil,
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
+        generator=seeded_generator(pipeline, seed),
     ).images[0]
 
     # Convert result back
@@ -168,8 +172,10 @@ def stable_diffusion_2_rp(
     context_samples: int = 64,
     image_size: int = 512,
     prompt: str | None = None,
+    seed: int = 42,
 ) -> pd.Series:
     """Impute missing values with base SD2 on local RP images."""
+    window_seeds = count(seed)
     return reconstruct_in_windows(
         data,
         lambda window: _inpaint_rp_window(
@@ -180,6 +186,7 @@ def stable_diffusion_2_rp(
             "base",
             image_size,
             prompt or DEFAULT_PROMPT,
+            next(window_seeds),
         ),
         window_samples,
         context_samples,
@@ -195,8 +202,10 @@ def stable_diffusion_2_rp_finetuned(
     context_samples: int = 64,
     image_size: int = 512,
     prompt: str | None = None,
+    seed: int = 42,
 ) -> pd.Series:
     """Impute missing values with fine-tuned SD2 on local RP images."""
+    window_seeds = count(seed)
     return reconstruct_in_windows(
         data,
         lambda window: _inpaint_rp_window(
@@ -207,6 +216,7 @@ def stable_diffusion_2_rp_finetuned(
             "finetuned",
             image_size,
             prompt or DEFAULT_PROMPT,
+            next(window_seeds),
         ),
         window_samples,
         context_samples,

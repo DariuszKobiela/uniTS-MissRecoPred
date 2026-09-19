@@ -28,6 +28,7 @@ setup_logging("5_calculate_reconstruction_error")
 
 # Import config loader
 from utils.config_loader import load_config
+from utils.experiment_naming import decode_missingness_label, encode_missingness_label
 from reconstruction_metrics import (
     compute_reconstruction_metrics,
     list_primary_metric_keys,
@@ -98,9 +99,12 @@ def load_performance_metrics(results_dir: str) -> dict:
         # Convert to dictionary with composite key
         metrics_dict = {}
         for _, row in df.iterrows():
+            structure = row.get('structure', 'scattered')
+            structure = structure if pd.notna(structure) else 'scattered'
             key = str((
                 row['dataset_name'],
                 row['technique'],
+                structure,
                 row['rate_percent'],
                 row['iteration'],
                 row['model']
@@ -109,6 +113,7 @@ def load_performance_metrics(results_dir: str) -> dict:
             metrics_dict[key] = {
                 'dataset_name': row['dataset_name'],
                 'technique': row['technique'],
+                'structure': structure,
                 'rate_percent': row['rate_percent'],
                 'iteration': row['iteration'],
                 'model': row['model'],
@@ -158,7 +163,7 @@ def parse_filename(filename):
     # Before rate: dataset_technique
     # Rate position: rateP
     # After rate: iteration_model...
-    technique = parts[rate_idx - 1]
+    technique, structure = decode_missingness_label(parts[rate_idx - 1])
     rate_percent = int(parts[rate_idx].replace('p', ''))
     iteration = int(parts[rate_idx + 1])
     
@@ -171,13 +176,14 @@ def parse_filename(filename):
     return {
         'dataset_name': dataset_name,
         'technique': technique,
+        'structure': structure,
         'rate_percent': rate_percent,
         'iteration': iteration,
         'model': model
     }
 
 
-def get_degraded_filename(dataset_name, technique, rate_percent, iteration):
+def get_degraded_filename(dataset_name, technique, structure, rate_percent, iteration):
     """
     Generate degraded filename from metadata.
     Format: datasetName_technique_rateP_iteration.csv
@@ -185,7 +191,8 @@ def get_degraded_filename(dataset_name, technique, rate_percent, iteration):
     Returns:
         str: Degraded filename
     """
-    return f"{dataset_name}_{technique}_{rate_percent}p_{iteration}.csv"
+    label = encode_missingness_label(technique, structure)
+    return f"{dataset_name}_{label}_{rate_percent}p_{iteration}.csv"
 
 
 def calculate_reconstruction_errors(source_file_path, degraded_file_path, reconstructed_file_path, config):
@@ -199,11 +206,18 @@ def calculate_reconstruction_errors(source_file_path, degraded_file_path, recons
     reconstructed_df = pd.read_csv(reconstructed_file_path, index_col=0)
 
     if not (len(source_df) == len(degraded_df) == len(reconstructed_df)):
-        print(f"    ⚠️  Warning: Different number of rows - source: {len(source_df)}, degraded: {len(degraded_df)}, reconstructed: {len(reconstructed_df)}")
-        min_len = min(len(source_df), len(degraded_df), len(reconstructed_df))
-        source_df = source_df.head(min_len)
-        degraded_df = degraded_df.head(min_len)
-        reconstructed_df = reconstructed_df.head(min_len)
+        raise ValueError(
+            "Reconstruction length mismatch: "
+            f"source={len(source_df)}, degraded={len(degraded_df)}, "
+            f"reconstructed={len(reconstructed_df)}; refusing to truncate"
+        )
+    source_index = pd.Index(source_df.index.astype(str))
+    degraded_index = pd.Index(degraded_df.index.astype(str))
+    reconstructed_index = pd.Index(reconstructed_df.index.astype(str))
+    if not source_index.is_unique or not degraded_index.is_unique or not reconstructed_index.is_unique:
+        raise ValueError("Source, degraded, and reconstructed indexes must be unique")
+    if not source_index.equals(degraded_index) or not source_index.equals(reconstructed_index):
+        raise ValueError("Source, degraded, and reconstructed indexes do not match")
 
     if len(source_df) == 0:
         raise ValueError("Files are empty")
@@ -220,10 +234,10 @@ def calculate_reconstruction_errors(source_file_path, degraded_file_path, recons
     source_missing = source_values[missing_mask]
     reconstructed_missing = reconstructed_values[missing_mask]
 
-    valid_mask = ~(source_missing.isna() | reconstructed_missing.isna())
-    source_missing = source_missing[valid_mask]
-    reconstructed_missing = reconstructed_missing[valid_mask]
-
+    if source_missing.isna().any() or reconstructed_missing.isna().any():
+        raise ValueError(
+            "Ground truth and reconstructed values must be finite at every missing position"
+        )
     if len(source_missing) == 0:
         raise ValueError("No valid missing values to compare")
 
@@ -281,12 +295,19 @@ def process_file_wrapper(args):
         degraded_filename = get_degraded_filename(
             metadata['dataset_name'],
             metadata['technique'],
+            metadata['structure'],
             metadata['rate_percent'],
             metadata['iteration']
         )
         degraded_file_path = os.path.join(missing_dir, degraded_filename)
-        
-        # Check if degraded file exists
+
+        # Legacy files encoded mechanism only; that means scattered missingness.
+        if not os.path.exists(degraded_file_path) and metadata['structure'] == 'scattered':
+            legacy_name = (
+                f"{metadata['dataset_name']}_{metadata['technique']}_"
+                f"{metadata['rate_percent']}p_{metadata['iteration']}.csv"
+            )
+            degraded_file_path = os.path.join(missing_dir, legacy_name)
         if not os.path.exists(degraded_file_path):
             return {'status': 'error', 'msg': f"Degraded file not found: {degraded_file_path}", 'filename': filename}
         
@@ -297,6 +318,7 @@ def process_file_wrapper(args):
         result = {
             'dataset_name': canonical_name,
             'technique': metadata['technique'],
+            'structure': metadata['structure'],
             'rate_percent': metadata['rate_percent'],
             'iteration': metadata['iteration'],
             'model': metadata['model'],
@@ -306,6 +328,7 @@ def process_file_wrapper(args):
         # Add performance metrics if available
         perf_tuple = (
             metadata['technique'],
+            metadata['structure'],
             metadata['rate_percent'],
             metadata['iteration'],
             metadata['model']

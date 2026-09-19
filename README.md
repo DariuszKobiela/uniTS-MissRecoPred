@@ -36,7 +36,7 @@ A modular framework for evaluating time series reconstruction methods on univari
 ## ✨ Features
 
 - **21+ Reconstruction Models**: From simple imputation to deep learning (Stable Diffusion 2)
-- **3 Missingness Patterns**: MCAR, MAR, MNAR with configurable rates
+- **Missingness mechanisms × structures**: MCAR/MAR/MNAR crossed with scattered/contiguous/mixed gaps
 - **Train/Test Split**: Temporal split preserving time series structure for prediction tasks
 - **Automatic Discovery**: Auto-detects datasets, models, and techniques
 - **Configuration-Based**: YAML config for easy experiment management
@@ -396,6 +396,11 @@ reconstruction_models:
 # Missingness techniques (empty = use all)
 missingness_techniques:
   selected: []  # Or specify: ["MCAR", "MAR"]
+
+missingness_structures:
+  selected: [scattered, contiguous, mixed]
+  contiguous: {min_block_length: 3, max_block_length: 24}
+  mixed: {scattered_fraction: 0.5}
   
 # Missingness rates
 missingness_rates:
@@ -650,9 +655,9 @@ graph TD
 ## 📊 Output Files
 
 ### Degraded Datasets
-**Format**: `{dataset}_{technique}_{rate}p_{iteration}.csv`
+**Format**: `{dataset}_{mechanism}-{structure}_{rate}p_{iteration}.csv`
 
-**Example**: `boiler_MCAR_10p_1.csv`
+**Example**: `boiler_MCAR-contiguous_10p_1.csv`
 ```
 └─┬──┘ └┬─┘  └─┬┘ └┘
   │     │      │   └─ Iteration: 1
@@ -662,9 +667,9 @@ graph TD
 ```
 
 ### Reconstructed Datasets
-**Format**: `{dataset}_{technique}_{rate}p_{iteration}_{model}.csv`
+**Format**: `{dataset}_{mechanism}-{structure}_{rate}p_{iteration}_{model}.csv`
 
-**Example**: `boiler_MCAR_10p_1_interpolate_linear.csv`
+**Example**: `boiler_MCAR-contiguous_10p_1_interpolate_linear.csv`
 ```
 └─┬──┘ └┬─┘  └─┬┘ └┘ └────────┬──────────┘
   │     │      │   │           └─ Model: interpolate_linear
@@ -679,7 +684,8 @@ graph TD
 
 **Columns**:
 - `dataset_name` - Dataset name
-- `technique` - Missingness technique (MCAR/MAR/MNAR)
+- `technique` - Missingness mechanism (MCAR/MAR/MNAR)
+- `structure` - Temporal structure (scattered/contiguous/mixed)
 - `rate_percent` - Missing rate (%)
 - `iteration` - Iteration number
 - `model` - Reconstruction model name
@@ -781,7 +787,7 @@ python src/3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boil
 python src/3_degrade_datasets.py --config config/my_config.yaml
 
 # Override config parameters
-python src/3_degrade_datasets.py --techniques MCAR --rates 0.05 0.10 --iterations 3
+python src/3_degrade_datasets.py --techniques MCAR --structures scattered contiguous mixed --rates 0.05 0.10 --iterations 3
 
 # Reconstruct with specific models
 python src/4_reconstruct_datasets.py --models interpolate_linear knn
@@ -860,9 +866,14 @@ python src/optimization/optimize_sd_hyperparams.py \
 
 ### Missingness Techniques
 
-- **MCAR** (Missing Completely At Random): Random uniform distribution
-- **MAR** (Missing At Random): Probability depends on deviation from median
-- **MNAR** (Missing Not At Random): Probability increases over time (sensor degradation)
+- **MCAR**: uniform missingness probability.
+- **MAR**: probability depends on the fully observed time position.
+- **MNAR**: probability depends on the subsequently hidden value (distance from the median).
+
+Each mechanism is crossed with `scattered`, `contiguous`, and `mixed` temporal
+structures. Step 3 writes `missingness_realizations.csv` and
+`missingness_gaps.csv` under `data/3_missing_data/reports/`; regenerate them at
+any time with `python src/analyze_missingness.py`.
 
 ### Available Prediction Models
 

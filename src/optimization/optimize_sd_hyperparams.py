@@ -37,6 +37,7 @@ from contextlib import contextmanager
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.config_loader import load_config
+from utils.experiment_naming import decode_missingness_label
 from reconstruction_metrics import (
     compute_metrics_from_series,
     get_metric_spec,
@@ -187,9 +188,11 @@ def parse_degraded_filename(filename: str) -> dict:
     
     if rate_idx is None or rate_idx < 1: return None
     
+    technique, structure = decode_missingness_label(parts[rate_idx - 1])
     return {
         'dataset': '_'.join(parts[:rate_idx - 1]),
-        'technique': parts[rate_idx - 1],
+        'technique': technique,
+        'structure': structure,
         'rate_percent': int(parts[rate_idx].replace('p', '')),
         'iteration': int(parts[rate_idx + 1])
     }

@@ -268,6 +268,7 @@ def run_degrade_datasets(
     dataset_files: List[str] | None = None,
     techniques: List[str] | None = None,
     rates: List[float] | None = None,
+    structures: List[str] | None = None,
     iterations: int | None = None,
     seed: int | None = None,
     force: bool = False,
@@ -279,11 +280,12 @@ def run_degrade_datasets(
 | `dataset_files` | List of **absolute or relative paths** to training CSVs; if `None`, uses `config.get_datasets()`. |
 | `techniques` | Defaults from config (`missingness_techniques`). |
 | `rates` | Fractions in `[0.0, 1.0]`; defaults from config. |
+| `structures` | `scattered`, `contiguous`, and/or `mixed`; defaults from `missingness_structures.selected`. |
 | `iterations` | Defaults to `config.get_iterations()`. |
 | `seed` | Defaults to `config.get_seed()`. |
 | `force` | Passed into degradation tasks (overwrite / re-run per script logic). |
 
-Output goes to `config.get_missing_dir()`. Parallelism: `config.get_n_jobs()`.
+Output goes to `config.get_missing_dir()`. Per-realization and per-gap reports go to its `reports/` subdirectory. Parallelism: `config.get_n_jobs()`.
 
 ---
 

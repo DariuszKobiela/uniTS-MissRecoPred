@@ -1736,13 +1736,15 @@ def main():
     # Tab 8: Statistical Tests
     with tab8:
         st.header("📊 Statistical Significance Tests")
-        st.caption("Pairwise t-tests between RECONSTRUCTION models")
+        st.caption("Dataset-level paired tests with Holm correction")
         
         if len(df_recon) == 0:
             st.warning("No reconstructed data available")
         else:
             from utils.statistical_tests import (
-                perform_pairwise_ttests, 
+                perform_pairwise_ttests,
+                pairwise_comparisons,
+                friedman_test,
                 get_model_statistics,
                 get_significance_summary
             )
@@ -1751,7 +1753,11 @@ def main():
                 st.markdown(f"""
                 **Statistical Significance Testing**:
                 
-                Pairwise t-tests between reconstruction models to determine if **{m.label}** differences are statistically significant.
+                Conditions are matched before comparison. Normality is tested
+                on paired differences, followed by a paired t-test or Wilcoxon
+                test. Holm-adjusted p-values control family-wise error.
+                Repeated conditions are averaged within each dataset, avoiding
+                pseudoreplication.
                 
                 **Legend**:
                 - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model
@@ -1765,6 +1771,13 @@ def main():
             
             # Rename column for statistical functions
             df_for_stats = df_recon.rename(columns={'reconstruction_model': 'model'})
+            recon_pair_columns = [
+                column for column in (
+                    "dataset_name", "source_type", "technique", "rate_percent",
+                    "structure", "reconstruction_iteration", "prediction_model",
+                    "prediction_iteration",
+                ) if column in df_for_stats.columns
+            ]
             
             st.subheader("Reconstruction Model Statistics")
             model_stats = get_model_statistics(
@@ -1779,6 +1792,19 @@ def main():
             
             st.divider()
             
+            recon_friedman = friedman_test(
+                df_for_stats, metric=m.key, pair_columns=recon_pair_columns
+            )
+            st.subheader("Friedman Omnibus Test")
+            if np.isfinite(recon_friedman["p_value"]):
+                st.write(
+                    f"χ² = {recon_friedman['statistic']:.4f}, "
+                    f"p = {recon_friedman['p_value']:.4g}, "
+                    f"datasets = {recon_friedman['n_datasets']}"
+                )
+            else:
+                st.info("At least three models and two complete dataset blocks are required.")
+
             st.subheader("Pairwise Statistical Significance Matrix")
             significance_matrix = perform_pairwise_ttests(
                 df_for_stats,
@@ -1786,6 +1812,7 @@ def main():
                 alpha_01=0.01,
                 alpha_05=0.05,
                 lower_is_better=m.lower_is_better,
+                pair_columns=recon_pair_columns,
             )
             
             def color_significance(val):
@@ -1815,16 +1842,34 @@ def main():
             summary_df.columns = ['Recon Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Diff', 'Worse (p<0.05)', 'Worse (p<0.01)']
             summary_df = summary_df.sort_values('Better (p<0.01)', ascending=False)
             st.dataframe(summary_df, width='stretch')
+
+            with st.expander("🔬 Reconstruction effect sizes and 95% CIs", expanded=False):
+                st.dataframe(
+                    pairwise_comparisons(
+                        df_for_stats,
+                        metric=m.key,
+                        lower_is_better=m.lower_is_better,
+                        pair_columns=recon_pair_columns,
+                    ),
+                    width="stretch",
+                )
             
             # ====================================================================
-            # PREDICTION MODELS T-TESTS
+            # PREDICTION MODEL PAIRED TESTS
             # ====================================================================
             st.markdown("---")
             st.header("📊 Statistical Tests: Prediction Models")
-            st.caption("Pairwise t-tests between PREDICTION models (which prediction model gives better results?)")
+            st.caption("Dataset-level paired tests between prediction models")
             
             # Rename column for statistical functions
             df_pred_stats = df_recon.rename(columns={'prediction_model': 'model'})
+            pred_pair_columns = [
+                column for column in (
+                    "dataset_name", "source_type", "technique", "rate_percent",
+                    "structure", "reconstruction_iteration", "reconstruction_model",
+                    "prediction_iteration",
+                ) if column in df_pred_stats.columns
+            ]
             
             st.subheader("Prediction Model Statistics")
             pred_model_stats = get_model_statistics(
@@ -1839,6 +1884,19 @@ def main():
             
             st.divider()
             
+            pred_friedman = friedman_test(
+                df_pred_stats, metric=m.key, pair_columns=pred_pair_columns
+            )
+            st.subheader("Friedman Omnibus Test (Prediction Models)")
+            if np.isfinite(pred_friedman["p_value"]):
+                st.write(
+                    f"χ² = {pred_friedman['statistic']:.4f}, "
+                    f"p = {pred_friedman['p_value']:.4g}, "
+                    f"datasets = {pred_friedman['n_datasets']}"
+                )
+            else:
+                st.info("At least three models and two complete dataset blocks are required.")
+
             st.subheader("Pairwise Statistical Significance Matrix (Prediction Models)")
             pred_significance_matrix = perform_pairwise_ttests(
                 df_pred_stats,
@@ -1846,6 +1904,7 @@ def main():
                 alpha_01=0.01,
                 alpha_05=0.05,
                 lower_is_better=m.lower_is_better,
+                pair_columns=pred_pair_columns,
             )
             
             styled_pred_matrix = pred_significance_matrix.style.map(color_significance)
@@ -1861,6 +1920,17 @@ def main():
             pred_summary_df.columns = ['Pred Model', 'Better (p<0.01)', 'Better (p<0.05)', 'No Diff', 'Worse (p<0.05)', 'Worse (p<0.01)']
             pred_summary_df = pred_summary_df.sort_values('Better (p<0.01)', ascending=False)
             st.dataframe(pred_summary_df, width='stretch')
+
+            with st.expander("🔬 Prediction effect sizes and 95% CIs", expanded=False):
+                st.dataframe(
+                    pairwise_comparisons(
+                        df_pred_stats,
+                        metric=m.key,
+                        lower_is_better=m.lower_is_better,
+                        pair_columns=pred_pair_columns,
+                    ),
+                    width="stretch",
+                )
     
     # Tab 9: By Dataset
     with tab9:

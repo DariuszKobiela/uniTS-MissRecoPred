@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from optimization.sd2_ablation import oracle_reconstruction, round_trip_series
 from reconstruction_models.stable_diffusion_2_gaf import (
     gaf_to_series,
     series_to_gaf,
@@ -88,3 +89,35 @@ def test_lossy_decoders_require_encoding_metadata(reference_series: pd.Series):
 
     with pytest.raises(ValueError, match="Spectrogram decoding requires phase"):
         spectrogram_to_series(np.zeros((8, 8)), len(reference_series), reference_series)
+
+
+@pytest.mark.parametrize("encoding", ["gaf", "mtf", "rp", "spec"])
+def test_ablation_round_trip_returns_finite_aligned_series(
+    reference_series: pd.Series,
+    encoding: str,
+):
+    reconstructed = round_trip_series(reference_series, encoding, image_size=128)
+
+    assert reconstructed.index.equals(reference_series.index)
+    assert np.isfinite(reconstructed.to_numpy()).all()
+
+
+@pytest.mark.parametrize("encoding", ["gaf", "mtf", "rp", "spec"])
+def test_clean_image_oracle_changes_only_missing_positions(
+    reference_series: pd.Series,
+    encoding: str,
+):
+    degraded = reference_series.copy()
+    degraded.iloc[[40, 41, 200, 400]] = np.nan
+
+    oracle = oracle_reconstruction(
+        reference_series,
+        degraded,
+        encoding,
+        image_size=128,
+    )
+    expected = round_trip_series(reference_series, encoding, image_size=128)
+    missing = degraded.isna()
+
+    pd.testing.assert_series_equal(oracle.loc[~missing], reference_series.loc[~missing])
+    np.testing.assert_allclose(oracle.loc[missing], expected.loc[missing])

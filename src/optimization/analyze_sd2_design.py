@@ -23,6 +23,7 @@ from framework.plugin_registry import get_reconstruction_models
 from missingness_techniques.mar import apply_mar
 from missingness_techniques.mcar import apply_mcar
 from missingness_techniques.mnar import apply_mnar
+from optimization.sd2_ablation import ENCODINGS, run_ablation_cases
 from reconstruction_metrics import compute_metrics_from_series, get_metric_spec
 from reconstruction_models.sd2_settings import DEFAULT_PROMPTS
 from reconstruction_models.sd2_windowing import plan_reconstruction_windows
@@ -239,6 +240,57 @@ def validation_slice(source: pd.Series, window_samples: int, case_number: int, n
     return source.iloc[start : start + length].reset_index(drop=True)
 
 
+def run_representation_ablations(
+    args: argparse.Namespace,
+    metadata: dict,
+    cleaned_dir: Path,
+    output_dir: Path,
+) -> pd.DataFrame:
+    """Run CPU-only representation and clean-image oracle controls."""
+    rows: list[dict] = []
+    for filename, info in metadata["series"].items():
+        dataset = Path(filename).stem
+        source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
+        seen_effective_windows: set[int] = set()
+        for window_samples in args.window_sizes:
+            effective_window = min(window_samples, len(source))
+            if effective_window in seen_effective_windows:
+                continue
+            seen_effective_windows.add(effective_window)
+            n_cases = 1 if effective_window == len(source) else args.cases_per_dataset
+            for case_number in range(n_cases):
+                clean = validation_slice(
+                    source,
+                    window_samples,
+                    case_number,
+                    n_cases,
+                )
+                for image_size in args.image_sizes:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        case_rows = run_ablation_cases(
+                            clean=clean,
+                            encodings=args.ablation_encodings,
+                            image_size=image_size,
+                            mechanisms=MECHANISMS,
+                            rates=args.rates,
+                            seed=args.seed + case_number * len(MECHANISMS),
+                        )
+                    for row in case_rows:
+                        row.update(
+                            {
+                                "dataset": dataset,
+                                "window_samples": window_samples,
+                                "effective_window_samples": len(clean),
+                                "case": case_number,
+                            }
+                        )
+                    rows.extend(case_rows)
+
+    result = pd.DataFrame(rows)
+    result.to_csv(output_dir / "sd2_representation_ablations.csv", index=False)
+    return result
+
+
 def run_empirical_search(
     args: argparse.Namespace,
     metadata: dict,
@@ -248,8 +300,13 @@ def run_empirical_search(
     import optuna
     import torch
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("--run-inference requires a CUDA GPU")
+    if torch.cuda.is_available():
+        print("Using CUDA for --run-inference")
+    else:
+        print(
+            "CUDA is not available; --run-inference will run on CPU. "
+            "This is supported but much slower than GPU."
+        )
 
     registry = get_reconstruction_models()
     models = args.models or [
@@ -297,6 +354,7 @@ def run_empirical_search(
                         with contextlib.redirect_stdout(io.StringIO()):
                             reconstructed = registry[model_name](
                                 degraded,
+                                seed=args.sd2_seeds[0],
                                 num_inference_steps=steps,
                                 guidance_scale=guidance,
                                 window_samples=window_samples,
@@ -324,6 +382,7 @@ def run_empirical_search(
                                 "prompt": prompt,
                                 "num_inference_steps": steps,
                                 "guidance_scale": guidance,
+                                "sd2_seed": args.sd2_seeds[0],
                                 "metric": args.metric,
                                 "metric_value": raw,
                                 "seconds": elapsed,
@@ -331,7 +390,7 @@ def run_empirical_search(
                             }
                         )
                     except Exception as exc:
-                        if "out of memory" in str(exc).lower():
+                        if "out of memory" in str(exc).lower() and torch.cuda.is_available():
                             torch.cuda.empty_cache()
                         trial_rows.append(
                             {
@@ -374,6 +433,81 @@ def run_empirical_search(
     return result, winners
 
 
+def run_seed_sensitivity(
+    args: argparse.Namespace,
+    metadata: dict,
+    cleaned_dir: Path,
+    output_dir: Path,
+    winners: list[dict],
+) -> pd.DataFrame:
+    """Repeat winning settings over explicit SD2 seeds on one case per dataset."""
+    registry = get_reconstruction_models()
+    rows = []
+    for winner in winners:
+        filename = next(
+            name for name in metadata["series"] if Path(name).stem == winner["dataset"]
+        )
+        info = metadata["series"][filename]
+        source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
+        clean = validation_slice(source, int(winner["window_samples"]), 0, 1)
+        mechanism = "MCAR"
+        rate = args.rates[len(args.rates) // 2]
+        degraded = MECHANISMS[mechanism](clean, rate, seed=args.seed)
+        for sd2_seed in args.sd2_seeds:
+            started = time.perf_counter()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    reconstructed = registry[winner["model"]](
+                        degraded,
+                        seed=sd2_seed,
+                        num_inference_steps=int(winner["num_inference_steps"]),
+                        guidance_scale=float(winner["guidance_scale"]),
+                        window_samples=int(winner["window_samples"]),
+                        context_samples=0,
+                        image_size=int(winner["image_size"]),
+                        prompt=winner["prompt"],
+                    )
+                value = float(
+                    compute_metrics_from_series(clean, degraded, reconstructed)[args.metric]
+                )
+                rows.append(
+                    {
+                        "model": winner["model"],
+                        "encoding": winner["encoding"],
+                        "dataset": winner["dataset"],
+                        "mechanism": mechanism,
+                        "missing_rate": rate,
+                        "sd2_seed": sd2_seed,
+                        "metric": args.metric,
+                        "metric_value": value,
+                        "seconds": time.perf_counter() - started,
+                        "status": "success",
+                    }
+                )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "model": winner["model"],
+                        "encoding": winner["encoding"],
+                        "dataset": winner["dataset"],
+                        "sd2_seed": sd2_seed,
+                        "status": "error",
+                        "error": str(exc),
+                    }
+                )
+    result = pd.DataFrame(rows)
+    result.to_csv(output_dir / "sd2_seed_sensitivity.csv", index=False)
+    successful = result[result["status"] == "success"]
+    if len(successful):
+        summary = (
+            successful.groupby(["model", "encoding", "dataset", "metric"])["metric_value"]
+            .agg(["count", "mean", "std", "min", "max"])
+            .reset_index()
+        )
+        summary.to_csv(output_dir / "sd2_seed_sensitivity_summary.csv", index=False)
+    return result
+
+
 def write_report(
     output_dir: Path,
     analytical: pd.DataFrame,
@@ -381,6 +515,8 @@ def write_report(
     audit: dict,
     search_space: dict,
     empirical: pd.DataFrame | None = None,
+    ablations: pd.DataFrame | None = None,
+    metric: str = "smape",
 ) -> None:
     lines = [
         "# SD2 window, resolution, prompt and parameter analysis",
@@ -467,6 +603,7 @@ def write_report(
             f"- Inference steps: {search_space['num_inference_steps']}",
             f"- Guidance scales: {search_space['guidance_scale']}",
             f"- Missing rates: {search_space['missing_rates']}",
+            f"- Explicit SD2 sensitivity seeds: {search_space['sd2_seeds']}",
             f"- Trials per model/dataset: {search_space['trials_per_model_dataset']}",
             f"- Validation cases per trial: {search_space['cases_per_trial']}",
             "",
@@ -488,6 +625,32 @@ def write_report(
             ]
         )
 
+    if ablations is not None and not ablations.empty:
+        lines.extend(
+            [
+                "",
+                "## Round-trip and oracle ablations",
+                "",
+                "- `round_trip` scores all clean samples after encode, 8-bit image quantization, and decode; diffusion is bypassed.",
+                "- `oracle_clean_image` scores only simulated missing positions after substituting the ideal clean encoded image for the SD2 output.",
+                "- The oracle uses clean-image decoder metadata and is a representation ceiling, not a deployable imputation method.",
+                f"- Summary metric: {metric}. Detailed results: sd2_representation_ablations.csv",
+                "",
+                "| ablation | encoding | image | mean metric | cases |",
+                "| --- | --- | ---: | ---: | ---: |",
+            ]
+        )
+        summary = (
+            ablations.groupby(["ablation", "encoding", "image_size"], sort=True)[metric]
+            .agg(["mean", "count"])
+            .reset_index()
+        )
+        for row in summary.itertuples():
+            lines.append(
+                f"| {row.ablation} | {row.encoding.upper()} | {row.image_size} | "
+                f"{row.mean:.6g} | {row.count} |"
+            )
+
     (output_dir / "sd2_design_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -505,8 +668,29 @@ def main() -> None:
     parser.add_argument("--n-trials", type=int, default=12)
     parser.add_argument("--cases-per-dataset", type=int, default=3)
     parser.add_argument("--models", nargs="*")
+    parser.add_argument(
+        "--ablation-encodings",
+        nargs="+",
+        choices=ENCODINGS,
+        default=list(ENCODINGS),
+        help="Representations evaluated by --run-ablation.",
+    )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--run-inference", action="store_true")
+    parser.add_argument(
+        "--sd2-seeds",
+        default="42,43,44,45,46",
+        help="Five explicit Diffusers seeds used for winner sensitivity analysis.",
+    )
+    parser.add_argument(
+        "--run-ablation",
+        action="store_true",
+        help="Run CPU-only round-trip and clean-image oracle ablations.",
+    )
+    parser.add_argument(
+        "--run-inference",
+        action="store_true",
+        help="Run Optuna search with actual SD2 inpainting (GPU preferred; CPU is allowed but slow).",
+    )
     args = parser.parse_args()
 
     args.window_sizes = parse_int_list(args.window_sizes)
@@ -514,6 +698,9 @@ def main() -> None:
     args.steps = parse_int_list(args.steps)
     args.guidance = parse_float_list(args.guidance)
     args.rates = parse_float_list(args.rates)
+    args.sd2_seeds = parse_int_list(args.sd2_seeds)
+    if not 3 <= len(args.sd2_seeds) <= 5:
+        raise ValueError("--sd2-seeds must contain between 3 and 5 seeds")
 
     config = load_config(args.config)
     metadata_path = Path(config.config["split"]["horizons"]["metadata_path"])
@@ -536,8 +723,13 @@ def main() -> None:
     audit = audit_legacy_dataset(Path("stdiff_training_data"))
 
     empirical = None
+    ablations = None
+    if args.run_ablation:
+        ablations = run_representation_ablations(args, metadata, cleaned_dir, output_dir)
+
     if args.run_inference:
         empirical, empirical_winners = run_empirical_search(args, metadata, cleaned_dir, output_dir)
+        run_seed_sensitivity(args, metadata, cleaned_dir, output_dir, empirical_winners)
         recommendations = empirical_winners
         runtime_path = output_dir / "sd2_runtime_overrides.json"
         if runtime_path.is_file():
@@ -571,6 +763,7 @@ def main() -> None:
         "num_inference_steps": args.steps,
         "guidance_scale": args.guidance,
         "missing_rates": args.rates,
+        "sd2_seeds": args.sd2_seeds,
         "prompts": PROMPT_CANDIDATES,
         "trials_per_model_dataset": args.n_trials,
         "cases_per_trial": args.cases_per_dataset,
@@ -582,10 +775,22 @@ def main() -> None:
         "recommendations": recommendations,
         "search_space": search_space,
         "legacy_dataset_audit": audit,
+        "ablation_output": (
+            "sd2_representation_ablations.csv" if args.run_ablation else None
+        ),
         "note": "Analytical winners are provisional; use --run-inference for model-based selection.",
     }
     (output_dir / "sd2_recommendations.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    write_report(output_dir, analytical, recommendations, audit, search_space, empirical)
+    write_report(
+        output_dir,
+        analytical,
+        recommendations,
+        audit,
+        search_space,
+        empirical,
+        ablations,
+        args.metric,
+    )
     print(f"Analysis written to {output_dir}")
 
 

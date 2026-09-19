@@ -61,6 +61,7 @@ def test_runtime_settings_resolve_dataset_and_prompt_overrides():
     runtime = resolve_sd2_runtime_settings(settings, "pump_sensor_28_univ", "stable_diffusion_2_gaf", 218880)
 
     assert runtime == {
+        "seed": 42,
         "num_inference_steps": 30,
         "guidance_scale": 4.5,
         "window_samples": 2048,
@@ -112,6 +113,7 @@ def test_runtime_settings_prefer_empirical_model_override(tmp_path):
     )
 
     assert runtime == {
+        "seed": 42,
         "num_inference_steps": 30,
         "guidance_scale": 3.0,
         "window_samples": 1024,

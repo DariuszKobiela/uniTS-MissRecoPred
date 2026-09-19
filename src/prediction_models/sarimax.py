@@ -16,110 +16,139 @@ import warnings
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 
+def _forecast_index(index: pd.Index, horizon: int) -> pd.Index:
+    """Extend a regular index when possible; otherwise use positional indices."""
+    if isinstance(index, pd.DatetimeIndex):
+        frequency = index.freq or index.inferred_freq
+        if frequency is not None:
+            return pd.date_range(index[-1], periods=horizon + 1, freq=frequency)[1:]
+    if isinstance(index, pd.RangeIndex):
+        return pd.RangeIndex(index[-1] + index.step, stop=index[-1] + (horizon + 1) * index.step, step=index.step)
+    if np.issubdtype(index.dtype, np.integer):
+        return pd.Index(np.arange(int(index[-1]) + 1, int(index[-1]) + horizon + 1))
+    return pd.RangeIndex(len(index), len(index) + horizon)
+
+
+def _trend_fallback(series: pd.Series, horizon: int) -> np.ndarray:
+    clean_data = series.dropna().astype(float)
+    if len(clean_data) >= 5:
+        recent = clean_data.tail(min(20, len(clean_data)))
+        weights = np.exp(np.linspace(-1, 0, len(recent) - 1))
+        weights /= weights.sum()
+        trend = float(np.average(np.diff(recent), weights=weights))
+    elif len(clean_data) >= 2:
+        trend = float(clean_data.iloc[-1] - clean_data.iloc[-2])
+    else:
+        trend = 0.0
+    last_value = float(clean_data.iloc[-1]) if len(clean_data) else 0.0
+    return np.asarray([last_value + trend * (step + 1) for step in range(horizon)])
+
+
 def predict_sarimax(train_series: pd.Series, horizon: int,
                     order: tuple = (1, 1, 1),
                     seasonal_order: tuple = (0, 0, 0, 0),  # Disabled by default for speed
                     random_state: int = None) -> pd.Series:
     """
-    Trains a SARIMAX model and predicts future values.
+    Train SARIMAX and forecast in the original data scale.
+
+    The returned Series includes audit metadata in ``attrs``. In particular,
+    ``fallback_used`` and ``fallback_reason`` make degraded model fits visible
+    to experiment reporting.
     """
-    
-    try:
-        # 1. Prepare data
-        series = train_series.copy().astype(float)
-        series.index = pd.date_range(start='2000-01-01', periods=len(series), freq='h')
-        
-        # 2. Normalize data for better convergence
-        mean_val = series.mean()
-        std_val = series.std()
-        if std_val > 0:
-            series_normalized = (series - mean_val) / std_val
-        else:
-            series_normalized = series - mean_val
-        
-        # 3. Try simple ARIMA first (faster, more stable)
-        forecast_normalized = None
-        
-        # Try progressively simpler models until one works
-        model_configs = [
-            {'order': order, 'seasonal_order': (0, 0, 0, 0)},  # Simple ARIMA
-            {'order': (1, 1, 0), 'seasonal_order': (0, 0, 0, 0)},  # AR(1) with differencing
-            {'order': (1, 0, 0), 'seasonal_order': (0, 0, 0, 0)},  # Simple AR(1)
-            {'order': (0, 1, 1), 'seasonal_order': (0, 0, 0, 0)},  # Simple MA(1) with differencing
-        ]
-        
-        for config in model_configs:
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    model = SARIMAX(
-                        series_normalized,
-                        order=config['order'],
-                        seasonal_order=config['seasonal_order'],
-                        enforce_stationarity=False,
-                        enforce_invertibility=False,
-                        simple_differencing=True
-                    ).fit(disp=False, maxiter=100, method='powell')
-                    
-                    forecast_normalized = model.forecast(steps=horizon)
-                    
-                    if np.isfinite(forecast_normalized.values).all():
-                        break
-                    else:
-                        forecast_normalized = None
-            except Exception:
-                continue
-        
-        # 4. Denormalize forecast
-        if forecast_normalized is not None and np.isfinite(forecast_normalized.values).all():
-            if std_val > 0:
-                forecast_values = forecast_normalized.values * std_val + mean_val
-            else:
-                forecast_values = forecast_normalized.values + mean_val
-        else:
-            # Fallback: use last values with simple trend
-            raise ValueError("All SARIMAX models failed")
-        
-        # 5. Create output with proper index
-        original_index = train_series.index
-        if hasattr(original_index[-1], 'freq') or isinstance(original_index[-1], pd.Timestamp):
-            start_pos = len(original_index)
-            forecast_index = range(start_pos, start_pos + horizon)
-        else:
-            last_idx = int(original_index[-1])
-            forecast_index = range(last_idx + 1, last_idx + 1 + horizon)
-        
-        return pd.Series(forecast_values, index=forecast_index, name='predicted')
-        
-    except Exception:
-        # Fallback: exponential smoothing / trend extrapolation
-        clean_data = train_series.dropna().astype(float)
-        
-        if len(clean_data) >= 5:
-            # Use exponential weighted average for trend
-            recent = clean_data.tail(min(20, len(clean_data)))
-            weights = np.exp(np.linspace(-1, 0, len(recent)))
-            weights /= weights.sum()
-            trend = np.average(np.diff(recent), weights=weights[:-1])
-            last_value = clean_data.iloc[-1]
-            forecast_values = [last_value + trend * (i + 1) for i in range(horizon)]
-        elif len(clean_data) >= 2:
-            trend = clean_data.iloc[-1] - clean_data.iloc[-2]
-            last_value = clean_data.iloc[-1]
-            forecast_values = [last_value + trend * (i + 1) for i in range(horizon)]
-        else:
-            last_value = clean_data.iloc[-1] if len(clean_data) > 0 else 0
-            forecast_values = [last_value] * horizon
-        
-        original_index = train_series.index
-        if hasattr(original_index[-1], 'freq') or isinstance(original_index[-1], pd.Timestamp):
-            start_pos = len(original_index)
-            forecast_index = range(start_pos, start_pos + horizon)
-        else:
-            last_idx = int(original_index[-1])
-            forecast_index = range(last_idx + 1, last_idx + 1 + horizon)
-        
-        return pd.Series(forecast_values, index=forecast_index, name='predicted')
+    del random_state  # SARIMAX fitting is deterministic for fixed inputs.
+    if horizon < 1:
+        raise ValueError("horizon must be positive")
+    order = tuple(order)
+    seasonal_order = tuple(seasonal_order)
+    if len(order) != 3 or len(seasonal_order) != 4:
+        raise ValueError("order and seasonal_order must have lengths 3 and 4")
+
+    series = train_series.dropna().astype(float).copy()
+    if len(series) < 3:
+        raise ValueError("SARIMAX requires at least three finite observations")
+    mean_val = float(series.mean())
+    std_val = float(series.std())
+    scale = std_val if np.isfinite(std_val) and std_val > 0 else 1.0
+    normalized = (series - mean_val) / scale
+
+    requested = {"order": order, "seasonal_order": seasonal_order}
+    candidates = [
+        requested,
+        {"order": (1, 1, 0), "seasonal_order": (0, 0, 0, 0)},
+        {"order": (1, 0, 0), "seasonal_order": (0, 0, 0, 0)},
+        {"order": (0, 1, 1), "seasonal_order": (0, 0, 0, 0)},
+    ]
+    # Do not retry an identical configuration.
+    candidates = list(dict.fromkeys((c["order"], c["seasonal_order"]) for c in candidates))
+    errors = []
+
+    for candidate_number, (candidate_order, candidate_seasonal) in enumerate(candidates):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                fitted = SARIMAX(
+                    normalized,
+                    order=candidate_order,
+                    seasonal_order=candidate_seasonal,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                    simple_differencing=False,
+                ).fit(disp=False, maxiter=100, method="powell")
+            values = np.asarray(fitted.forecast(steps=horizon), dtype=float)
+            if len(values) != horizon or not np.isfinite(values).all():
+                raise ValueError("model returned a non-finite or incomplete forecast")
+            forecast = pd.Series(
+                values * scale + mean_val,
+                index=_forecast_index(train_series.index, horizon),
+                name="predicted",
+            )
+            fallback_used = candidate_number > 0
+            forecast.attrs.update(
+                {
+                    "fallback_used": fallback_used,
+                    "fallback_type": "simplified_sarimax" if fallback_used else "none",
+                    "fallback_reason": " | ".join(errors) if fallback_used else "",
+                    "requested_order": str(order),
+                    "requested_seasonal_order": str(seasonal_order),
+                    "fitted_order": str(candidate_order),
+                    "fitted_seasonal_order": str(candidate_seasonal),
+                }
+            )
+            if fallback_used:
+                warnings.warn(
+                    f"SARIMAX used a simplified fallback: {forecast.attrs}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return forecast
+        except Exception as exc:
+            errors.append(
+                f"order={candidate_order}, seasonal_order={candidate_seasonal}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    forecast = pd.Series(
+        _trend_fallback(series, horizon),
+        index=_forecast_index(train_series.index, horizon),
+        name="predicted",
+    )
+    forecast.attrs.update(
+        {
+            "fallback_used": True,
+            "fallback_type": "linear_trend",
+            "fallback_reason": " | ".join(errors),
+            "requested_order": str(order),
+            "requested_seasonal_order": str(seasonal_order),
+            "fitted_order": "",
+            "fitted_seasonal_order": "",
+        }
+    )
+    warnings.warn(
+        f"All SARIMAX configurations failed; using trend fallback: {forecast.attrs['fallback_reason']}",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return forecast
 
 
 # Alias for backward compatibility

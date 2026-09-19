@@ -849,7 +849,7 @@ def main():
     
     with tab8:
         st.header("📊 Statistical Significance Tests")
-        st.caption("Pairwise t-tests between models - which differences are statistically significant?")
+        st.caption("Dataset-level paired tests with Holm correction")
         
         if len(df_filtered) == 0:
             st.warning("No data available with current filters")
@@ -859,7 +859,9 @@ def main():
             from pathlib import Path
             sys.path.insert(0, str(Path(__file__).parent.parent))
             from utils.statistical_tests import (
-                perform_pairwise_ttests, 
+                perform_pairwise_ttests,
+                pairwise_comparisons,
+                friedman_test,
                 get_pairwise_pvalues,
                 get_model_statistics,
                 get_significance_summary
@@ -870,7 +872,13 @@ def main():
                 st.markdown("""
                 **Statistical Significance Testing**:
                 
-                This tab performs **pairwise t-tests** between all models to determine if performance differences are statistically significant or just due to random chance.
+                Results are matched by dataset, missingness mechanism, rate, gap
+                pattern, and iteration. Normality is assessed for paired
+                differences; a paired t-test or Wilcoxon signed-rank test is
+                then selected. Pairwise p-values use Holm correction.
+
+                Repeated conditions are averaged within each dataset before
+                inference, so they are not treated as independent replications.
                 
                 **Legend**:
                 - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model (highly significant)
@@ -889,7 +897,8 @@ def main():
                 **Example**: If "interpolate_linear" row shows "+2" in "knn" column, it means interpolate_linear is significantly better than knn (p<0.01).
                 
                 **Note**: For the selected metric, “better” means lower values except for R² (higher is better).
-                Tests use independent samples t-tests on multiple iterations.
+                Effect sizes and cluster-level bootstrap 95% confidence intervals
+                are reported below the matrix.
                 """)
             
             st.divider()
@@ -908,9 +917,19 @@ def main():
             
             st.divider()
             
-            # Perform pairwise t-tests
+            omnibus = friedman_test(df_filtered, metric=metric_col)
+            st.subheader("Friedman Omnibus Test")
+            if np.isfinite(omnibus["p_value"]):
+                st.write(
+                    f"χ² = {omnibus['statistic']:.4f}, "
+                    f"p = {omnibus['p_value']:.4g}, "
+                    f"datasets = {omnibus['n_datasets']}, models = {omnibus['n_models']}"
+                )
+            else:
+                st.info("At least three models and two complete dataset blocks are required.")
+
             st.subheader("Pairwise Statistical Significance Matrix")
-            st.caption("Each cell shows if row model is significantly different from column model")
+            st.caption("Cells use Holm-adjusted p-values")
             
             # Calculate significance matrix
             significance_matrix = perform_pairwise_ttests(
@@ -981,6 +1000,12 @@ def main():
                 
                 styled_pvalues = pvalue_matrix.style.map(color_pvalue).format("{:.4f}")
                 st.dataframe(styled_pvalues, width='stretch', height=600)
+
+            with st.expander("🔬 Show paired tests, effect sizes, and 95% CIs", expanded=False):
+                details = pairwise_comparisons(
+                    df_filtered, metric=metric_col, lower_is_better=lower_is_better
+                )
+                st.dataframe(details, width="stretch")
     
     with tab9:
         st.header("Best and Worst Performing Models")

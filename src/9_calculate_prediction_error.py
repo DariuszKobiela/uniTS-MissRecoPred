@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import config loader
 from utils.config_loader import load_config, load_prediction_models_config
+from utils.experiment_naming import decode_missingness_label
 from utils.logger import setup_logging
 from prediction_metrics import compute_prediction_metrics, get_metric_spec, list_primary_metric_keys
 
@@ -131,10 +132,15 @@ def load_performance_metrics(results_dir: str) -> dict:
             recon_iter = int(recon_iter) if pd.notna(recon_iter) else None
             pred_iter = int(pred_iter) if pd.notna(pred_iter) else 1
             
+            technique = row.get('technique') if pd.notna(row.get('technique')) else None
+            structure = row.get('structure', None)
+            if pd.isna(structure):
+                structure = 'scattered' if technique is not None else None
             key = str((
                 row.get('dataset_name', 'unknown'),
                 row.get('source_type', 'unknown'),
-                row.get('technique') if pd.notna(row.get('technique')) else None,
+                technique,
+                structure,
                 rate,
                 recon_iter,
                 row.get('reconstruction_model') if pd.notna(row.get('reconstruction_model')) else None,
@@ -197,6 +203,7 @@ def parse_prediction_filename(filename: str) -> dict:
             'dataset_name': dataset_name,
             'source_type': 'original',
             'technique': None,
+            'structure': None,
             'rate_percent': None,
             'reconstruction_iteration': None,
             'reconstruction_model': None,
@@ -215,7 +222,7 @@ def parse_prediction_filename(filename: str) -> dict:
         if rate_idx is None or rate_idx < 2:
             raise ValueError(f"Invalid reconstructed prediction filename format: {filename}")
         
-        technique = parts[rate_idx - 1]
+        technique, structure = decode_missingness_label(parts[rate_idx - 1])
         rate_percent = int(parts[rate_idx].replace('p', ''))
         reconstruction_iteration = int(parts[rate_idx + 1])
         dataset_name = '_'.join(parts[:rate_idx - 1])
@@ -255,6 +262,7 @@ def parse_prediction_filename(filename: str) -> dict:
             'dataset_name': dataset_name,
             'source_type': 'reconstructed',
             'technique': technique,
+            'structure': structure,
             'rate_percent': rate_percent,
             'reconstruction_iteration': reconstruction_iteration,
             'reconstruction_model': reconstruction_model,
@@ -263,27 +271,65 @@ def parse_prediction_filename(filename: str) -> dict:
         }
 
 
+def _normalize_comparison_index(index: pd.Index) -> pd.Index:
+    """Normalize CSV-round-tripped numeric or datetime indexes without reordering."""
+    if isinstance(index, pd.DatetimeIndex):
+        return pd.DatetimeIndex(pd.to_datetime(index, utc=True), name=index.name)
+    if pd.api.types.is_numeric_dtype(index.dtype):
+        return pd.Index(pd.to_numeric(index), name=index.name)
+    numeric = pd.to_numeric(index, errors="coerce")
+    if not np.isnan(np.asarray(numeric, dtype=np.float64)).any():
+        return pd.Index(numeric, name=index.name)
+    datetimes = pd.to_datetime(index, errors="coerce", utc=True)
+    if not datetimes.isna().any():
+        return pd.DatetimeIndex(datetimes, name=index.name)
+    return pd.Index(index.astype(str), name=index.name)
+
+
 def align_actual_predicted(actual: pd.Series, predicted: pd.Series) -> tuple:
-    """
-    Align length, coerce numeric, drop NaN pairs. Returns (y_true, y_pred) as float64 1-D arrays.
-    """
+    """Strictly align a prediction with ground truth by length and ordered index."""
     if len(actual) != len(predicted):
-        min_len = min(len(actual), len(predicted))
-        actual = actual.iloc[:min_len]
-        predicted = predicted.iloc[:min_len]
+        raise ValueError(
+            f"Prediction length mismatch: actual={len(actual)}, "
+            f"predicted={len(predicted)}; refusing to truncate"
+        )
+
+    actual = actual.copy()
+    predicted = predicted.copy()
+    actual.index = _normalize_comparison_index(actual.index)
+    predicted.index = _normalize_comparison_index(predicted.index)
+    if not actual.index.is_unique or not predicted.index.is_unique:
+        raise ValueError("Actual and predicted indexes must be unique")
+    if not actual.index.equals(predicted.index):
+        mismatch = next(
+            (
+                position
+                for position, (left, right) in enumerate(
+                    zip(actual.index, predicted.index)
+                )
+                if left != right
+            ),
+            None,
+        )
+        raise ValueError(
+            "Prediction index mismatch"
+            + (f" at position {mismatch}" if mismatch is not None else "")
+        )
 
     actual = pd.to_numeric(actual, errors="coerce")
     predicted = pd.to_numeric(predicted, errors="coerce")
-
-    valid_mask = ~(actual.isna() | predicted.isna())
-    actual = actual[valid_mask]
-    predicted = predicted[valid_mask]
-
-    if len(actual) == 0:
-        raise ValueError("No valid values to compare")
-
+    if actual.isna().any() or predicted.isna().any():
+        raise ValueError(
+            "Actual and predicted horizons must contain only finite numeric values"
+        )
     yt = actual.to_numpy(dtype=np.float64)
     yp = predicted.to_numpy(dtype=np.float64)
+    if not np.isfinite(yt).all() or not np.isfinite(yp).all():
+        raise ValueError(
+            "Actual and predicted horizons must contain only finite numeric values"
+        )
+    if len(yt) == 0:
+        raise ValueError("No values to compare")
     return yt, yp
 
 
@@ -375,6 +421,7 @@ def process_file_wrapper(args):
             "dataset_name": metadata["dataset_name"],
             "source_type": metadata["source_type"],
             "technique": metadata["technique"],
+            "structure": metadata["structure"],
             "rate_percent": metadata["rate_percent"],
             "reconstruction_iteration": metadata["reconstruction_iteration"],
             "reconstruction_model": metadata["reconstruction_model"],
@@ -389,6 +436,7 @@ def process_file_wrapper(args):
             metadata['dataset_name'],
             metadata['source_type'],
             metadata['technique'],
+            metadata['structure'],
             metadata['rate_percent'],
             metadata['reconstruction_iteration'],
             metadata['reconstruction_model'],
@@ -500,11 +548,17 @@ def run_calculate_prediction_error(config, pred_config=None) -> bool:
         return False
 
     test_data_mapping = {f.stem: str(f) for f in test_files}
+    for short, full in config.get_dataset_aliases().items():
+        if full in test_data_mapping:
+            test_data_mapping[short] = test_data_mapping[full]
 
     train_data_mapping = {}
     if os.path.isdir(train_dir):
         train_files = list(Path(train_dir).glob("*.csv"))
         train_data_mapping = {f.stem: str(f) for f in train_files}
+        for short, full in config.get_dataset_aliases().items():
+            if full in train_data_mapping:
+                train_data_mapping[short] = train_data_mapping[full]
     else:
         print(f"⚠️  Train directory not found (MASE will be NaN): {train_dir}")
 

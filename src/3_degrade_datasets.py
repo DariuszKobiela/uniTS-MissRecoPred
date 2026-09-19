@@ -11,6 +11,7 @@ Test data is preserved separately for prediction evaluation.
 import os
 import sys
 import argparse
+import hashlib
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -28,7 +29,10 @@ from utils.logger import setup_logging
 setup_logging("3_degrade_datasets")
 
 from framework.plugin_registry import get_missingness_techniques
+from missingness_techniques.structured import apply_structured_missingness
 from utils.config_loader import load_config
+from utils.experiment_naming import encode_missingness_label
+from utils.missingness_analysis import summarize_missingness
 
 
 def load_source_dataset(file_path: str, config) -> pd.DataFrame:
@@ -54,90 +58,111 @@ def load_source_dataset(file_path: str, config) -> pd.DataFrame:
 
 
 def process_single_degradation(task: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Worker function to process a single degradation task.
-    
-    Args:
-        task: Dictionary with keys: source_file, output_file, technique, rate, seed, config, force
-        
-    Returns:
-        Dictionary with keys: status, message, output_file
-    """
+    """Worker function for one reproducible mechanism × structure realization."""
+    metadata = {
+        "dataset_name": Path(task["source_file"]).stem,
+        "mechanism": task["technique"],
+        "structure": task["structure"],
+        "requested_missing_rate": task["rate"],
+        "rate_percent": int(task["rate"] * 100),
+        "iteration": task["iteration"],
+        "seed": task["seed"],
+        "output_file": task["output_file"],
+    }
     try:
-        # Check if file already exists
-        if Path(task['output_file']).exists() and not task['force']:
+        if Path(task["output_file"]).exists() and not task["force"]:
+            existing = pd.read_csv(task["output_file"], index_col=0)
+            series = pd.to_numeric(existing.iloc[:, 0], errors="coerce")
+            summary, gaps = summarize_missingness(series, metadata=metadata)
             return {
-                'status': 'skipped',
-                'message': f"Already exists",
-                'output_file': task['output_file']
+                "status": "skipped",
+                "message": "Already exists",
+                "output_file": task["output_file"],
+                "summary": summary,
+                "gaps": gaps,
             }
-        
-        # Perform degradation
-        degrade_dataset(
-            source_file=task['source_file'],
-            output_file=task['output_file'],
-            missingness_technique=task['technique'],
-            missing_rate=task['rate'],
-            seed=task['seed'],
-            config=task['config']
+
+        summary, gaps = degrade_dataset(
+            source_file=task["source_file"],
+            output_file=task["output_file"],
+            missingness_technique=task["technique"],
+            missing_rate=task["rate"],
+            seed=task["seed"],
+            config=task["config"],
+            structure=task["structure"],
+            iteration=task["iteration"],
         )
-        
         return {
-            'status': 'success',
-            'message': 'Completed',
-            'output_file': task['output_file']
+            "status": "success",
+            "message": "Completed",
+            "output_file": task["output_file"],
+            "summary": summary,
+            "gaps": gaps,
         }
-    except Exception as e:
+    except Exception as exc:
         return {
-            'status': 'error',
-            'message': str(e),
-            'output_file': task['output_file']
+            "status": "error",
+            "message": str(exc),
+            "output_file": task["output_file"],
         }
 
 
-def degrade_dataset(source_file: str,
-                   output_file: str,
-                   missingness_technique: str,
-                   missing_rate: float,
-                   seed: int = None,
-                   config = None) -> None:
-    """
-    Degrade a single dataset by introducing missing values.
-    
-    Args:
-        source_file: Path to source CSV file
-        output_file: Path to output degraded CSV file
-        missingness_technique: Name of missingness technique
-        missing_rate: Fraction of values to make missing (0.0 to 1.0)
-        seed: Random seed for reproducibility
-        config: Config object for format settings
-    """
-    # Check if output file already exists
-    if os.path.exists(output_file) and config and not config.get_overwrite_existing():
-        print(f"\n  ⏭️  Skipping (file already exists, overwrite_existing=false)")
-        return
-    
-    # Load source dataset
+def degrade_dataset(
+    source_file: str,
+    output_file: str,
+    missingness_technique: str,
+    missing_rate: float,
+    seed: int | None = None,
+    config=None,
+    structure: str = "scattered",
+    iteration: int | None = None,
+) -> tuple[dict, list[dict]]:
+    """Degrade one dataset and return realization- and gap-level diagnostics."""
     df = load_source_dataset(source_file, config)
-    series = df.iloc[:, 0]  # First column is the time series
-    
+    series = df.iloc[:, 0]
     all_techniques = get_missingness_techniques()
     if missingness_technique not in all_techniques:
         raise ValueError(f"Unknown missingness technique: {missingness_technique}")
-    
-    technique_func = all_techniques[missingness_technique]
-    
-    # Apply missingness
-    print(f"\n  Applying {missingness_technique} with rate {missing_rate*100:.1f}%...")
-    degraded_series = technique_func(series, missing_rate, seed=seed)
-    
-    # Create output DataFrame with original timestamps
+
+    print(
+        f"\n  Applying {missingness_technique} × {structure} "
+        f"with rate {missing_rate*100:.1f}%..."
+    )
+    if missingness_technique in {"MCAR", "MAR", "MNAR"}:
+        settings = config.get_missingness_structure_settings() if config else {}
+        degraded_series = apply_structured_missingness(
+            series,
+            missing_rate,
+            missingness_technique,
+            structure,
+            seed=seed,
+            **settings,
+        )
+    elif structure == "scattered":
+        degraded_series = all_techniques[missingness_technique](
+            series, missing_rate, seed=seed
+        )
+    else:
+        raise ValueError(
+            f"Plugin mechanism {missingness_technique!r} supports only scattered "
+            "missingness unless it implements structured missingness"
+        )
+
     output_df = df.copy()
     output_df.iloc[:, 0] = degraded_series.values
-    
-    # Save degraded dataset
     output_df.to_csv(output_file)
     print(f"  ✓ Saved to: {output_file}")
+    metadata = {
+        "dataset_name": Path(source_file).stem,
+        "mechanism": missingness_technique,
+        "structure": structure,
+        "requested_missing_rate": missing_rate,
+        "rate_percent": int(missing_rate * 100),
+        "iteration": iteration,
+        "seed": seed,
+        "output_file": output_file,
+    }
+    return summarize_missingness(degraded_series, metadata=metadata)
 
 
 def main():
@@ -185,6 +210,13 @@ Examples:
         type=float,
         help='Missing rates as fractions (overrides config)'
     )
+
+    parser.add_argument(
+        '--structures',
+        nargs='+',
+        choices=['scattered', 'contiguous', 'mixed'],
+        help='Temporal missingness structures (overrides config)'
+    )
     
     parser.add_argument(
         '--iterations',
@@ -219,6 +251,7 @@ Examples:
         dataset_files=args.dataset_files,
         techniques=args.techniques,
         rates=args.rates,
+        structures=args.structures,
         iterations=args.iterations,
         seed=args.seed,
         force=args.force,
@@ -230,6 +263,7 @@ def run_degrade_datasets(
     dataset_files: List[str] | None = None,
     techniques: List[str] | None = None,
     rates: List[float] | None = None,
+    structures: List[str] | None = None,
     iterations: int | None = None,
     seed: int | None = None,
     force: bool = False,
@@ -246,6 +280,7 @@ def run_degrade_datasets(
 
     techniques = techniques if techniques else config.get_missingness_techniques()
     rates = rates if rates else config.get_missingness_rates()
+    structures = structures if structures else config.get_missingness_structures()
     iterations = iterations if iterations is not None else config.get_iterations()
     seed = seed if seed is not None else config.get_seed()
     output_dir = config.get_missing_dir()
@@ -256,7 +291,9 @@ def run_degrade_datasets(
         if not 0.0 <= rate <= 1.0:
             raise ValueError(f"Invalid missing rate: {rate}. Must be between 0.0 and 1.0")
 
-    total_operations = len(ds_files) * len(techniques) * len(rates) * iterations
+    total_operations = (
+        len(ds_files) * len(techniques) * len(structures) * len(rates) * iterations
+    )
 
     print("="*70)
     print("DATASET DEGRADATION")
@@ -267,6 +304,7 @@ def run_degrade_datasets(
     if len(ds_files) > 5:
         print(f"  ... and {len(ds_files) - 5} more")
     print(f"Techniques: {techniques}")
+    print(f"Structures: {structures}")
     print(f"Missing rates: {[f'{r*100:.0f}%' for r in rates]}")
     print(f"Iterations: {iterations}")
     print(f"Base seed: {seed}")
@@ -284,24 +322,34 @@ def run_degrade_datasets(
         dataset_name = Path(source_file).stem
 
         for technique in techniques:
-            for rate in rates:
-                rate_percent = int(rate * 100)
+            for structure in structures:
+                for rate in rates:
+                    rate_percent = int(rate * 100)
 
-                for iteration in range(1, iterations + 1):
-                    output_filename = f"{dataset_name}_{technique}_{rate_percent}p_{iteration}.csv"
-                    output_file = os.path.join(output_dir, output_filename)
+                    for iteration in range(1, iterations + 1):
+                        label = encode_missingness_label(technique, structure)
+                        output_filename = (
+                            f"{dataset_name}_{label}_{rate_percent}p_{iteration}.csv"
+                        )
+                        output_file = os.path.join(output_dir, output_filename)
+                        seed_material = (
+                            f"{seed}|{dataset_name}|{structure}|{rate_percent}|{iteration}"
+                        ).encode("utf-8")
+                        unique_seed = int.from_bytes(
+                            hashlib.sha256(seed_material).digest()[:4], "big"
+                        )
 
-                    unique_seed = seed + iteration * 1000 + ds_files.index(source_file) * 100 + len(technique) * 10 + rate_percent
-
-                    tasks.append({
-                        'source_file': source_file,
-                        'output_file': output_file,
-                        'technique': technique,
-                        'rate': rate,
-                        'seed': unique_seed,
-                        'config': config,
-                        'force': force
-                    })
+                        tasks.append({
+                            'source_file': source_file,
+                            'output_file': output_file,
+                            'technique': technique,
+                            'structure': structure,
+                            'rate': rate,
+                            'seed': unique_seed,
+                            'iteration': iteration,
+                            'config': config,
+                            'force': force
+                        })
 
     n_jobs = config.get_n_jobs()
     print(f"🚀 Processing {len(tasks)} tasks with {n_jobs} parallel job(s)...\n")
@@ -314,6 +362,15 @@ def run_degrade_datasets(
     completed = sum(1 for r in results if r['status'] == 'success')
     skipped = sum(1 for r in results if r['status'] == 'skipped')
     errors = sum(1 for r in results if r['status'] == 'error')
+
+    report_dir = Path(output_dir) / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    summaries = [result["summary"] for result in results if result.get("summary")]
+    gaps = [gap for result in results for gap in result.get("gaps", [])]
+    pd.DataFrame(summaries).to_csv(
+        report_dir / "missingness_realizations.csv", index=False
+    )
+    pd.DataFrame(gaps).to_csv(report_dir / "missingness_gaps.csv", index=False)
 
     if errors > 0:
         print("\n❌ Errors occurred:")
@@ -328,6 +385,7 @@ def run_degrade_datasets(
     print(f"⏭️  Skipped (existing): {skipped}")
     print(f"❌ Errors: {errors}")
     print(f"📁 Output directory: {output_dir}")
+    print(f"📊 Missingness reports: {report_dir}")
     print("="*70)
     return True
 

@@ -37,6 +37,7 @@ setup_logging("4_reconstruct_datasets")
 # Import reconstruction registry and config loader
 from framework.plugin_registry import get_reconstruction_models
 from utils.config_loader import load_config
+from utils.experiment_naming import decode_missingness_label
 from utils.performance_metrics import PerformanceMonitor, format_metrics
 from reconstruction_models.sd2_settings import resolve_sd2_runtime_settings
 
@@ -215,10 +216,16 @@ def parse_degraded_filename(filename: str) -> dict:
     iteration = int(parts[-1])
     rate_with_p = parts[-2]
     rate_percent = int(rate_with_p.replace("p", ""))
-    technique = parts[-3]
+    technique, structure = decode_missingness_label(parts[-3])
     dataset = "_".join(parts[:-3])  # Join all parts except last 3
 
-    return {"dataset": dataset, "technique": technique, "rate_percent": rate_percent, "iteration": iteration}
+    return {
+        "dataset": dataset,
+        "technique": technique,
+        "structure": structure,
+        "rate_percent": rate_percent,
+        "iteration": iteration,
+    }
 
 
 def main():
@@ -257,6 +264,10 @@ Examples:
     parser.add_argument(
         "--filter-technique", nargs="+", help="Only process specific missingness techniques (e.g., MCAR MAR)"
     )
+    parser.add_argument(
+        "--filter-structure", nargs="+", choices=["scattered", "contiguous", "mixed"],
+        help="Only process specific temporal missingness structures",
+    )
 
     parser.add_argument(
         "--filter-rate", nargs="+", type=int, help="Only process specific missing rates as percentages (e.g., 2 5 10)"
@@ -282,6 +293,7 @@ Examples:
         models=args.models,
         filter_dataset=args.filter_dataset,
         filter_technique=args.filter_technique,
+        filter_structure=args.filter_structure,
         filter_rate=args.filter_rate,
         filter_iteration=args.filter_iteration,
         force=args.force,
@@ -293,6 +305,7 @@ def run_reconstruct_datasets(
     models: List[str] | None = None,
     filter_dataset: List[str] | None = None,
     filter_technique: List[str] | None = None,
+    filter_structure: List[str] | None = None,
     filter_rate: List[int] | None = None,
     filter_iteration: List[int] | None = None,
     force: bool = False,
@@ -335,6 +348,8 @@ def run_reconstruct_datasets(
                 continue
             if filter_technique and metadata["technique"] not in filter_technique:
                 continue
+            if filter_structure and metadata["structure"] not in filter_structure:
+                continue
             if filter_rate and metadata["rate_percent"] not in filter_rate:
                 continue
             if filter_iteration and metadata["iteration"] not in filter_iteration:
@@ -359,6 +374,8 @@ def run_reconstruct_datasets(
         print(f"Filtered datasets: {filter_dataset}")
     if filter_technique:
         print(f"Filtered techniques: {filter_technique}")
+    if filter_structure:
+        print(f"Filtered structures: {filter_structure}")
     if filter_rate:
         print(f"Filtered rates: {filter_rate}%")
     if filter_iteration:
@@ -469,6 +486,7 @@ def run_reconstruct_datasets(
                 {
                     "dataset_name": metadata.get("dataset", "unknown"),
                     "technique": metadata.get("technique", "unknown"),
+                    "structure": metadata.get("structure", "scattered"),
                     "rate_percent": metadata.get("rate_percent", 0),
                     "iteration": metadata.get("iteration", 0),
                     "model": result["model"],

@@ -81,6 +81,17 @@ def get_model(model_id: str) -> StableDiffusionInpaintPipeline:
     return _MODEL_CACHE[model_id]
 
 
+def seeded_generator(
+    pipeline: StableDiffusionInpaintPipeline,
+    seed: int,
+) -> torch.Generator:
+    """Create the explicit per-call generator expected by Diffusers."""
+    device = getattr(pipeline, "_execution_device", None)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.Generator(device=device).manual_seed(int(seed))
+
+
 def clear_model_cache() -> None:
     """Drop cached pipelines (used by hyperparameter search)."""
     _MODEL_CACHE.clear()

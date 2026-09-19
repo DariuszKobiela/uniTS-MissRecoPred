@@ -1,6 +1,6 @@
 # SD2 window, resolution, prompt and parameter analysis
 
-Generated: 2026-09-19T16:05:35.509007+00:00
+Generated: 2026-09-19T17:36:13.208393+00:00
 
 ## Interpretation
 
@@ -92,3 +92,37 @@ Representation-specific prompt candidates:
 - MTF: high quality markov transition field mathematical visualization | grayscale markov transition field of a sensor signal, preserve transition probabilities | scientific time series markov transition field, coherent state-transition texture
 - RP: high quality continuous recurrence distance plot mathematical visualization | grayscale continuous recurrence distance plot, symmetric matrix with zero diagonal | scientific sensor recurrence distance matrix, preserve symmetry and local dynamics
 - SPEC: high quality spectrogram mathematical visualization | grayscale time frequency spectrogram of a continuous industrial sensor signal | scientific sensor spectrogram, coherent frequency bands and temporal continuity
+
+## Round-trip and oracle ablations
+
+- `round_trip` scores all clean samples after encode, 8-bit image quantization, and decode; diffusion is bypassed.
+- `oracle_clean_image` scores only simulated missing positions after substituting the ideal clean encoded image for the SD2 output.
+- The oracle uses clean-image decoder metadata and is a representation ceiling, not a deployable imputation method.
+- Summary metric: smape. Detailed results: sd2_representation_ablations.csv
+
+| ablation | encoding | image | mean metric | cases |
+| --- | --- | ---: | ---: | ---: |
+| oracle_clean_image | GAF | 512 | 0.669565 | 57 |
+| oracle_clean_image | GAF | 1024 | 0.399879 | 57 |
+| oracle_clean_image | GAF | 2048 | 0.172347 | 57 |
+| oracle_clean_image | MTF | 512 | 1.17467 | 57 |
+| oracle_clean_image | MTF | 1024 | 0.968628 | 57 |
+| oracle_clean_image | MTF | 2048 | 0.898861 | 57 |
+| oracle_clean_image | RP | 512 | 0.623475 | 57 |
+| oracle_clean_image | RP | 1024 | 0.346755 | 57 |
+| oracle_clean_image | RP | 2048 | 0.114919 | 57 |
+| oracle_clean_image | SPEC | 512 | 3.58646 | 57 |
+| oracle_clean_image | SPEC | 1024 | 3.46195 | 57 |
+| oracle_clean_image | SPEC | 2048 | 3.43345 | 57 |
+| round_trip | GAF | 512 | 0.604561 | 19 |
+| round_trip | GAF | 1024 | 0.354741 | 19 |
+| round_trip | GAF | 2048 | 0.158742 | 19 |
+| round_trip | MTF | 512 | 0.946317 | 19 |
+| round_trip | MTF | 1024 | 0.804481 | 19 |
+| round_trip | MTF | 2048 | 0.732284 | 19 |
+| round_trip | RP | 512 | 0.582638 | 19 |
+| round_trip | RP | 1024 | 0.326218 | 19 |
+| round_trip | RP | 2048 | 0.120497 | 19 |
+| round_trip | SPEC | 512 | 3.63641 | 19 |
+| round_trip | SPEC | 1024 | 3.48205 | 19 |
+| round_trip | SPEC | 2048 | 3.46841 | 19 |

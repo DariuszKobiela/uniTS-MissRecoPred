@@ -86,6 +86,7 @@ def resolve_sd2_runtime_settings(
     prompt = str(empirical.get("prompt", prompts.get(encoding, DEFAULT_PROMPTS[encoding])))
 
     return {
+        "seed": int(empirical.get("seed", settings.get("seed", 42))),
         "num_inference_steps": int(empirical.get("num_inference_steps", settings.get("num_inference_steps", 42))),
         "guidance_scale": float(empirical.get("guidance_scale", settings.get("guidance_scale", 7.5))),
         "window_samples": window_samples,
