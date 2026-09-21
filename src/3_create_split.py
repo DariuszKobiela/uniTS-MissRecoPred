@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config_loader import load_config
+from utils.progress import tqdm
 from utils.horizon_recommender import (
     HorizonConstraints,
     load_h_long_lookup,
@@ -107,7 +108,7 @@ def split_dataset(
     lookup = horizon_lookup or {}
     origin_counts = origin_counts or {}
     experiment_horizons = config.get_experiment_horizons()
-    sd2_val = config.get_sd2_validation_settings()
+    split_settings = config.get_dataset_split_settings(dataset_name)
 
     h_max, horizons, source = resolve_h_max(
         dataset_name,
@@ -123,10 +124,27 @@ def split_dataset(
     )
     print(f"  🎯 H_max={h_max} ({source}), rolling origins={n_origins}")
 
-    cons = constraints or HorizonConstraints(
+    base_cons = constraints or HorizonConstraints(
         max_holdout_share=float(config.get_horizon_settings().get("max_holdout_share", 0.20)),
         min_train_length=int(config.get_horizon_settings().get("min_train_length", 200)),
     )
+    cons = HorizonConstraints(
+        max_holdout_share=split_settings["max_holdout_share"],
+        min_train_length=split_settings["min_reconstruction_length"],
+        ideal_holdout_share=base_cons.ideal_holdout_share,
+        unsafe_train_threshold=base_cons.unsafe_train_threshold,
+        h_short=base_cons.h_short,
+        h_long=base_cons.h_long,
+        short_series_h_short=base_cons.short_series_h_short,
+        short_series_h_long=base_cons.short_series_h_long,
+    )
+    if split_settings["override_applied"]:
+        print(
+            "  ℹ️  Dataset split override: "
+            f"min_reconstruction={split_settings['min_reconstruction_length']}, "
+            f"validation={split_settings['validation_min_samples']}.."
+            f"{split_settings['validation_max_samples']}"
+        )
 
     try:
         boundaries = plan_three_way_split(
@@ -134,10 +152,10 @@ def split_dataset(
             h_max,
             n_origins,
             constraints=cons,
-            validation_share=float(sd2_val.get("share", 0.10)),
-            validation_min_samples=int(sd2_val.get("min_samples", 64)),
-            validation_max_samples=int(sd2_val.get("max_samples", 500)),
-            min_reconstruction_length=int(config.get_horizon_settings().get("min_train_length", 200)),
+            validation_share=split_settings["validation_share"],
+            validation_min_samples=split_settings["validation_min_samples"],
+            validation_max_samples=split_settings["validation_max_samples"],
+            min_reconstruction_length=split_settings["min_reconstruction_length"],
         )
     except ValueError as exc:
         print(f"  ❌ Split planning failed: {exc}")
@@ -256,7 +274,7 @@ def run_create_split(
         "datasets": {},
     }
 
-    for ds in datasets:
+    for ds in tqdm(datasets, desc="Splitting datasets", unit="file"):
         input_file = os.path.join(input_dir, ds)
         try:
             result = split_dataset(
@@ -269,15 +287,16 @@ def run_create_split(
                 origin_counts=origin_counts,
                 constraints=constraints,
             )
-            if result["status"] == "success":
-                success_count += 1
+            if result["status"] in {"success", "skipped"}:
+                if result["status"] == "success":
+                    success_count += 1
+                else:
+                    skip_count += 1
                 manifest["datasets"][ds] = split_manifest_entry(
                     ds,
                     result["boundaries"],
                     result["horizons"],
                 )
-            elif result["status"] == "skipped":
-                skip_count += 1
             else:
                 error_count += 1
         except Exception as exc:

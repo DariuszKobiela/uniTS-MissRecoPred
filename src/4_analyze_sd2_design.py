@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
+from utils.progress import tqdm
 
 from framework.plugin_registry import get_reconstruction_models
 from missingness_techniques.mar import apply_mar
@@ -192,7 +193,11 @@ def build_analytical_rows(
     context_samples: int,
 ) -> list[dict]:
     rows = []
-    for filename, info in metadata["series"].items():
+    for filename, info in tqdm(
+        list(metadata["series"].items()),
+        desc="SD2 design analysis",
+        unit="dataset",
+    ):
         dataset = Path(filename).stem
         train_length = int(info.get("train_length") or info["n"])
         sampling_seconds = float(info["sampling_interval_seconds"])
@@ -291,6 +296,7 @@ def run_representation_ablations(
 ) -> pd.DataFrame:
     """Run CPU-only representation and clean-image oracle controls."""
     rows: list[dict] = []
+    cases: list[tuple[str, pd.Series, int, int, int]] = []
     for filename, info in metadata["series"].items():
         dataset = Path(filename).stem
         source = load_series(cleaned_dir / filename, int(info.get("train_length") or info["n"]))
@@ -309,25 +315,33 @@ def run_representation_ablations(
                     n_cases,
                 )
                 for image_size in args.image_sizes:
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        case_rows = run_ablation_cases(
-                            clean=clean,
-                            encodings=args.ablation_encodings,
-                            image_size=image_size,
-                            mechanisms=MECHANISMS,
-                            rates=args.rates,
-                            seed=args.seed + case_number * len(MECHANISMS),
-                        )
-                    for row in case_rows:
-                        row.update(
-                            {
-                                "dataset": dataset,
-                                "window_samples": window_samples,
-                                "effective_window_samples": len(clean),
-                                "case": case_number,
-                            }
-                        )
-                    rows.extend(case_rows)
+                    cases.append((dataset, clean, window_samples, case_number, image_size))
+
+    for dataset, clean, window_samples, case_number, image_size in tqdm(
+        cases,
+        desc="SD2 representation ablations",
+        unit="case",
+        dynamic_ncols=True,
+    ):
+        with contextlib.redirect_stdout(io.StringIO()):
+            case_rows = run_ablation_cases(
+                clean=clean,
+                encodings=args.ablation_encodings,
+                image_size=image_size,
+                mechanisms=MECHANISMS,
+                rates=args.rates,
+                seed=args.seed + case_number * len(MECHANISMS),
+            )
+        for row in case_rows:
+            row.update(
+                {
+                    "dataset": dataset,
+                    "window_samples": window_samples,
+                    "effective_window_samples": len(clean),
+                    "case": case_number,
+                }
+            )
+        rows.extend(case_rows)
 
     result = pd.DataFrame(rows)
     result.to_csv(output_dir / "sd2_representation_ablations.csv", index=False)
@@ -367,6 +381,12 @@ def run_empirical_search(
     metric_spec = get_metric_spec(args.metric)
     trial_rows: list[dict] = []
     winners: list[dict] = []
+    search_progress = tqdm(
+        total=len(models) * len(metadata["series"]) * args.n_trials,
+        desc="SD2 HPO trials",
+        unit="trial",
+        dynamic_ncols=True,
+    )
 
     for model_name in models:
         encoding = encoding_from_model(model_name)
@@ -460,7 +480,12 @@ def run_empirical_search(
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=args.seed),
             )
-            study.optimize(objective, n_trials=args.n_trials)
+            study.optimize(
+                objective,
+                n_trials=args.n_trials,
+                callbacks=[lambda _study, _trial: search_progress.update()],
+                show_progress_bar=False,
+            )
             winner = dict(study.best_params)
             winner.update(
                 {
@@ -474,6 +499,7 @@ def run_empirical_search(
                 }
             )
             winners.append(winner)
+    search_progress.close()
 
     result = pd.DataFrame(trial_rows)
     result.to_csv(output_dir / "sd2_inference_trials.csv", index=False)
@@ -492,6 +518,12 @@ def run_seed_sensitivity(
     """Repeat winning settings over explicit SD2 seeds on one case per dataset."""
     registry = get_reconstruction_models()
     rows = []
+    sensitivity_progress = tqdm(
+        total=len(winners) * len(args.sd2_seeds),
+        desc="SD2 seed sensitivity",
+        unit="run",
+        dynamic_ncols=True,
+    )
     for winner in winners:
         filename = next(
             name for name in metadata["series"] if Path(name).stem == winner["dataset"]
@@ -544,6 +576,9 @@ def run_seed_sensitivity(
                         "error": str(exc),
                     }
                 )
+            finally:
+                sensitivity_progress.update()
+    sensitivity_progress.close()
     result = pd.DataFrame(rows)
     result.to_csv(output_dir / "sd2_seed_sensitivity.csv", index=False)
     successful = result[result["status"] == "success"]
@@ -711,7 +746,7 @@ def main() -> None:
     parser.add_argument("--image-sizes", default="512,1024,2048")
     parser.add_argument("--steps", default="20,30,42,50")
     parser.add_argument("--guidance", default="1.0,3.0,5.0,7.5")
-    parser.add_argument("--rates", default="0.03,0.08,0.20")
+    parser.add_argument("--rates", default="0.02,0.05,0.20,0.50")
     parser.add_argument("--context-samples", type=int, default=64)
     parser.add_argument("--metric", default="smape")
     parser.add_argument("--n-trials", type=int, default=12)

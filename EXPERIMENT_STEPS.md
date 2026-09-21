@@ -50,13 +50,14 @@ akumulacji 2 oraz 20 workerów DataLoadera.
 ## Przygotowanie
 
 ```bash
-uv sync --frozen
+uv sync --frozen --extra dev
 uv run pytest -q
 uv run python -m compileall -q src tests
 ```
 
-`uv sync --frozen` instaluje zależności z `uv.lock`. Dwie następne komendy
-sprawdzają testy i składnię przed kosztownym przebiegiem.
+`uv sync --frozen --extra dev` instaluje zależności z `uv.lock` oraz pytest i ruff.
+Samo `uv sync --frozen` usuwa te narzędzia, bo są w dodatku `dev`. Dwie następne
+komendy sprawdzają testy i składnię przed kosztownym przebiegiem.
 
 ## 1. Czyszczenie danych źródłowych
 
@@ -141,8 +142,8 @@ uv run python src/5_generate_sd2_training_data.py \
   --samples 2000 \
   --output data/sd2_windowed_training \
   --image-size 512 \
-  --window-sizes 512,1024,2048 \
-  --rates 0.03,0.08,0.20 \
+  --window-sizes 512 \
+  --rates 0.02,0.05,0.20,0.50 \
   --mechanisms MCAR,MAR,MNAR \
   --structures scattered,contiguous,mixed \
   --source synthetic \

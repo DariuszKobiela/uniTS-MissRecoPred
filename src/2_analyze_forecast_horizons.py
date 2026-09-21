@@ -30,6 +30,7 @@ from utils.logger import setup_logging
 setup_logging("2_analyze_forecast_horizons")
 
 from utils.config_loader import load_config
+from utils.progress import tqdm
 from utils.horizon_recommender import (
     HorizonConstraints,
     SeriesProfile,
@@ -38,6 +39,7 @@ from utils.horizon_recommender import (
     infer_series_profile,
     metadata_document,
 )
+from utils.split_plan import plan_three_way_split, resolve_n_origins, split_manifest_entry
 
 
 def _load_cleaned_series(path: str) -> pd.DataFrame:
@@ -63,9 +65,44 @@ def _constraints_from_config(config) -> HorizonConstraints:
     )
 
 
-def _series_table_rows(series_recs) -> list[dict]:
+def _build_split_plans(config, series_recs, constraints: HorizonConstraints) -> dict[str, dict]:
+    """Calculate the same concrete three-way split later used by step 3."""
+    origin_counts = config.get_rolling_origin_counts()
+    fallback_origins = int(config.get_rolling_origin_settings().get("n_origins", 5))
+    plans: dict[str, dict] = {}
+    for rec in series_recs:
+        settings = config.get_dataset_split_settings(rec.series_id)
+        series_constraints = HorizonConstraints(
+            max_holdout_share=settings["max_holdout_share"],
+            min_train_length=settings["min_reconstruction_length"],
+            ideal_holdout_share=constraints.ideal_holdout_share,
+            unsafe_train_threshold=constraints.unsafe_train_threshold,
+            h_short=constraints.h_short,
+            h_long=constraints.h_long,
+            short_series_h_short=constraints.short_series_h_short,
+            short_series_h_long=constraints.short_series_h_long,
+        )
+        n_origins = resolve_n_origins(rec.series_id, origin_counts, fallback_origins)
+        boundaries = plan_three_way_split(
+            rec.n,
+            rec.h_long,
+            n_origins,
+            constraints=series_constraints,
+            validation_share=settings["validation_share"],
+            validation_min_samples=settings["validation_min_samples"],
+            validation_max_samples=settings["validation_max_samples"],
+            min_reconstruction_length=settings["min_reconstruction_length"],
+        )
+        plan = split_manifest_entry(rec.series_id, boundaries, rec.horizons)
+        plan["dataset_override_applied"] = settings["override_applied"]
+        plans[rec.series_id] = plan
+    return plans
+
+
+def _series_table_rows(series_recs, split_plans: dict[str, dict]) -> list[dict]:
     rows = []
     for rec in series_recs:
+        plan = split_plans[rec.series_id]
         rows.append(
             {
                 "series_id": rec.series_id,
@@ -97,6 +134,17 @@ def _series_table_rows(series_recs) -> list[dict]:
                 "short_cycle_label": rec.short_cycle_label,
                 "long_cycle_label": rec.long_cycle_label,
                 "notes": "; ".join(rec.notes),
+                "reconstruction_length": plan["reconstruction_train"]["length"],
+                "validation_length": plan["sd2_validation"]["length"],
+                "rolling_test_length": plan["rolling_test"]["length"],
+                "rolling_test_share": plan["holdout_share"],
+                "n_origins": plan["n_origins"],
+                "dataset_override_applied": plan["dataset_override_applied"],
+                "split_status": (
+                    "Feasible (dataset override)"
+                    if plan["dataset_override_applied"]
+                    else "Feasible"
+                ),
             }
         )
     return rows
@@ -122,17 +170,19 @@ def _write_markdown_report(
         "",
         "## Per-series recommendations",
         "",
-        "| Series | Sampling | n | Horizons | Horizons (time) | H_max | Train | Holdout | Status |",
-        "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- |",
+        "| Series | Sampling | n | Horizons | Horizons (time) | H_max | Reconstruction | SD2 validation | Rolling test | Origins | Split status |",
+        "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
 
     for row in series_rows:
-        share_pct = f"{100 * row['holdout_share']:.1f}%"
+        test_share_pct = f"{100 * row['rolling_test_share']:.1f}%"
         horizons = ", ".join(str(h) for h in row.get("horizons", [row["h_short"], row["h_long"]]))
         lines.append(
             f"| {row['series_id']} | {row['sampling_label']} | {row['n']} | "
             f"{horizons} | {row.get('horizons_span', '')} | {row['h_long']} | "
-            f"{row['train_length']} | {share_pct} | {row['status']} |"
+            f"{row['reconstruction_length']} | {row['validation_length']} | "
+            f"{row['rolling_test_length']} ({test_share_pct}) | {row['n_origins']} | "
+            f"{row['split_status']} |"
         )
 
     lines.append("")
@@ -183,7 +233,7 @@ def run_analyze_forecast_horizons(
     print(f"\n📋 Found {len(datasets)} dataset(s) to analyze")
 
     profiles: list[SeriesProfile] = []
-    for ds in datasets:
+    for ds in tqdm(datasets, desc="Horizon analysis", unit="file"):
         path = os.path.join(input_dir, ds)
         print(f"\n📂 Analyzing: {ds}")
         try:
@@ -213,6 +263,7 @@ def run_analyze_forecast_horizons(
         experiment_horizons=experiment_horizons,
     )
 
+    split_plans = _build_split_plans(config, series_recs, constraints)
     generated_at = datetime.now(timezone.utc).isoformat()
     doc = metadata_document(
         series_recs,
@@ -220,6 +271,10 @@ def run_analyze_forecast_horizons(
         output_dir=output_dir,
         constraints=constraints,
         generated_at=generated_at,
+        split_entries={
+            series_id: {"three_way_split": plan}
+            for series_id, plan in split_plans.items()
+        },
     )
 
     os.makedirs(os.path.dirname(os.path.abspath(metadata_path)) or ".", exist_ok=True)
@@ -227,7 +282,7 @@ def run_analyze_forecast_horizons(
         json.dump(doc, fh, indent=2, ensure_ascii=False)
     print(f"\n✅ Wrote metadata: {metadata_path}")
 
-    series_rows = _series_table_rows(series_recs)
+    series_rows = _series_table_rows(series_recs, split_plans)
     os.makedirs(os.path.dirname(os.path.abspath(report_csv_path)) or ".", exist_ok=True)
     pd.DataFrame(series_rows).to_csv(report_csv_path, index=False)
     print(f"✅ Wrote CSV report: {report_csv_path}")
@@ -242,9 +297,13 @@ def run_analyze_forecast_horizons(
     print(f"✅ Wrote Markdown report: {report_md_path}")
 
     for rec in series_recs:
+        plan = split_plans[rec.series_id]
         print(
             f"  → {rec.series_id}: horizons={rec.horizons}, H_max={rec.h_long}, "
-            f"train={rec.train_length}, status={rec.status}"
+            f"split={plan['reconstruction_train']['length']}/"
+            f"{plan['sd2_validation']['length']}/{plan['rolling_test']['length']}, "
+            f"origins={plan['n_origins']}, "
+            f"override={plan['dataset_override_applied']}"
         )
 
     print(f"\n{'=' * 60}")

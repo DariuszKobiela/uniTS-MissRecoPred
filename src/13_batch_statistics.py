@@ -14,6 +14,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from utils.config_loader import load_config
+from utils.progress import tqdm
 from utils.statistical_tests import friedman_test, pairwise_comparisons
 
 ROLLING_PAIR_COLUMNS = [
@@ -74,6 +75,8 @@ def export_statistics(
         metric=metric,
         pair_columns=pair_columns,
         lower_is_better=lower_is_better,
+        show_progress=True,
+        progress_desc=f"{prefix}: paired tests",
     )
     omnibus = friedman_test(frame, metric=metric, pair_columns=pair_columns)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -117,6 +120,12 @@ def main() -> None:
         "exports": [],
     }
 
+    if not args.rolling_results and not args.reconstruction_results:
+        raise ValueError("Provide --rolling-results and/or --reconstruction-results")
+
+    n_exports = int(bool(args.rolling_results)) + int(bool(args.reconstruction_results))
+    export_progress = tqdm(total=n_exports, desc="Batch statistics", unit="export")
+
     if args.rolling_results:
         rolling = pd.read_csv(args.rolling_results)
         prepared = _prepare_rolling_frame(rolling, forecast_metric)
@@ -130,6 +139,7 @@ def main() -> None:
                 lower_is_better=True,
             )
         )
+        export_progress.update()
 
     if args.reconstruction_results:
         reconstruction = pd.read_csv(args.reconstruction_results)
@@ -144,9 +154,9 @@ def main() -> None:
                 lower_is_better=True,
             )
         )
+        export_progress.update()
 
-    if not summary["exports"]:
-        raise ValueError("Provide --rolling-results and/or --reconstruction-results")
+    export_progress.close()
 
     summary_path = output_dir / f"batch_statistics_summary_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

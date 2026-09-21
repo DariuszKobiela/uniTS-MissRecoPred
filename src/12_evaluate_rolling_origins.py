@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from utils.progress import tqdm
 
 from prediction_models.sarimax import predict_sarimax
 from utils.config_loader import load_config, load_prediction_models_config
@@ -265,8 +265,17 @@ def evaluate_source_model(task: dict[str, Any]) -> list[dict[str, Any]]:
 
     h_max = max(task["horizons"])
     origins = plan_rolling_origins(len(test), h_max, task["n_origins"])
+    origin_iter = origins
+    if task.get("show_origin_progress"):
+        origin_iter = tqdm(
+            origins,
+            desc=f"{model_name} origins",
+            unit="origin",
+            leave=False,
+            miniters=1,
+        )
 
-    for origin in origins:
+    for origin in origin_iter:
         history = expanding_history(
             train,
             test,
@@ -445,6 +454,7 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
                     "predictions_dir": str(predictions_dir),
                     "seed": int(settings.get("seed", 42)),
                     "include_lead_time_bins": include_lead_time_bins,
+                    "show_origin_progress": False,
                 }
             )
 
@@ -454,6 +464,9 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
         print(f"Skipped sources without matching test set: {len(skipped)}")
 
     max_workers = max(1, int(settings.get("max_workers", 1)))
+    if max_workers == 1:
+        for task in tasks:
+            task["show_origin_progress"] = True
     print("=" * 72)
     print("ROLLING-ORIGIN TEST EVALUATION (AUTHORITATIVE REBUTTAL PATH)")
     print("=" * 72)

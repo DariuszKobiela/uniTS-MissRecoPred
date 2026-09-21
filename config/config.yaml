@@ -34,6 +34,15 @@ split:
     min_samples: 64
     max_samples: 500
 
+  # Wyjątki tylko dla serii, które nie mogą spełnić globalnych minimów.
+  # vibration: 144 reconstruction + 24 validation + 42 rolling test = 210.
+  dataset_overrides:
+    vibration_sensor_S1.csv:
+      min_reconstruction_length: 144
+      sd2_validation:
+        min_samples: 24
+        max_samples: 24
+
   # Horizon recommendation (2_analyze_forecast_horizons.py → 1_5_horizon_recommendation/)
   horizons:
     metadata_path: "data/1_5_horizon_recommendation/dataset_metadata.json"
@@ -192,11 +201,12 @@ missingness_structures:
 # MISSINGNESS RATES
 # ============================================================================
 missingness_rates:
-  # Fractions of data to remove (0.0 to 1.0)
+  # Fractions of data to remove (0.0 to 1.0). Same grid as the article: 2/5/20/50%.
   rates:
-  - 0.03   # 3%
-  - 0.08   # 8%
-  - 0.20
+  - 0.02   # 2%
+  - 0.05   # 5%
+  - 0.20   # 20%
+  - 0.50   # 50%
 
   # Number of iterations (different random patterns per configuration)
   iterations: 10

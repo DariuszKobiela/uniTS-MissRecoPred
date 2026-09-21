@@ -25,6 +25,7 @@ from diffusers import (
 )
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
+from utils.progress import tqdm_auto as tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from reconstruction_models.sd2_pipeline import MODEL_ID_BASE
@@ -171,18 +172,38 @@ def diffusion_loss(
 
 def validate(
     loader: DataLoader,
+    progress=None,
+    postfix: dict | None = None,
+    *,
+    epoch: int | None = None,
+    epochs: int | None = None,
     **loss_kwargs,
 ) -> float:
     unet = loss_kwargs["unet"]
     accelerator = loss_kwargs["accelerator"]
     unet.eval()
     losses = []
+    batches = loader
+    show_epoch = accelerator.is_local_main_process and epoch is not None
+    if show_epoch:
+        batches = tqdm(
+            loader,
+            desc=f"Epoch {epoch}/{epochs} val",
+            unit="batch",
+            leave=False,
+            position=1,
+            miniters=1,
+        )
     with torch.no_grad():
-        for batch in loader:
+        for batch in batches:
             with accelerator.autocast():
                 loss = diffusion_loss(batch, **loss_kwargs)
             gathered = accelerator.gather_for_metrics(loss.detach().reshape(1))
             losses.extend(gathered.float().cpu().tolist())
+            if progress is not None:
+                if postfix is not None:
+                    progress.set_postfix(**postfix, refresh=False)
+                progress.update()
     unet.train()
     return float(np.mean(losses))
 
@@ -315,10 +336,29 @@ def main() -> None:
     patience = 0
     best_checkpoint = None
 
+    steps_per_epoch = len(train_loader) + len(validation_loader)
+    progress = tqdm(
+        total=args.epochs * steps_per_epoch,
+        desc="SD2 fine-tuning",
+        unit="step",
+        position=0,
+        miniters=1,
+        smoothing=0.03,
+        disable=not accelerator.is_local_main_process,
+    )
     for epoch in range(1, args.epochs + 1):
         unet.train()
         epoch_losses = []
-        for batch in train_loader:
+        epoch_bar = tqdm(
+            train_loader,
+            desc=f"Epoch {epoch}/{args.epochs} train",
+            unit="batch",
+            leave=False,
+            position=1,
+            miniters=1,
+            disable=not accelerator.is_local_main_process,
+        )
+        for batch in epoch_bar:
             with accelerator.accumulate(unet):
                 with accelerator.autocast():
                     loss = diffusion_loss(batch, **loss_kwargs)
@@ -327,17 +367,43 @@ def main() -> None:
                     accelerator.clip_grad_norm_(unet.parameters(), 1.0)
                 optimizer.step()
                 optimizer.zero_grad()
-            epoch_losses.append(float(loss.detach().cpu()))
+            batch_loss = float(loss.detach().cpu())
+            epoch_losses.append(batch_loss)
+            epoch_bar.set_postfix(loss=f"{batch_loss:.4f}", refresh=False)
+            progress.set_postfix(
+                epoch=f"{epoch}/{args.epochs}",
+                stage="train",
+                loss=f"{batch_loss:.4f}",
+                refresh=False,
+            )
+            progress.update()
 
         train_loss = float(np.mean(epoch_losses))
-        validation_loss = validate(validation_loader, **loss_kwargs)
+        validation_loss = validate(
+            validation_loader,
+            progress=progress,
+            postfix={
+                "epoch": f"{epoch}/{args.epochs}",
+                "stage": "val",
+                "loss": f"{train_loss:.4f}",
+            },
+            epoch=epoch,
+            epochs=args.epochs,
+            **loss_kwargs,
+        )
         record = {
             "epoch": epoch,
             "train_loss": train_loss,
             "validation_loss": validation_loss,
         }
         history.append(record)
-        accelerator.print(f"epoch={epoch} train={train_loss:.6f} validation={validation_loss:.6f}")
+        progress.set_postfix(
+            epoch=f"{epoch}/{args.epochs}",
+            stage="val",
+            train=f"{train_loss:.4f}",
+            validation=f"{validation_loss:.4f}",
+            best=f"{min(best_validation, validation_loss):.4f}",
+        )
 
         if validation_loss < best_validation:
             best_validation = validation_loss
@@ -357,6 +423,7 @@ def main() -> None:
                 accelerator.print("Early stopping")
                 break
         accelerator.wait_for_everyone()
+    progress.close()
 
     if accelerator.is_main_process:
         best_unet = UNet2DConditionModel.from_pretrained(best_checkpoint / "unet")

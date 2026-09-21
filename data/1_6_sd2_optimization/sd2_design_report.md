@@ -1,6 +1,6 @@
 # SD2 window, resolution, prompt and parameter analysis
 
-Generated: 2026-09-19T17:36:13.208393+00:00
+Generated: 2026-09-21T18:26:23.669853+00:00
 
 ## Interpretation
 
@@ -21,7 +21,7 @@ Generated: 2026-09-19T17:36:13.208393+00:00
 
 | dataset | window samples | image size | status |
 | --- | ---: | ---: | --- |
-| boiler_outlet_temp_univ | 1024 | 512 | provisional_analytical |
+| boiler_outlet_temp_univ | 2048 | 512 | provisional_analytical |
 | pump_sensor_28_univ | 2048 | 512 | provisional_analytical |
 | vibration_sensor_S1 | 512 | 512 | provisional_analytical |
 
@@ -49,12 +49,12 @@ Generated: 2026-09-19T17:36:13.208393+00:00
 
 | dataset | window | span | image | samples/pixel | mean retained matrix context | potential calls/file | memory vs 512 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 512 | 1.00 | 80.9% | 224 | 1.0x |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 1024 | 0.50 | 90.1% | 224 | 4.0x |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 2048 | 0.25 | 94.9% | 224 | 16.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 512 | 2.00 | 67.0% | 96 | 1.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 1024 | 1.00 | 80.9% | 96 | 4.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 2048 | 0.50 | 90.1% | 96 | 16.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 512 | 1.00 | 80.9% | 222 | 1.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 1024 | 0.50 | 90.1% | 222 | 4.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 2048 | 0.25 | 94.9% | 222 | 16.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 512 | 2.00 | 67.0% | 95 | 1.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 1024 | 1.00 | 80.9% | 95 | 4.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 2048 | 0.50 | 90.1% | 95 | 16.0x |
 | boiler_outlet_temp_univ | 2048 | 2.8 h | 512 | 4.00 | 48.8% | 45 | 1.0x |
 | boiler_outlet_temp_univ | 2048 | 2.8 h | 1024 | 2.00 | 67.0% | 45 | 4.0x |
 | boiler_outlet_temp_univ | 2048 | 2.8 h | 2048 | 1.00 | 80.9% | 45 | 16.0x |
@@ -84,6 +84,7 @@ Generated: 2026-09-19T17:36:13.208393+00:00
 - Inference steps: [20, 30, 42, 50]
 - Guidance scales: [1.0, 3.0, 5.0, 7.5]
 - Missing rates: [0.03, 0.08, 0.2]
+- Explicit SD2 sensitivity seeds: [42, 43, 44, 45, 46]
 - Trials per model/dataset: 12
 - Validation cases per trial: 3
 
@@ -102,27 +103,27 @@ Representation-specific prompt candidates:
 
 | ablation | encoding | image | mean metric | cases |
 | --- | --- | ---: | ---: | ---: |
-| oracle_clean_image | GAF | 512 | 0.669565 | 57 |
-| oracle_clean_image | GAF | 1024 | 0.399879 | 57 |
-| oracle_clean_image | GAF | 2048 | 0.172347 | 57 |
-| oracle_clean_image | MTF | 512 | 1.17467 | 57 |
-| oracle_clean_image | MTF | 1024 | 0.968628 | 57 |
-| oracle_clean_image | MTF | 2048 | 0.898861 | 57 |
-| oracle_clean_image | RP | 512 | 0.623475 | 57 |
-| oracle_clean_image | RP | 1024 | 0.346755 | 57 |
-| oracle_clean_image | RP | 2048 | 0.114919 | 57 |
-| oracle_clean_image | SPEC | 512 | 3.58646 | 57 |
-| oracle_clean_image | SPEC | 1024 | 3.46195 | 57 |
-| oracle_clean_image | SPEC | 2048 | 3.43345 | 57 |
-| round_trip | GAF | 512 | 0.604561 | 19 |
-| round_trip | GAF | 1024 | 0.354741 | 19 |
-| round_trip | GAF | 2048 | 0.158742 | 19 |
-| round_trip | MTF | 512 | 0.946317 | 19 |
-| round_trip | MTF | 1024 | 0.804481 | 19 |
-| round_trip | MTF | 2048 | 0.732284 | 19 |
-| round_trip | RP | 512 | 0.582638 | 19 |
-| round_trip | RP | 1024 | 0.326218 | 19 |
-| round_trip | RP | 2048 | 0.120497 | 19 |
-| round_trip | SPEC | 512 | 3.63641 | 19 |
-| round_trip | SPEC | 1024 | 3.48205 | 19 |
-| round_trip | SPEC | 2048 | 3.46841 | 19 |
+| oracle_clean_image | GAF | 512 | 0.667967 | 57 |
+| oracle_clean_image | GAF | 1024 | 0.398324 | 57 |
+| oracle_clean_image | GAF | 2048 | 0.170611 | 57 |
+| oracle_clean_image | MTF | 512 | 1.17656 | 57 |
+| oracle_clean_image | MTF | 1024 | 0.970038 | 57 |
+| oracle_clean_image | MTF | 2048 | 0.900527 | 57 |
+| oracle_clean_image | RP | 512 | 0.623271 | 57 |
+| oracle_clean_image | RP | 1024 | 0.346676 | 57 |
+| oracle_clean_image | RP | 2048 | 0.114789 | 57 |
+| oracle_clean_image | SPEC | 512 | 3.65663 | 57 |
+| oracle_clean_image | SPEC | 1024 | 3.43626 | 57 |
+| oracle_clean_image | SPEC | 2048 | 3.42567 | 57 |
+| round_trip | GAF | 512 | 0.603384 | 19 |
+| round_trip | GAF | 1024 | 0.353631 | 19 |
+| round_trip | GAF | 2048 | 0.157448 | 19 |
+| round_trip | MTF | 512 | 0.945166 | 19 |
+| round_trip | MTF | 1024 | 0.80341 | 19 |
+| round_trip | MTF | 2048 | 0.731343 | 19 |
+| round_trip | RP | 512 | 0.582536 | 19 |
+| round_trip | RP | 1024 | 0.326167 | 19 |
+| round_trip | RP | 2048 | 0.12039 | 19 |
+| round_trip | SPEC | 512 | 3.70593 | 19 |
+| round_trip | SPEC | 1024 | 3.45927 | 19 |
+| round_trip | SPEC | 2048 | 3.45815 | 19 |

@@ -9,7 +9,7 @@ Jedyną aktualną instrukcją wykonania eksperymentu jest
 [EXPERIMENT_STEPS.md](EXPERIMENT_STEPS.md). Skrócona wersja:
 
 ```bash
-uv sync --frozen
+uv sync --frozen --extra dev
 uv run pytest -q
 make pipeline-rebuttal
 ```

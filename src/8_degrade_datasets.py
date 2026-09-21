@@ -18,12 +18,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.logger import setup_logging
+from utils.progress import tqdm
 
 # Setup automatic logging to file
 setup_logging("8_degrade_datasets")
@@ -354,10 +354,24 @@ def run_degrade_datasets(
     n_jobs = config.get_n_jobs()
     print(f"🚀 Processing {len(tasks)} tasks with {n_jobs} parallel job(s)...\n")
 
-    results = Parallel(n_jobs=n_jobs, backend='loky')(
+    generated_results = Parallel(
+        n_jobs=n_jobs,
+        backend='loky',
+        return_as="generator_unordered",
+    )(
         delayed(process_single_degradation)(task)
-        for task in tqdm(tasks, desc="⏳ Degrading datasets", unit="task", ncols=80)
+        for task in tasks
     )
+    results = list(
+        tqdm(
+            generated_results,
+            total=len(tasks),
+            desc="Degrading datasets",
+            unit="task",
+            dynamic_ncols=True,
+        )
+    )
+    results.sort(key=lambda result: str(result.get("output_file", "")))
 
     completed = sum(1 for r in results if r['status'] == 'success')
     skipped = sum(1 for r in results if r['status'] == 'skipped')

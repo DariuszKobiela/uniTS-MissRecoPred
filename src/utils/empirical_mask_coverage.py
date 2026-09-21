@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from utils.progress import tqdm
 
 from reconstruction_models.sd2_windowing import plan_reconstruction_windows
 from utils.experiment_naming import decode_missingness_label
@@ -61,7 +62,13 @@ def report_empirical_mask_coverage(
     """Measure mask coverage per dataset × mechanism × structure × rate × iteration × representation."""
     rows: list[dict[str, Any]] = []
     missing_dir = Path(missing_dir)
-    for path in sorted(missing_dir.glob("*.csv")):
+    files = sorted(missing_dir.glob("*.csv"))
+    for path in tqdm(
+        files,
+        desc="Empirical mask coverage",
+        unit="file",
+        dynamic_ncols=True,
+    ):
         meta = _parse_degraded_filename(path)
         if meta is None:
             continue

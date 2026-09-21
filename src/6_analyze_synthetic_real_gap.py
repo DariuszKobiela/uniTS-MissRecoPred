@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
@@ -17,6 +20,7 @@ from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
+from utils.progress import tqdm
 
 FEATURE_COLUMNS = (
     "mean",
@@ -119,7 +123,7 @@ def load_manifest_windows(dataset_dir: Path) -> list[dict]:
         records.setdefault(int(record["series_id"]), record)
 
     windows = []
-    for record in records.values():
+    for record in tqdm(list(records.values()), desc="Load synthetic windows", unit="series"):
         relative = record.get("series_path")
         if not relative:
             raise ValueError(
@@ -143,7 +147,7 @@ def load_real_windows(
     windows_per_series: int,
 ) -> list[dict]:
     windows = []
-    for path in sorted(cleaned_dir.glob("*.csv")):
+    for path in tqdm(sorted(cleaned_dir.glob("*.csv")), desc="Load real windows", unit="file"):
         frame = pd.read_csv(path, index_col=0)
         values = pd.to_numeric(frame.iloc[:, 0], errors="coerce").dropna().to_numpy()
         for length in window_lengths:
@@ -166,8 +170,24 @@ def feature_frame(windows: list[dict], workers: int = 20) -> pd.DataFrame:
     def one(window: dict) -> dict:
         return {**{k: window[k] for k in ("source_kind", "source_name", "series_id")},
                 **extract_features(window["values"])}
-    rows = Parallel(n_jobs=workers, backend="loky")(delayed(one)(window) for window in windows)
-    return pd.DataFrame(rows)
+    generated = Parallel(
+        n_jobs=workers,
+        backend="loky",
+        return_as="generator_unordered",
+    )(delayed(one)(window) for window in windows)
+    rows = list(
+        tqdm(
+            generated,
+            total=len(windows),
+            desc="Synthetic/real features",
+            unit="window",
+            dynamic_ncols=True,
+        )
+    )
+    return pd.DataFrame(rows).sort_values(
+        ["source_kind", "source_name", "series_id"],
+        kind="stable",
+    ).reset_index(drop=True)
 
 
 def classifier_diagnostics(features: pd.DataFrame, seed: int, workers: int = 20) -> dict:

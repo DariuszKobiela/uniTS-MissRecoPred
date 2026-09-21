@@ -15,6 +15,7 @@ from utils.config_loader import load_config
 from utils.empirical_mask_coverage import report_empirical_mask_coverage
 from utils.experiment_naming import decode_missingness_label
 from utils.missingness_analysis import summarize_missingness
+from utils.progress import tqdm
 
 
 def parse_degraded_filename(filename: str) -> dict:
@@ -56,7 +57,12 @@ def run_analyze_missingness(
     summaries: list[dict] = []
     gaps: list[dict] = []
     errors: list[str] = []
-    for path in files:
+    for path in tqdm(
+        files,
+        desc="Missingness diagnostics",
+        unit="file",
+        dynamic_ncols=True,
+    ):
         try:
             metadata = parse_degraded_filename(path.name)
             metadata["output_file"] = str(path)

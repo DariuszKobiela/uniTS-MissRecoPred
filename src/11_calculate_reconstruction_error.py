@@ -22,6 +22,7 @@ import concurrent.futures
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.logger import setup_logging
+from utils.progress import tqdm
 
 # Setup automatic logging to file
 setup_logging("11_calculate_reconstruction_error")
@@ -484,7 +485,13 @@ def run_calculate_reconstruction_error(config) -> bool:
         with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
             future_to_file = {executor.submit(process_file_wrapper, args): args[0] for args in job_args}
 
-            for future in concurrent.futures.as_completed(future_to_file):
+            for future in tqdm(
+                concurrent.futures.as_completed(future_to_file),
+                total=len(future_to_file),
+                desc="Reconstruction metrics",
+                unit="file",
+                dynamic_ncols=True,
+            ):
                 filename = os.path.basename(future_to_file[future])
                 try:
                     res = future.result()
@@ -509,7 +516,12 @@ def run_calculate_reconstruction_error(config) -> bool:
                     error_count += 1
     else:
         print("\nSequential processing...")
-        for reconstructed_file in reconstructed_files:
+        for reconstructed_file in tqdm(
+            reconstructed_files,
+            desc="Reconstruction metrics",
+            unit="file",
+            dynamic_ncols=True,
+        ):
             filename = reconstructed_file.name
             args = (str(reconstructed_file), dataset_mapping, missing_dir, config, performance_metrics)
 

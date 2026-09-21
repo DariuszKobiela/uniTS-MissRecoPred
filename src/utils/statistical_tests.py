@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from typing import Dict, Sequence
+from utils.progress import tqdm
 
 
 DEFAULT_PAIR_CANDIDATES = (
@@ -119,6 +120,8 @@ def pairwise_comparisons(
     alpha: float = 0.05,
     normality_alpha: float = 0.05,
     lower_is_better: bool = True,
+    show_progress: bool = False,
+    progress_desc: str = "Pairwise comparisons",
 ) -> pd.DataFrame:
     """Compare every model pair using dataset-level paired observations.
 
@@ -131,7 +134,15 @@ def pairwise_comparisons(
         raise ValueError(f"Missing required columns: {sorted(missing)}")
     pairs = _resolve_pair_columns(df, pair_columns)
     records = []
-    for model_a, model_b in combinations(sorted(df["model"].dropna().unique()), 2):
+    model_pairs = list(combinations(sorted(df["model"].dropna().unique()), 2))
+    iterator = tqdm(
+        model_pairs,
+        desc=progress_desc,
+        unit="pair",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    )
+    for model_a, model_b in iterator:
         values_a, values_b, exact_pairs = _paired_values(
             df, model_a, model_b, metric, pairs
         )

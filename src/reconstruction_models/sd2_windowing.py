@@ -8,6 +8,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from utils.progress import tqdm
+
 
 @dataclass(frozen=True)
 class ReconstructionWindow:
@@ -86,15 +88,19 @@ def reconstruct_in_windows(
         context_samples=context_samples,
     )
     active = [plan for plan in plans if missing[plan.core_start : plan.core_stop].any()]
-
-    for number, plan in enumerate(active, start=1):
-        if progress_label:
-            print(
-                f"  {progress_label}: window {number}/{len(active)} "
-                f"[{plan.window_start}:{plan.window_stop}], "
-                f"core [{plan.core_start}:{plan.core_stop}]"
-            )
-
+    window_progress = tqdm(
+        active,
+        desc=progress_label or "SD2 windows",
+        unit="window",
+        miniters=1,
+        smoothing=0.05,
+        disable=False,
+    )
+    for plan in window_progress:
+        window_progress.set_postfix_str(
+            f"[{plan.window_start}:{plan.window_stop}] core[{plan.core_start}:{plan.core_stop}]",
+            refresh=False,
+        )
         local = data.iloc[plan.window_start : plan.window_stop].copy()
         reconstructed = reconstruct_window(local)
         if len(reconstructed) != len(local):

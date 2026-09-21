@@ -24,12 +24,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
 from joblib import Parallel, delayed
-from tqdm import tqdm
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.logger import setup_logging
+from utils.progress import tqdm
 
 # Setup automatic logging to file
 setup_logging("10_reconstruct_datasets")
@@ -431,30 +431,55 @@ def run_reconstruct_datasets(
     sys.stdout.flush()
 
     all_results = []
+    progress = tqdm(
+        total=len(tasks),
+        desc="Reconstruction (all models)",
+        unit="task",
+        dynamic_ncols=True,
+    )
 
     if cpu_tasks:
         print(f"\n⚡ Processing CPU models in parallel...", flush=True)
         try:
-            cpu_results = Parallel(n_jobs=actual_n_jobs, backend="loky", timeout=None)(
+            cpu_results = Parallel(
+                n_jobs=actual_n_jobs,
+                backend="loky",
+                timeout=None,
+                return_as="generator_unordered",
+            )(
                 delayed(process_single_reconstruction)(task)
-                for task in tqdm(cpu_tasks, desc="⏳ CPU models", unit="task", ncols=80)
+                for task in cpu_tasks
             )
-            all_results.extend(cpu_results)
+            for result in cpu_results:
+                all_results.append(result)
+                progress.set_postfix_str(str(result.get("model", "")), refresh=False)
+                progress.update()
         except Exception as e:
             print(f"\n❌ Parallel processing failed: {type(e).__name__}: {e}", flush=True)
+            progress.close()
             raise
 
     if gpu_tasks:
         print(f"\n🎨 Processing GPU models sequentially...", flush=True)
         try:
-            gpu_results = Parallel(n_jobs=1, backend="loky")(
+            gpu_results = Parallel(
+                n_jobs=1,
+                backend="loky",
+                return_as="generator_unordered",
+            )(
                 delayed(process_single_reconstruction)(task)
-                for task in tqdm(gpu_tasks, desc="⏳ GPU models", unit="task", ncols=80)
+                for task in gpu_tasks
             )
-            all_results.extend(gpu_results)
+            for result in gpu_results:
+                all_results.append(result)
+                progress.set_postfix_str(str(result.get("model", "")), refresh=False)
+                progress.update()
         except Exception as e:
             print(f"\n❌ GPU processing failed: {type(e).__name__}: {e}", flush=True)
+            progress.close()
             raise
+    progress.close()
+    all_results.sort(key=lambda result: str(result.get("output_file", "")))
 
     completed = sum(1 for r in all_results if r["status"] == "success")
     skipped = sum(1 for r in all_results if r["status"] == "skipped")

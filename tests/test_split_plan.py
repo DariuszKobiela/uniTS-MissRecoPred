@@ -64,3 +64,20 @@ def test_short_series_raises():
             h_max=1440,
             n_origins=5,
         )
+
+
+def test_vibration_override_produces_144_24_42_split():
+    boundaries = plan_three_way_split(
+        series_length=210,
+        h_max=24,
+        n_origins=3,
+        constraints=HorizonConstraints(max_holdout_share=0.20, min_train_length=144),
+        validation_share=0.10,
+        validation_min_samples=24,
+        validation_max_samples=24,
+        min_reconstruction_length=144,
+    )
+    assert boundaries.reconstruction_length == 144
+    assert boundaries.validation_length == 24
+    assert boundaries.test_length == 42
+    assert boundaries.test_length >= min_rolling_test_length(24, 3)

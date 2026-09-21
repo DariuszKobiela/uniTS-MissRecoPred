@@ -136,6 +136,42 @@ class Config:
         """Settings for the SD2 validation block inside split.sd2_validation."""
         return self.config.get('split', {}).get('sd2_validation', {}) or {}
 
+    def get_dataset_split_override(self, dataset_name: str) -> Dict[str, Any]:
+        """Return a per-series split override, matching names with or without .csv."""
+        raw = self.config.get('split', {}).get('dataset_overrides', {}) or {}
+        if not isinstance(raw, dict):
+            return {}
+        requested_stem = Path(str(dataset_name)).stem
+        for key, value in raw.items():
+            if Path(str(key)).stem == requested_stem and isinstance(value, dict):
+                return copy.deepcopy(value)
+        return {}
+
+    def get_dataset_split_settings(self, dataset_name: str) -> Dict[str, Any]:
+        """Resolve global three-way split settings plus a per-series override."""
+        horizons = self.get_horizon_settings()
+        validation = self.get_sd2_validation_settings()
+        override = self.get_dataset_split_override(dataset_name)
+        validation_override = override.get('sd2_validation', {}) or {}
+        return {
+            'max_holdout_share': float(
+                override.get('max_holdout_share', horizons.get('max_holdout_share', 0.20))
+            ),
+            'min_reconstruction_length': int(
+                override.get('min_reconstruction_length', horizons.get('min_train_length', 200))
+            ),
+            'validation_share': float(
+                validation_override.get('share', validation.get('share', 0.10))
+            ),
+            'validation_min_samples': int(
+                validation_override.get('min_samples', validation.get('min_samples', 64))
+            ),
+            'validation_max_samples': int(
+                validation_override.get('max_samples', validation.get('max_samples', 500))
+            ),
+            'override_applied': bool(override),
+        }
+
     def get_rolling_origin_settings(self) -> Dict[str, Any]:
         """Rolling-origin evaluation settings from prediction.rolling_origins."""
         return self.config.get('prediction', {}).get('rolling_origins', {}) or {}

@@ -42,6 +42,9 @@ dependencies = [
     
     # Statistical tests
     "scipy>=1.14.0",
+
+    # Progress bars (percent remaining + ETA)
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]

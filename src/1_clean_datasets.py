@@ -47,6 +47,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config_loader import load_config
+from utils.progress import tqdm
 
 
 def detect_csv_format(file_path: str) -> dict:
@@ -263,7 +264,7 @@ def run_clean_datasets(
 
     success_count = 0
     reports = []
-    for ds in datasets:
+    for ds in tqdm(datasets, desc="Cleaning datasets", unit="file"):
         input_file = os.path.join(input_dir, ds)
         output_file = os.path.join(output_dir, ds)
 

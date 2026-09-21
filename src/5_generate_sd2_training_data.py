@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import pandas as pd
 from PIL import Image
-from tqdm import tqdm
+from utils.progress import tqdm
 from joblib import Parallel, delayed
 
 from missingness_techniques.structured import apply_structured_missingness
@@ -381,8 +381,8 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=2000)
     parser.add_argument("--output", default="data/sd2_windowed_training")
     parser.add_argument("--image-size", type=int, default=512)
-    parser.add_argument("--window-sizes", default="512,1024,2048")
-    parser.add_argument("--rates", default="0.03,0.08,0.20")
+    parser.add_argument("--window-sizes", default="512")
+    parser.add_argument("--rates", default="0.02,0.05,0.20,0.50")
     parser.add_argument("--mechanisms", default="MCAR,MAR,MNAR")
     parser.add_argument("--structures", default="scattered,contiguous,mixed")
     parser.add_argument("--source", choices=["synthetic", "mixed"], default="synthetic")
@@ -428,18 +428,32 @@ def main() -> None:
     prepare_output(output, args.overwrite)
 
     manifest_path = output / "manifest.jsonl"
-    generated = Parallel(n_jobs=args.workers, backend="loky")(
+    generated = Parallel(
+        n_jobs=args.workers,
+        backend="loky",
+        return_as="generator_unordered",
+    )(
         delayed(generate_training_sample)(
             series_id, output=output, image_size=args.image_size,
             window_sizes=window_sizes, rates=rates, mechanisms=mechanisms,
             structures=structures, source=args.source, real_share=args.real_share,
             real_series=real_series, seed=args.seed,
         )
-        for series_id in tqdm(range(args.samples), desc="Scheduling SD2 triplets")
+        for series_id in range(args.samples)
     )
     counts = {"synthetic": 0, "real": 0}
+    completed = list(
+        tqdm(
+            generated,
+            total=args.samples,
+            desc="SD2 training windows",
+            unit="window",
+            dynamic_ncols=True,
+        )
+    )
+    completed.sort(key=lambda item: int(item[0][0]["series_id"]))
     with manifest_path.open("w", encoding="utf-8") as manifest:
-        for records, source_kind in generated:
+        for records, source_kind in completed:
             counts[source_kind] += 1
             for record in records:
                 manifest.write(json.dumps(record) + "\n")
