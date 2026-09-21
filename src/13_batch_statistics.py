@@ -95,11 +95,11 @@ def main() -> None:
     parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument(
         "--rolling-results",
-        help="CSV from src/8_evaluate_rolling_origins.py",
+        help="CSV from src/12_evaluate_rolling_origins.py",
     )
     parser.add_argument(
         "--reconstruction-results",
-        help="CSV from src/5_calculate_reconstruction_error.py",
+        help="CSV from src/11_calculate_reconstruction_error.py",
     )
     parser.add_argument("--output-dir", default="prediction_experiment_results/batch_statistics")
     parser.add_argument("--metric", default=None)

@@ -16,6 +16,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from joblib import Parallel, delayed
 
 FEATURE_COLUMNS = (
     "mean",
@@ -161,15 +162,15 @@ def load_real_windows(
     return windows
 
 
-def feature_frame(windows: list[dict]) -> pd.DataFrame:
-    rows = []
-    for window in windows:
-        rows.append({**{k: window[k] for k in ("source_kind", "source_name", "series_id")},
-                     **extract_features(window["values"])})
+def feature_frame(windows: list[dict], workers: int = 20) -> pd.DataFrame:
+    def one(window: dict) -> dict:
+        return {**{k: window[k] for k in ("source_kind", "source_name", "series_id")},
+                **extract_features(window["values"])}
+    rows = Parallel(n_jobs=workers, backend="loky")(delayed(one)(window) for window in windows)
     return pd.DataFrame(rows)
 
 
-def classifier_diagnostics(features: pd.DataFrame, seed: int) -> dict:
+def classifier_diagnostics(features: pd.DataFrame, seed: int, workers: int = 20) -> dict:
     data = features.dropna(subset=list(FEATURE_COLUMNS)).copy()
     y = (data["source_kind"] == "synthetic").astype(int).to_numpy()
     groups = data["source_name"].astype(str).to_numpy()
@@ -183,7 +184,7 @@ def classifier_diagnostics(features: pd.DataFrame, seed: int) -> dict:
     )
     cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     probabilities = cross_val_predict(
-        model, data[list(FEATURE_COLUMNS)], y, groups=groups, cv=cv, method="predict_proba"
+        model, data[list(FEATURE_COLUMNS)], y, groups=groups, cv=cv, method="predict_proba", n_jobs=workers
     )[:, 1]
     predictions = probabilities >= 0.5
     return {
@@ -235,6 +236,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default="data/1_6_sd2_optimization/synthetic_real_gap")
     parser.add_argument("--real-windows-per-series", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--workers", type=int, default=20)
     args = parser.parse_args()
 
     synthetic_windows = [
@@ -250,7 +252,7 @@ def main() -> None:
     if not real_windows:
         raise ValueError("No real windows could be extracted")
 
-    features = feature_frame([*synthetic_windows, *real_windows])
+    features = feature_frame([*synthetic_windows, *real_windows], workers=args.workers)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     features.to_csv(output / "synthetic_real_features.csv", index=False)
@@ -262,7 +264,7 @@ def main() -> None:
     projection[["pca_1", "pca_2"]] = coordinates
     projection.to_csv(output / "synthetic_real_pca.csv", index=False)
 
-    diagnostics = classifier_diagnostics(features, args.seed)
+    diagnostics = classifier_diagnostics(features, args.seed, workers=args.workers)
     (output / "synthetic_real_classifier.json").write_text(
         json.dumps(diagnostics, indent=2), encoding="utf-8"
     )

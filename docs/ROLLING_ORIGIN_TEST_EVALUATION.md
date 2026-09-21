@@ -59,7 +59,7 @@ local and is refitted at every origin. SARIMAX is also fitted per origin.
 
 To override the number of origins or models:
 
-    uv run python src/8_evaluate_rolling_origins.py \
+    uv run python src/12_evaluate_rolling_origins.py \
       --n-origins 5 --models sarimax xgboost
 
 Configuration is under prediction.rolling_origins in config/config.yaml.

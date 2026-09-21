@@ -354,7 +354,7 @@ def main():
     
     if not available_files:
         st.error("No result files found in `reconstruction_experiments_results/` directory.")
-        st.info("Run `python src/5_calculate_reconstruction_error.py` first to generate results.")
+        st.info("Run `python src/11_calculate_reconstruction_error.py` first to generate results.")
         return
     
     # File selection
@@ -408,7 +408,7 @@ def main():
     if metric_col not in df.columns:
         st.error(
             f"Column `{metric_col}` not in this CSV. Re-run "
-            "`src/5_calculate_reconstruction_error.py` to regenerate results with all metrics."
+            "`src/11_calculate_reconstruction_error.py` to regenerate results with all metrics."
         )
         return
     
@@ -1031,8 +1031,8 @@ def main():
         if 'time_seconds' not in df_filtered.columns or df_filtered['time_seconds'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
             st.info(
-                "Run `4_reconstruct_datasets.py` again to collect performance metrics, then "
-                "`src/5_calculate_reconstruction_error.py` to merge them."
+                "Run `10_reconstruct_datasets.py` again to collect performance metrics, then "
+                "`src/11_calculate_reconstruction_error.py` to merge them."
             )
         else:
             df_perf = df_filtered[df_filtered['time_seconds'].notna()].copy()
@@ -1131,8 +1131,8 @@ def main():
         if 'cpu_cores_used' not in df_filtered.columns or df_filtered['cpu_cores_used'].isna().all():
             st.warning("⚠️ No performance metrics available in this results file.")
             st.info(
-                "Run `4_reconstruct_datasets.py` again to collect performance metrics, then "
-                "`src/5_calculate_reconstruction_error.py` to merge them."
+                "Run `10_reconstruct_datasets.py` again to collect performance metrics, then "
+                "`src/11_calculate_reconstruction_error.py` to merge them."
             )
         else:
             df_perf = df_filtered[df_filtered['cpu_cores_used'].notna()].copy()

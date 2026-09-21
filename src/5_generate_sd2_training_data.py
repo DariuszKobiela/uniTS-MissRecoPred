@@ -13,12 +13,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
 from PIL import Image
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 from missingness_techniques.structured import apply_structured_missingness
 from utils.experiment_naming import MISSINGNESS_STRUCTURES
@@ -296,6 +297,85 @@ def choose_real_window(
     return series.iloc[start : start + length].reset_index(drop=True)
 
 
+
+def generate_training_sample(
+    series_id: int,
+    *,
+    output: Path,
+    image_size: int,
+    window_sizes: list[int],
+    rates: list[float],
+    mechanisms: list[str],
+    structures: list[str],
+    source: str,
+    real_share: float,
+    real_series: list[tuple[str, pd.Series]],
+    seed: int,
+) -> tuple[list[dict], str]:
+    """Generate one independent base series and its four encoded triplets."""
+    rng = np.random.default_rng(seed + series_id)
+    synthetic = SyntheticSeriesGenerator(rng)
+    window_samples = int(rng.choice(window_sizes))
+    use_real = source == "mixed" and bool(real_series) and rng.random() < real_share
+    generator_params: dict = {}
+    if use_real:
+        source_name, source_series = real_series[int(rng.integers(len(real_series)))]
+        clean = choose_real_window(source_series, window_samples, rng)
+        pattern = "real"
+        source_kind = "real"
+    else:
+        pattern = str(rng.choice(SyntheticSeriesGenerator.PATTERNS))
+        generated, generator_params = synthetic.generate_with_metadata(window_samples, pattern)
+        clean = pd.Series(generated)
+        source_name = pattern
+        source_kind = "synthetic"
+
+    series_path = output / "series" / f"{series_id:06d}.npy"
+    np.save(series_path, clean.to_numpy(dtype=np.float64))
+    mechanism = str(rng.choice(mechanisms))
+    structure = str(rng.choice(structures))
+    rate = float(rng.choice(rates))
+    pair_seed = seed + series_id
+    corrupted = degrade(clean, mechanism, structure, rate, pair_seed)
+    gap_summary, _ = summarize_missingness(corrupted)
+    filled = corrupted.interpolate(method="linear", limit_direction="both")
+    filled = filled.fillna(float(clean.mean()))
+    missing = corrupted.isna().to_numpy()
+
+    records = []
+    for encoding in ENCODINGS:
+        target, condition = encode_pair(clean, filled, encoding, image_size)
+        mask = image_mask(missing, encoding, image_size)
+        stem = f"{series_id:06d}_{encoding}"
+        target_path = output / "clean" / f"{stem}.png"
+        condition_path = output / "conditioning" / f"{stem}.png"
+        mask_path = output / "masks" / f"{stem}.png"
+        save_rgb(target, target_path)
+        save_rgb(condition, condition_path)
+        Image.fromarray(mask, mode="L").save(mask_path)
+        records.append({
+            "series_id": series_id, "encoding": encoding, "source_kind": source_kind,
+            "source_name": source_name, "pattern": pattern,
+            "generator_params": generator_params if source_kind == "synthetic" else {"source_name": source_name},
+            "generator_version": "SyntheticSeriesGenerator.v2",
+            "series_path": str(series_path.relative_to(output)),
+            "window_samples": window_samples, "image_size": image_size,
+            "mechanism": mechanism, "structure": structure,
+            "missing_rate_requested": rate, "missing_rate_actual": float(missing.mean()),
+            "n_gaps": gap_summary["n_gaps"],
+            "gap_length_samples_mean": gap_summary["gap_length_samples_mean"],
+            "gap_length_samples_median": gap_summary["gap_length_samples_median"],
+            "gap_length_samples_p90": gap_summary["gap_length_samples_p90"],
+            "gap_length_samples_max": gap_summary["gap_length_samples_max"],
+            "singleton_gap_percent": gap_summary["singleton_gap_percent"],
+            "seed": pair_seed, "prompt": DEFAULT_PROMPTS[encoding],
+            "clean": str(target_path.relative_to(output)),
+            "conditioning": str(condition_path.relative_to(output)),
+            "mask": str(mask_path.relative_to(output)),
+        })
+    return records, source_kind
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=int, default=2000)
@@ -310,6 +390,7 @@ def main() -> None:
     parser.add_argument("--cleaned-dir", default="data/1_cleaned_data")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--workers", type=int, default=20)
     args = parser.parse_args()
 
     if args.samples < 1:
@@ -347,75 +428,20 @@ def main() -> None:
     prepare_output(output, args.overwrite)
 
     manifest_path = output / "manifest.jsonl"
+    generated = Parallel(n_jobs=args.workers, backend="loky")(
+        delayed(generate_training_sample)(
+            series_id, output=output, image_size=args.image_size,
+            window_sizes=window_sizes, rates=rates, mechanisms=mechanisms,
+            structures=structures, source=args.source, real_share=args.real_share,
+            real_series=real_series, seed=args.seed,
+        )
+        for series_id in tqdm(range(args.samples), desc="Scheduling SD2 triplets")
+    )
     counts = {"synthetic": 0, "real": 0}
     with manifest_path.open("w", encoding="utf-8") as manifest:
-        for series_id in tqdm(range(args.samples), desc="Generating SD2 triplets"):
-            window_samples = int(rng.choice(window_sizes))
-            use_real = bool(real_series) and rng.random() < args.real_share
-            generator_params: dict = {}
-            if use_real:
-                source_name, source_series = real_series[int(rng.integers(len(real_series)))]
-                clean = choose_real_window(source_series, window_samples, rng)
-                pattern = "real"
-                source_kind = "real"
-            else:
-                pattern = str(rng.choice(SyntheticSeriesGenerator.PATTERNS))
-                generated, generator_params = synthetic.generate_with_metadata(window_samples, pattern)
-                clean = pd.Series(generated)
-                source_name = pattern
-                source_kind = "synthetic"
+        for records, source_kind in generated:
             counts[source_kind] += 1
-            series_path = output / "series" / f"{series_id:06d}.npy"
-            np.save(series_path, clean.to_numpy(dtype=np.float64))
-
-            mechanism = str(rng.choice(mechanisms))
-            structure = str(rng.choice(structures))
-            rate = float(rng.choice(rates))
-            pair_seed = args.seed + series_id
-            corrupted = degrade(clean, mechanism, structure, rate, pair_seed)
-            gap_summary, _ = summarize_missingness(corrupted)
-            filled = corrupted.interpolate(method="linear", limit_direction="both")
-            filled = filled.fillna(float(clean.mean()))
-            missing = corrupted.isna().to_numpy()
-
-            for encoding in ENCODINGS:
-                target, condition = encode_pair(clean, filled, encoding, args.image_size)
-                mask = image_mask(missing, encoding, args.image_size)
-                stem = f"{series_id:06d}_{encoding}"
-                target_path = output / "clean" / f"{stem}.png"
-                condition_path = output / "conditioning" / f"{stem}.png"
-                mask_path = output / "masks" / f"{stem}.png"
-                save_rgb(target, target_path)
-                save_rgb(condition, condition_path)
-                Image.fromarray(mask, mode="L").save(mask_path)
-
-                record = {
-                    "series_id": series_id,
-                    "encoding": encoding,
-                    "source_kind": source_kind,
-                    "source_name": source_name,
-                    "pattern": pattern,
-                    "generator_params": generator_params if source_kind == "synthetic" else {"source_name": source_name},
-                    "generator_version": "SyntheticSeriesGenerator.v2",
-                    "series_path": str(series_path.relative_to(output)),
-                    "window_samples": window_samples,
-                    "image_size": args.image_size,
-                    "mechanism": mechanism,
-                    "structure": structure,
-                    "missing_rate_requested": rate,
-                    "missing_rate_actual": float(missing.mean()),
-                    "n_gaps": gap_summary["n_gaps"],
-                    "gap_length_samples_mean": gap_summary["gap_length_samples_mean"],
-                    "gap_length_samples_median": gap_summary["gap_length_samples_median"],
-                    "gap_length_samples_p90": gap_summary["gap_length_samples_p90"],
-                    "gap_length_samples_max": gap_summary["gap_length_samples_max"],
-                    "singleton_gap_percent": gap_summary["singleton_gap_percent"],
-                    "seed": pair_seed,
-                    "prompt": DEFAULT_PROMPTS[encoding],
-                    "clean": str(target_path.relative_to(output)),
-                    "conditioning": str(condition_path.relative_to(output)),
-                    "mask": str(mask_path.relative_to(output)),
-                }
+            for record in records:
                 manifest.write(json.dumps(record) + "\n")
 
     summary = {

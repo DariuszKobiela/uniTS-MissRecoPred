@@ -1,10 +1,24 @@
 from pathlib import Path
+import importlib.util
 
 import numpy as np
 from PIL import Image
 
-from training.finetune_sd2_windowed import WindowedInpaintingDataset, group_split
-from training.generate_sd2_windowed_dataset import image_mask
+
+def _load_script(name: str, filename: str):
+    path = Path(__file__).resolve().parents[1] / "src" / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+_finetune = _load_script("finetune_sd2", "7_finetune_sd2.py")
+_generate = _load_script("generate_sd2", "5_generate_sd2_training_data.py")
+WindowedInpaintingDataset = _finetune.WindowedInpaintingDataset
+group_split = _finetune.group_split
+image_mask = _generate.image_mask
 
 
 def test_image_masks_match_representation_geometry():

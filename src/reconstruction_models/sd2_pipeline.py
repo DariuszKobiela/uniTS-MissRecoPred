@@ -101,9 +101,15 @@ def get_model(model_id: str) -> StableDiffusionInpaintPipeline:
             )
 
         if device == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
             pipeline = pipeline.to(device)
-            pipeline.enable_attention_slicing()
-            pipeline.enable_vae_slicing()
+            total_vram_gib = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            if total_vram_gib < 24:
+                pipeline.enable_attention_slicing()
+                pipeline.enable_vae_slicing()
+            else:
+                print(f"High-VRAM GPU ({total_vram_gib:.1f} GiB): slicing disabled for throughput")
 
         _MODEL_CACHE[model_id] = pipeline
         print("Model loaded successfully and cached")

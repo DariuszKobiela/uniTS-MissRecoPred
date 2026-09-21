@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.logger import setup_logging
 
 # Setup automatic logging to file
-setup_logging("5_calculate_reconstruction_error")
+setup_logging("11_calculate_reconstruction_error")
 
 # Import config loader
 from utils.config_loader import load_config
@@ -65,7 +65,7 @@ def load_performance_metrics(results_dir: str) -> dict:
     if not os.path.exists(perf_metrics_dir):
         print("⚠️  No performance metrics directory found")
         print(f"   Expected: {perf_metrics_dir}")
-        print("   Run 4_reconstruct_datasets.py first to collect metrics")
+        print("   Run 10_reconstruct_datasets.py first to collect metrics")
         return {}
     
     # Find all performance metrics files
@@ -74,7 +74,7 @@ def load_performance_metrics(results_dir: str) -> dict:
     if not perf_files:
         print("⚠️  No performance metrics files found")
         print(f"   Directory: {perf_metrics_dir}")
-        print("   Run 4_reconstruct_datasets.py first to collect metrics")
+        print("   Run 10_reconstruct_datasets.py first to collect metrics")
         return {}
     
     # Sort by timestamp in filename (YYYYMMDD_HHMMSS) - most recent first
@@ -471,7 +471,7 @@ def run_calculate_reconstruction_error(config) -> bool:
 
     n_jobs = config.get_n_jobs()
     if n_jobs == -1:
-        n_jobs = os.cpu_count() or 1
+        n_jobs = min(os.cpu_count() or 1, 20)
 
     if n_jobs > 1 and len(reconstructed_files) > 1:
         print(f"\n🚀 Processing with {n_jobs} parallel jobs...")

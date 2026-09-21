@@ -20,19 +20,6 @@ data:
   prediction_results_dir: "prediction_experiment_results"  # Directory for prediction experiment results
 
 # ============================================================================
-# PIPELINE ENTRY (standard vs external missingness)
-# ============================================================================
-pipeline:
-  # standard — full pipeline from clean/split/degrade (see README)
-  # external_missing — ingest from manifest (src/ingest_external_missing.py), then 4→7→8→9; skip 3,5,6
-  entry: standard
-  external_missing:
-    manifest: "config/external_missing_manifest.yaml"
-    # Optional path overrides (default: data.* from this file)
-    # output_missing_dir: "data/3_missing_data"
-    # output_test_dir: "data/2_splitted_data/test"
-    # output_train_dir: "data/2_splitted_data/train"
-
 # ============================================================================
 # TRAIN/TEST SPLIT SETTINGS
 # ============================================================================
@@ -47,7 +34,7 @@ split:
     min_samples: 64
     max_samples: 500
 
-  # Horizon recommendation (analyze_forecast_horizons.py → 1_5_horizon_recommendation/)
+  # Horizon recommendation (2_analyze_forecast_horizons.py → 1_5_horizon_recommendation/)
   horizons:
     metadata_path: "data/1_5_horizon_recommendation/dataset_metadata.json"
     report_csv_path: "data/1_5_horizon_recommendation/horizon_recommendations.csv"
@@ -99,28 +86,25 @@ datasets:
 # RECONSTRUCTION MODELS
 # ============================================================================
 reconstruction_models:
-  # Leave empty to use all available models from reconstruction_models/
-  # Or specify models to use:
-  # selected:
-  #   - "impute_mean"
-  #   - "interpolate_linear"
-  #   - "interpolate_cubic"
-  #   - "knn"
-  
-  selected: []  # Empty = use all available models
-  
-  # You can also exclude specific models:
-  excluded:
-    # Base SD2 (stabilityai/stable-diffusion-2-inpainting) and fine-tuned
-    # (Daro77/...-gaf-mtf-rp-spec) variants both require GPU.
-    # - "stable_diffusion_2_gaf"
-    # - "stable_diffusion_2_gaf_finetuned"
-    # - "stable_diffusion_2_mtf"
-    # - "stable_diffusion_2_mtf_finetuned"
-    # - "stable_diffusion_2_rp"
-    # - "stable_diffusion_2_rp_finetuned"
-    # - "stable_diffusion_2_spec"
-    # - "stable_diffusion_2_spec_finetuned"
+  selected:
+    - impute_mean
+    - impute_median
+    - impute_ffill
+    - impute_bfill
+    - interpolate_linear
+    - interpolate_cubic
+    - interpolate_pchip
+    - knn
+    - sarimax
+    - stable_diffusion_2_gaf
+    - stable_diffusion_2_mtf
+    - stable_diffusion_2_rp
+    - stable_diffusion_2_spec
+    - stable_diffusion_2_gaf_finetuned
+    - stable_diffusion_2_mtf_finetuned
+    - stable_diffusion_2_rp_finetuned
+    - stable_diffusion_2_spec_finetuned
+  excluded: []
 
 # ============================================================================
 # RECONSTRUCTION ERROR METRICS (script 5 → reconstruction_results_*.csv)
@@ -137,24 +121,6 @@ reconstruction:
     primary_metric_objective: "auto"
 
 # ============================================================================
-# PREDICTION MODELS
-# ============================================================================
-prediction_models:
-  # Leave empty to use all available models from prediction_models/
-  # Or specify models to use:
-  # selected:
-  #   - "holt_winters"
-  #   - "prophet"
-  #   - "lstm"
-  
-  selected: []  # Empty = use all available models
-  
-  # You can exclude specific models:
-  excluded:
-    # - "transformer"  # Uncomment to exclude (slow to train)
-    # - "nbeats"
-    # - "deepar"
-
 # ============================================================================
 # PREDICTION SETTINGS
 # ============================================================================
@@ -183,11 +149,11 @@ prediction:
       - xgboost_direct_missing
     n_origins: 5
     seed: 42
-    # Keep low: every worker independently fits models many times per origin.
-    max_workers: 1
+    # Procesy są niezależne; XGBoost wewnątrz każdego procesu ma n_jobs=1.
+    max_workers: 20  # 16 rdzeni fizycznych, 32 logiczne; benchmark 16≈20<24
     lead_time_bins: true
 
-  # Prediction error metrics (script 9 → prediction_results_*.csv); see src/prediction_metrics/
+  # Prediction error metrics (script 12 → prediction_results_*.csv); see src/prediction_metrics/
   error_metrics:
     compute: [mae, rmse, mase, mape, smape]
     primary_metric: "mae"
@@ -266,12 +232,12 @@ visualization:
 # ============================================================================
 computation:
   # Parallel processing
-  # n_jobs: -1 uses all CPU cores (capped at 16 to avoid memory issues)
+  # 20 workerów: dobrane do 16 rdzeni fizycznych / 32 logicznych i 123 GiB RAM
   # n_jobs: 1 disables parallelization (sequential)
   # n_jobs: N uses N cores
-  # WARNING: Set n_jobs=1 when using GPU models (Stable Diffusion, deep learning)
+  # Zadania GPU są wydzielane i wykonywane sekwencyjnie na jednej karcie
   # TIP: If processes crash silently, try reducing n_jobs (e.g., 8 or 4)
-  n_jobs: 16
+  n_jobs: 20
   
   # Stable Diffusion settings (if using SD models)
   stable_diffusion:

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.logger import setup_logging
 
 # Setup automatic logging to file
-setup_logging("3_degrade_datasets")
+setup_logging("8_degrade_datasets")
 
 from framework.plugin_registry import get_missingness_techniques
 from missingness_techniques.structured import apply_structured_missingness
@@ -172,16 +172,16 @@ def main():
         epilog="""
 Examples:
   # Use configuration from config/config.yaml
-  python 3_degrade_datasets.py
+  python 8_degrade_datasets.py
   
   # Override config with custom parameters
-  python 3_degrade_datasets.py --techniques MCAR --rates 0.05 --iterations 3
+  python 8_degrade_datasets.py --techniques MCAR --rates 0.05 --iterations 3
   
   # Use custom config file
-  python 3_degrade_datasets.py --config config/my_config.yaml
+  python 8_degrade_datasets.py --config config/my_config.yaml
   
   # Specify datasets by file paths (from training split)
-  python 3_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
+  python 8_degrade_datasets.py --dataset-files data/2_splitted_data/train/boiler.csv
         """
     )
     

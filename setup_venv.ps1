@@ -45,12 +45,6 @@ Write-Host "  deactivate" -ForegroundColor White
 Write-Host ""
 Write-Host "Quick start (reconstruction pipeline — or run: make help):" -ForegroundColor Yellow
 Write-Host "  1. Edit config/config.yaml" -ForegroundColor White
-Write-Host "  2. python src/1_clean_datasets.py          # clean / validate" -ForegroundColor White
-Write-Host "  3. python src/2_create_split.py            # train / test split" -ForegroundColor White
-Write-Host "  4. python src/3_degrade_datasets.py        # missingness on train" -ForegroundColor White
-Write-Host "  # optional: python src/optimization/optimize_sd_hyperparams.py" -ForegroundColor DarkGray
-Write-Host "  5. python src/4_reconstruct_datasets.py    # reconstruct" -ForegroundColor White
-Write-Host "  6. python src/5_calculate_reconstruction_error.py  # error metrics CSV" -ForegroundColor White
-Write-Host "  7. streamlit run src/6_visualize_reconstruction_error.py  # dashboard" -ForegroundColor White
+Write-Host "  Po instalacji uruchom: make pipeline-rebuttal" -ForegroundColor White
 Write-Host ""
 

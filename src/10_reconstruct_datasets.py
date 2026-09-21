@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.logger import setup_logging
 
 # Setup automatic logging to file
-setup_logging("4_reconstruct_datasets")
+setup_logging("10_reconstruct_datasets")
 
 # Import reconstruction registry and config loader
 from framework.plugin_registry import get_reconstruction_models
@@ -418,10 +418,10 @@ def run_reconstruct_datasets(
     if n_jobs == -1:
         import multiprocessing
 
-        actual_n_jobs = min(multiprocessing.cpu_count(), 16)
+        actual_n_jobs = min(multiprocessing.cpu_count(), 20)
         print(f"🚀 Processing {len(tasks)} tasks total:")
         print(
-            f"   - {len(cpu_tasks)} CPU model tasks (parallel with {actual_n_jobs} jobs, capped from {multiprocessing.cpu_count()})"
+            f"   - {len(cpu_tasks)} CPU model tasks (parallel with {actual_n_jobs} jobs, capped at 20 from {multiprocessing.cpu_count()})"
         )
     else:
         actual_n_jobs = n_jobs

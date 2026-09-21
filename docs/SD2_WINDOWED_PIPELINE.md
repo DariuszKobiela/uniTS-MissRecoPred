@@ -61,7 +61,7 @@ MCAR/MAR/MNAR validation gaps, and uses Optuna to select:
 
 For a safer first run, keep native image resolution:
 
-    uv run python src/optimization/analyze_sd2_design.py \
+    uv run python src/4_analyze_sd2_design.py \
       --run-inference --image-sizes 512 --n-trials 12 --cases-per-dataset 3
 
 The GPU run writes:
@@ -84,7 +84,7 @@ automatically applies the winning settings for each dataset and SD2 model.
 
 After fine-tuning, optimize the new local model variants separately:
 
-    uv run python src/optimization/analyze_sd2_design.py --run-inference \
+    uv run python src/4_analyze_sd2_design.py --run-inference \
       --image-sizes 512 --models \
       stable_diffusion_2_gaf_finetuned stable_diffusion_2_mtf_finetuned \
       stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
@@ -99,7 +99,7 @@ Run the CPU-only representation controls with:
 
 For a smaller diagnostic run:
 
-    uv run python src/optimization/analyze_sd2_design.py --run-ablation \
+    uv run python src/4_analyze_sd2_design.py --run-ablation \
       --window-sizes 512 --image-sizes 512 --cases-per-dataset 1
 
 The command writes
@@ -164,7 +164,7 @@ percentage. Override the defaults with `--mechanisms` and `--structures`.
 
 A small test dataset can be generated with:
 
-    uv run python src/training/generate_sd2_windowed_dataset.py \
+    uv run python src/5_generate_sd2_training_data.py \
       --samples 20 --output /tmp/sd2-training-smoke --image-size 512
 
 The default source is synthetic to avoid target-series leakage. The optional

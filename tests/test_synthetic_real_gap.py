@@ -1,11 +1,17 @@
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from src.analysis.analyze_synthetic_real_gap import (
-    FEATURE_COLUMNS,
-    classifier_diagnostics,
-    extract_features,
-)
+_path = Path(__file__).resolve().parents[1] / "src" / "6_analyze_synthetic_real_gap.py"
+_spec = importlib.util.spec_from_file_location("analyze_synthetic_real_gap", _path)
+_module = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(_module)
+FEATURE_COLUMNS = _module.FEATURE_COLUMNS
+classifier_diagnostics = _module.classifier_diagnostics
+extract_features = _module.extract_features
 
 
 def test_feature_extraction_covers_distribution_acf_spectrum_and_changes():

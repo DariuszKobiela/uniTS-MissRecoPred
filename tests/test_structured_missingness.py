@@ -80,7 +80,7 @@ def test_missingness_filename_label_is_backward_compatible():
 
 
 def test_step3_writes_all_structures_and_reports(tmp_path):
-    script = Path(__file__).resolve().parents[1] / "src" / "3_degrade_datasets.py"
+    script = Path(__file__).resolve().parents[1] / "src" / "8_degrade_datasets.py"
     spec = importlib.util.spec_from_file_location("degrade_script", script)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

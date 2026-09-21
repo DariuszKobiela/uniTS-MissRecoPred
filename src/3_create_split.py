@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.logger import setup_logging
 
-setup_logging("2_create_split")
+setup_logging("3_create_split")
 
 import argparse
 import json

@@ -9,7 +9,8 @@ Cleaning operations:
 - Converts value columns to numeric (float)
 - Handles different CSV formats (separator, decimal point)
 - Removes duplicate indices
-- Removes rows with invalid data
+- Fills source missing values from the previous observation (forward fill)
+- Reports filled values and removes leading gaps that cannot be forward-filled
 - Standardizes output format
 
 Usage:
@@ -112,7 +113,7 @@ def clean_index(index_series: pd.Series) -> pd.Index:
     return pd.Index(index_series.astype(str))
 
 
-def clean_dataset(input_file: str, output_file: str, config) -> None:
+def clean_dataset(input_file: str, output_file: str, config) -> dict | None:
     """
     Clean a single dataset.
     
@@ -126,7 +127,7 @@ def clean_dataset(input_file: str, output_file: str, config) -> None:
     # Check if output file already exists
     if os.path.exists(output_file) and not config.get_overwrite_existing():
         print(f"  ⏭️  Skipping (file already exists, overwrite_existing=false)")
-        return
+        return None
     
     # Detect CSV format
     csv_format = detect_csv_format(input_file)
@@ -163,6 +164,37 @@ def clean_dataset(input_file: str, output_file: str, config) -> None:
         except Exception as e:
             print(f"  ⚠️  Warning: Could not convert column '{col}' to numeric: {e}")
     
+    # Establish chronological order before using the previous observation.
+    if df.index.duplicated().any():
+        n_duplicates = int(df.index.duplicated().sum())
+        print(f"  🔄 Removing {n_duplicates} duplicate indices")
+        df = df[~df.index.duplicated(keep="first")]
+    try:
+        df.sort_index(inplace=True)
+    except TypeError:
+        pass
+
+    # Complete source data before the experimental degradation step.
+    missing_by_column = df.isna().sum()
+    missing_before = int(missing_by_column.sum())
+    if missing_before:
+        df.ffill(inplace=True)
+        missing_after_ffill = int(df.isna().sum().sum())
+        filled_count = missing_before - missing_after_ffill
+        print(f"  🩹 Missing source values detected: {missing_before}")
+        print(f"  ✅ Forward-filled from previous observations: {filled_count}")
+        for column, count in missing_by_column[missing_by_column > 0].items():
+            print(f"     - {column}: {int(count)} missing before ffill")
+    else:
+        filled_count = 0
+        print("  ✅ Missing source values detected: 0")
+
+    # A leading gap has no previous observation and cannot be forward-filled.
+    unresolved_rows = int(df.isna().any(axis=1).sum())
+    if unresolved_rows:
+        print(f"  ⚠️  Removing {unresolved_rows} leading row(s) that cannot be forward-filled")
+        df.dropna(how="any", inplace=True)
+
     # Remove rows where all value columns are NaN
     df.dropna(how='all', inplace=True)
     
@@ -186,6 +218,14 @@ def clean_dataset(input_file: str, output_file: str, config) -> None:
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     df.to_csv(output_file, sep=',', decimal='.')
     print(f"  ✅ Saved to: {output_file}")
+    return {
+        "dataset": os.path.basename(input_file),
+        "original_rows": original_rows,
+        "final_rows": final_rows,
+        "missing_values_before": missing_before,
+        "values_forward_filled": filled_count,
+        "unresolved_rows_removed": unresolved_rows,
+    }
 
 
 def run_clean_datasets(
@@ -222,17 +262,27 @@ def run_clean_datasets(
     print(f"\n📋 Found {len(datasets)} dataset(s) to clean")
 
     success_count = 0
+    reports = []
     for ds in datasets:
         input_file = os.path.join(input_dir, ds)
         output_file = os.path.join(output_dir, ds)
 
         try:
-            clean_dataset(input_file, output_file, config)
+            report = clean_dataset(input_file, output_file, config)
+            if report is not None:
+                reports.append(report)
             success_count += 1
         except Exception as e:
             print(f"\n❌ Error cleaning {ds}: {e}")
             import traceback
             traceback.print_exc()
+
+    if reports:
+        report_dir = Path(output_dir) / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "cleaning_report.csv"
+        pd.DataFrame(reports).to_csv(report_path, index=False)
+        print(f"📄 Cleaning report: {report_path}")
 
     print(f"\n{'='*60}")
     print(f"✅ Cleaning complete: {success_count}/{len(datasets)} datasets cleaned successfully")

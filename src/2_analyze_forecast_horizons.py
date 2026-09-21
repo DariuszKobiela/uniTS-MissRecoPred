@@ -9,7 +9,7 @@ artifacts to data/1_5_horizon_recommendation/:
   - horizon_recommendations.md
 
 Usage:
-    python analyze_forecast_horizons.py [--input-dir DIR] [--dataset FILENAME]
+    python 2_analyze_forecast_horizons.py [--input-dir DIR] [--dataset FILENAME]
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.logger import setup_logging
 
-setup_logging("analyze_forecast_horizons")
+setup_logging("2_analyze_forecast_horizons")
 
 from utils.config_loader import load_config
 from utils.horizon_recommender import (

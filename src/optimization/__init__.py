@@ -1,9 +1,1 @@
-"""
-Optimization scripts for the time series reconstruction framework.
-
-This package contains scripts for hyperparameter tuning and optimization:
-- optimize_sd_hyperparams: Optimize Stable Diffusion model hyperparameters
-"""
-
-__all__ = []
-
+"""Supporting SD2 ablation utilities used by src/4_analyze_sd2_design.py."""

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Streamlit Visualization App for Prediction Results
+Streamlit dashboard for rolling-origin prediction errors
 Interactive dashboard for comparing RECONSTRUCTION MODELS by a selectable prediction error metric.
 Prediction model serves as a filter, not the main comparison axis.
-Part of uniTS-MissRecoPred framework.
+Reads prediction_results_rolling_origins_*.csv from the active rebuttal pipeline.
 """
 
 from __future__ import annotations
@@ -203,7 +203,7 @@ def render_reconstruction_efficiency_tab(
     if df_recon_perf.empty:
         st.warning(
             "⚠️ No reconstruction performance file found in `reconstruction_experiments_results/`. "
-            "Run `python src/4_reconstruct_datasets.py` first."
+            "Run `python src/10_reconstruct_datasets.py` first."
         )
         return
 
@@ -351,7 +351,7 @@ def render_reconstruction_tradeoff_tab(
     if df_recon_perf.empty:
         st.warning(
             "⚠️ No reconstruction performance file found in `reconstruction_experiments_results/`. "
-            "Run `python src/4_reconstruct_datasets.py` first."
+            "Run `python src/10_reconstruct_datasets.py` first."
         )
         return
 
@@ -1289,7 +1289,7 @@ def main():
     
     if not available_files:
         st.error("No result files found in `prediction_experiment_results/` directory.")
-        st.info("Run `python 9_calculate_prediction_error.py` first to generate results.")
+        st.info("Run `python src/12_evaluate_rolling_origins.py` first to generate results.")
         return
     
     # File selection
@@ -1314,7 +1314,7 @@ def main():
     if not available_specs:
         st.error(
             "This CSV has no registered prediction metric columns. "
-            "Re-run `python 9_calculate_prediction_error.py` with an up-to-date config."
+            "Re-run `python src/12_evaluate_rolling_origins.py` with an up-to-date config."
         )
         return
 
@@ -1330,7 +1330,7 @@ def main():
         metric_keys,
         index=default_idx,
         format_func=lambda k: get_metric_spec(k).label,
-        help="Columns come from script 9; switch metric to refresh all charts and tables.",
+        help="Columns come from script 12; switch metric to refresh all charts and tables.",
     )
     m = PredictionMetricView.from_spec(get_metric_spec(selected_metric_key))
     
@@ -1364,6 +1364,10 @@ def main():
     selected_datasets = st.sidebar.multiselect("Dataset", all_datasets, default=all_datasets)
     selected_techniques = st.sidebar.multiselect("Technique", all_techniques, default=all_techniques)
     selected_rates = st.sidebar.multiselect("Missing Rate (%)", [int(r) for r in all_rates], default=[int(r) for r in all_rates])
+    all_horizons = sorted(df["forecast_horizon"].dropna().unique().tolist()) if "forecast_horizon" in df.columns else []
+    selected_horizons = st.sidebar.multiselect("Forecast horizon", all_horizons, default=all_horizons)
+    all_scopes = sorted(df["metric_scope"].dropna().unique().tolist()) if "metric_scope" in df.columns else []
+    selected_scopes = st.sidebar.multiselect("Metric scope", all_scopes, default=all_scopes)
     
     # Apply filters to dataframe
     df_filtered = df.copy()
@@ -1371,6 +1375,10 @@ def main():
         df_filtered = df_filtered[df_filtered['dataset_name'].isin(selected_datasets)]
     if selected_pred_models:
         df_filtered = df_filtered[df_filtered['prediction_model'].isin(selected_pred_models)]
+    if selected_horizons:
+        df_filtered = df_filtered[df_filtered["forecast_horizon"].isin(selected_horizons)]
+    if selected_scopes:
+        df_filtered = df_filtered[df_filtered["metric_scope"].isin(selected_scopes)]
     
     # Filter reconstructed data by technique and rate
     df_recon = df_filtered[df_filtered['source_type'] == 'reconstructed'].copy()
@@ -1775,7 +1783,7 @@ def main():
                 column for column in (
                     "dataset_name", "source_type", "technique", "rate_percent",
                     "structure", "reconstruction_iteration", "prediction_model",
-                    "prediction_iteration",
+                    "prediction_iteration", "forecast_horizon", "metric_scope", "origin",
                 ) if column in df_for_stats.columns
             ]
             
@@ -1867,7 +1875,7 @@ def main():
                 column for column in (
                     "dataset_name", "source_type", "technique", "rate_percent",
                     "structure", "reconstruction_iteration", "reconstruction_model",
-                    "prediction_iteration",
+                    "prediction_iteration", "forecast_horizon", "metric_scope", "origin",
                 ) if column in df_pred_stats.columns
             ]
             

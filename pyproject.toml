@@ -22,11 +22,8 @@ dependencies = [
     "transformers>=4.57.3",
     "accelerate>=1.12.0",
     
-    # Time Series Prediction (Darts)
-    "darts>=0.31.0",
+    # Rolling-origin prediction
     "xgboost>=2.1.0",
-    "prophet>=1.1.6",
-    "statsforecast>=1.7.0",  # For AutoARIMA, AutoETS, Croston
     
     # Force newer versions for Python 3.12 compatibility
     "numba>=0.60.0",
@@ -62,6 +59,7 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120

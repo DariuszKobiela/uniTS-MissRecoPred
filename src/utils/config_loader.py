@@ -184,49 +184,6 @@ class Config:
         return self.config['data'].get('prediction_results_dir', 'prediction_experiment_results')
 
     # =========================================================================
-    # PIPELINE (standard vs external_missing)
-    # =========================================================================
-
-    def get_pipeline_entry(self) -> str:
-        """``standard`` | ``external_missing`` — see config pipeline.entry."""
-        return str(self.config.get("pipeline", {}).get("entry", "standard")).strip().lower()
-
-    def is_pipeline_external_missing(self) -> bool:
-        return self.get_pipeline_entry() == "external_missing"
-
-    def get_external_missing_manifest_path(self) -> str:
-        """Path to YAML manifest for ingest_external_missing (may be relative to cwd)."""
-        p = self.config.get("pipeline", {}).get("external_missing", {}).get("manifest")
-        if not p:
-            return "config/external_missing_manifest.yaml"
-        return str(p).strip()
-
-    def get_external_missing_output_missing_dir(self) -> str:
-        em = self.config.get("pipeline", {}).get("external_missing", {})
-        v = em.get("output_missing_dir")
-        if v is not None and str(v).strip():
-            return str(v).strip()
-        return self.get_missing_dir()
-
-    def get_external_missing_output_test_dir(self) -> str:
-        em = self.config.get("pipeline", {}).get("external_missing", {})
-        v = em.get("output_test_dir")
-        if v is not None and str(v).strip():
-            return str(v).strip()
-        return self.get_splitted_test_dir()
-
-    def get_external_missing_output_train_dir(self) -> str:
-        em = self.config.get("pipeline", {}).get("external_missing", {})
-        v = em.get("output_train_dir")
-        if v is not None and str(v).strip():
-            return str(v).strip()
-        return self.get_splitted_train_dir()
-
-    def get_external_missing_ingest_state_path(self) -> str:
-        """Written by ingest_external_missing; used by predict script for original-train filtering."""
-        return str(Path(self.get_splitted_dir()) / "external_missing_ingest_state.json")
-    
-    # =========================================================================
     # DATASETS
     # =========================================================================
     
@@ -682,282 +639,32 @@ class Config:
 
 
 class PredictionModelsConfig:
-    """Configuration manager for prediction models training parameters"""
-    
+    """Parameters for the active local XGBoost and SARIMAX models."""
+
     def __init__(self, config_path: str = "config/prediction_models_config.yaml"):
-        """
-        Load prediction models configuration from YAML file.
-        
-        Args:
-            config_path: Path to prediction models configuration file
-        """
         self.config_path = config_path
-        self.config = self._load_config()
-    
-    def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from YAML file"""
-        if not os.path.exists(self.config_path):
-            raise FileNotFoundError(f"Prediction models config not found: {self.config_path}")
-        
-        with open(self.config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        
-        return config
-    
-    # =========================================================================
-    # GLOBAL TRAINING SETTINGS
-    # =========================================================================
-    
-    def get_validation_split(self) -> float:
-        """Get train/validation split ratio"""
-        return self.config.get('global_training', {}).get('validation_split', 0.2)
-    
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Prediction models config not found: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as handle:
+            self.config = yaml.safe_load(handle) or {}
+
     def get_seed(self) -> int:
-        """Get random seed"""
-        return self.config.get('global_training', {}).get('seed', 42)
-    
-    def get_max_epochs(self) -> int:
-        """Get maximum training epochs"""
-        return self.config.get('global_training', {}).get('max_epochs', 100)
-    
-    def get_batch_size(self) -> int:
-        """Get global default training batch size"""
-        return self.config.get('global_training', {}).get('batch_size', 32)
-    
-    def get_model_batch_size(self, model_name: str) -> int:
-        """
-        Get batch size for a specific model.
-        
-        Checks model-specific batch_size first, then falls back to global batch_size.
-        This allows heavy models (e.g. N-BEATS) to use smaller batch sizes
-        while lighter models (e.g. LSTM) can use larger ones.
-        
-        Args:
-            model_name: Name of the model (lstm, gru, nbeats, etc.)
-            
-        Returns:
-            Batch size for the model
-        """
-        model_params = self.config.get(model_name, {})
-        if 'batch_size' in model_params:
-            return model_params['batch_size']
-        return self.get_batch_size()
-    
-    def get_training_iterations(self) -> int:
-        """Get number of training iterations for non-deterministic models"""
-        return self.config.get('global_training', {}).get('training_iterations', 5)
-    
-    def get_num_workers(self) -> int:
-        """Get number of DataLoader workers for parallel batch preparation."""
-        return self.config.get('global_training', {}).get('num_workers', 0)
-    
-    def get_pin_memory(self) -> bool:
-        """Get whether to use pinned memory for faster CPU→GPU transfer."""
-        return self.config.get('global_training', {}).get('pin_memory', False)
-    
-    def get_dataloader_kwargs(self) -> Dict[str, Any]:
-        """
-        Build dataloader_kwargs dict for Darts model.fit().
-        
-        Combines num_workers and pin_memory into a single dict
-        that can be passed directly to model.fit(dataloader_kwargs=...).
-        """
-        kwargs = {}
-        num_workers = self.get_num_workers()
-        if num_workers > 0:
-            kwargs['num_workers'] = num_workers
-            kwargs['persistent_workers'] = True  # Keep workers alive between epochs
-        pin_memory = self.get_pin_memory()
-        if pin_memory:
-            kwargs['pin_memory'] = True
-        return kwargs
-    
-    # =========================================================================
-    # EARLY STOPPING SETTINGS
-    # =========================================================================
-    
-    def get_early_stopping_enabled(self) -> bool:
-        """Get whether early stopping is enabled"""
-        return self.config.get('early_stopping', {}).get('enabled', True)
-    
-    def get_early_stopping_monitor(self) -> str:
-        """Get metric to monitor for early stopping"""
-        return self.config.get('early_stopping', {}).get('monitor', 'val_loss')
-    
-    def get_early_stopping_patience(self) -> int:
-        """Get early stopping patience"""
-        return self.config.get('early_stopping', {}).get('patience', 10)
-    
-    def get_early_stopping_min_delta(self) -> float:
-        """Get minimum improvement delta"""
-        return self.config.get('early_stopping', {}).get('min_delta', 0.001)
-    
-    def get_early_stopping_verbose(self) -> bool:
-        """Get early stopping verbose flag"""
-        return self.config.get('early_stopping', {}).get('verbose', False)
-    
-    # =========================================================================
-    # MODEL-SPECIFIC PARAMETERS
-    # =========================================================================
-    
+        return int(self.config.get("global_training", {}).get("seed", 42))
+
     def get_model_params(self, model_name: str) -> Dict[str, Any]:
-        """
-        Get parameters for a specific model.
-        
-        Args:
-            model_name: Name of the model (lstm, gru, tcn, etc.)
-            
-        Returns:
-            Dictionary of model parameters
-        """
-        return self.config.get(model_name, {})
-    
-    def get_lstm_params(self) -> Dict[str, Any]:
-        """Get LSTM model parameters"""
-        return self.config.get('lstm', {})
-    
-    def get_gru_params(self) -> Dict[str, Any]:
-        """Get GRU model parameters"""
-        return self.config.get('gru', {})
-    
-    def get_deepar_params(self) -> Dict[str, Any]:
-        """Get DeepAR model parameters"""
-        return self.config.get('deepar', {})
-    
-    def get_tcn_params(self) -> Dict[str, Any]:
-        """Get TCN model parameters"""
-        return self.config.get('tcn', {})
-    
-    def get_nbeats_params(self) -> Dict[str, Any]:
-        """Get N-BEATS model parameters"""
-        return self.config.get('nbeats', {})
-    
-    def get_transformer_params(self) -> Dict[str, Any]:
-        """Get Transformer/TFT model parameters"""
-        return self.config.get('transformer', {})
-    
+        return dict(self.config.get(model_name, {}))
+
     def get_xgboost_params(self) -> Dict[str, Any]:
-        """Get XGBoost model parameters"""
-        return self.config.get('xgboost', {})
-    
+        return self.get_model_params("xgboost")
+
     def get_sarimax_params(self) -> Dict[str, Any]:
-        """Get SARIMAX model parameters"""
-        return self.config.get('sarimax', {})
-    
-    def get_holt_winters_params(self) -> Dict[str, Any]:
-        """Get Holt-Winters model parameters"""
-        return self.config.get('holt_winters', {})
-    
-    def get_prophet_params(self) -> Dict[str, Any]:
-        """Get Prophet model parameters"""
-        return self.config.get('prophet', {})
-    
-    # =========================================================================
-    # MODEL CATEGORIES
-    # =========================================================================
-    
-    def get_global_training_models(self) -> List[str]:
-        """Get list of models that support global training"""
-        return self.config.get('model_categories', {}).get('global_training_models', [])
-    
-    def get_per_file_training_models(self) -> List[str]:
-        """Get list of models that require per-file training"""
-        return self.config.get('model_categories', {}).get('per_file_training_models', [])
-    
-    def get_ml_models(self) -> List[str]:
-        """Get list of machine learning models"""
-        return self.config.get('model_categories', {}).get('ml_models', [])
-    
-    def is_global_training_model(self, model_name: str) -> bool:
-        """Check if model supports global training"""
-        return model_name in self.get_global_training_models()
-    
-    def is_per_file_training_model(self, model_name: str) -> bool:
-        """Check if model requires per-file training"""
-        return model_name in self.get_per_file_training_models()
-    
-    def get_deterministic_models(self) -> List[str]:
-        """Get list of deterministic models (no need for multiple iterations)"""
-        return self.config.get('model_categories', {}).get('deterministic_models', [])
-    
-    def get_non_deterministic_models(self) -> List[str]:
-        """Get list of non-deterministic models (need multiple iterations)"""
-        return self.config.get('model_categories', {}).get('non_deterministic_models', [])
-    
-    def is_deterministic_model(self, model_name: str) -> bool:
-        """Check if model is deterministic"""
-        return model_name in self.get_deterministic_models()
-    
-    def is_non_deterministic_model(self, model_name: str) -> bool:
-        """Check if model is non-deterministic"""
-        return model_name in self.get_non_deterministic_models()
-    
-    def get_all_model_names(self) -> List[str]:
-        """
-        Get list of ALL known prediction model names.
-        Combines all categories: global_training + per_file + ml models.
-        
-        Returns:
-            List of all prediction model names
-        """
-        all_models = set()
-        all_models.update(self.get_global_training_models())
-        all_models.update(self.get_per_file_training_models())
-        all_models.update(self.get_ml_models())
-        return list(all_models)
-    
-    # =========================================================================
-    # SUMMARY
-    # =========================================================================
-    
-    def print_config_summary(self):
-        """Print a summary of prediction models configuration"""
-        print("="*70)
-        print("PREDICTION MODELS CONFIGURATION SUMMARY")
-        print("="*70)
-        
-        print("\n⚙️ Global Training Settings:")
-        print(f"  Validation split:      {self.get_validation_split()*100:.0f}%")
-        print(f"  Max epochs:            {self.get_max_epochs()}")
-        print(f"  Default batch size:    {self.get_batch_size()}")
-        print(f"  Random seed:           {self.get_seed()}")
-        print(f"  Training iterations:   {self.get_training_iterations()} (for non-deterministic models)")
-        
-        # Show per-model batch sizes if any differ from global default
-        global_bs = self.get_batch_size()
-        per_model_bs = []
-        for model_name in self.get_all_model_names():
-            model_bs = self.get_model_batch_size(model_name)
-            if model_bs != global_bs:
-                per_model_bs.append(f"    {model_name}: {model_bs}")
-        if per_model_bs:
-            print("  Per-model batch sizes:")
-            for line in sorted(per_model_bs):
-                print(line)
-        
-        print("\n⏱️ Early Stopping:")
-        print(f"  Enabled:   {self.get_early_stopping_enabled()}")
-        print(f"  Monitor:   {self.get_early_stopping_monitor()}")
-        print(f"  Patience:  {self.get_early_stopping_patience()}")
-        print(f"  Min delta: {self.get_early_stopping_min_delta()}")
-        
-        print("\n🌐 Global Training Models:")
-        for m in self.get_global_training_models():
-            print(f"  - {m}")
-        
-        print("\n📄 Per-File Training Models (statistical):")
-        for m in self.get_per_file_training_models():
-            print(f"  - {m}")
-        
-        print("\n🎲 Non-Deterministic Models (trained N times):")
-        for m in self.get_non_deterministic_models():
-            print(f"  - {m}")
-        
-        print("\n📐 Deterministic Models (trained once):")
-        for m in self.get_deterministic_models():
-            print(f"  - {m}")
-        
-        print("="*70)
+        return self.get_model_params("sarimax")
+
+    def print_config_summary(self) -> None:
+        print("Rolling-origin model configuration")
+        print(f"  seed: {self.get_seed()}")
+        print(f"  xgboost: {self.get_xgboost_params()}")
+        print(f"  sarimax: {self.get_sarimax_params()}")
 
 
 def load_config(config_path: str = "config/config.yaml") -> Config:
