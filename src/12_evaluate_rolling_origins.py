@@ -20,7 +20,12 @@ from utils.progress import tqdm
 
 from prediction_models.sarimax import predict_sarimax
 from utils.config_loader import load_config, load_prediction_models_config
-from utils.experiment_naming import decode_missingness_label, encode_missingness_label
+from utils.experiment_naming import (
+    decode_missingness_label,
+    encode_missingness_label,
+    iter_reconstructed_csv_files,
+    parse_reconstructed_metadata,
+)
 from utils.rolling_origins import (
     evaluate_forecast_slices,
     expanding_history,
@@ -57,27 +62,6 @@ def load_series_allow_missing(path: str | Path) -> pd.Series:
     return pd.to_numeric(frame.iloc[:, 0], errors="coerce").reset_index(drop=True).astype(float)
 
 
-def parse_reconstructed_filename(filename: str) -> dict[str, Any]:
-    base_name = Path(filename).stem
-    parts = base_name.split("_")
-    rate_idx = next(
-        (index for index, part in enumerate(parts) if part.endswith("p") and part[:-1].isdigit()),
-        None,
-    )
-    if rate_idx is None or rate_idx < 1 or rate_idx + 2 >= len(parts):
-        raise ValueError(f"Invalid reconstructed filename: {filename}")
-    technique, structure = decode_missingness_label(parts[rate_idx - 1])
-    return {
-        "dataset_name": "_".join(parts[: rate_idx - 1]),
-        "source_type": "reconstructed",
-        "technique": technique,
-        "structure": structure,
-        "rate_percent": int(parts[rate_idx][:-1]),
-        "reconstruction_iteration": int(parts[rate_idx + 1]),
-        "reconstruction_model": "_".join(parts[rate_idx + 2 :]),
-    }
-
-
 def discover_sources(config) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
     if config.get_predict_on_original_train():
@@ -97,9 +81,10 @@ def discover_sources(config) -> list[dict[str, Any]]:
             )
 
     if config.get_predict_on_reconstructed():
-        for path in sorted(Path(config.get_fixed_dir()).glob("*.csv")):
+        fixed_root = Path(config.get_fixed_dir())
+        for path in iter_reconstructed_csv_files(fixed_root):
             try:
-                metadata = parse_reconstructed_filename(path.name)
+                metadata = parse_reconstructed_metadata(fixed_root, path)
             except ValueError:
                 continue
             sources.append(

@@ -72,6 +72,7 @@ data/2_splitted_data/sd2_validation/*.csv
 data/2_splitted_data/test/*.csv
 data/2_splitted_data/split_manifest.json
 data/3_missing_data/*.csv
+data/4_fixed_data/**/*.csv
 data/4_fixed_data/*.csv
 
 # Experiment results - ignore all CSV files
@@ -95,6 +96,7 @@ trained_prediction_models/**/*.ckpt
 # Checkpoint files
 *.ckpt
 *.pth.tar
+*.safetensors
 hyperparameter_optimization/*.csv
 hyperparameter_optimization/*.txt
 

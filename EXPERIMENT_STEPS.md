@@ -252,8 +252,20 @@ uv run python src/10_reconstruct_datasets.py \
 ```
 
 Skrypt wypełnia wyłącznie NaN, zachowuje wartości obserwowane i zapisuje
-rekonstrukcje w `data/4_fixed_data/`. Metryki czasu i zasobów trafiają do
-`reconstruction_experiments_results/performance_metrics/`.
+rekonstrukcje w `data/4_fixed_data/` w układzie katalogów:
+
+`{dataset}/{MCAR-scattered|…}/{2p|5p|…}/{model}/{iteracja}.csv`
+
+(w folderze modelu leżą wszystkie iteracje danego modelu). Metryki czasu i
+zasobów trafiają do `reconstruction_experiments_results/performance_metrics/`.
+
+Jeśli masz jeszcze płaskie pliki `dataset_…_model.csv` w korzeniu
+`4_fixed_data/` (stary zapis), po zakończeniu bieżącej rekonstrukcji:
+
+```bash
+uv run python scripts/migrate_fixed_data_layout.py --dry-run
+uv run python scripts/migrate_fixed_data_layout.py
+```
 
 ## 11. Metryki rekonstrukcji
 

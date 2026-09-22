@@ -37,7 +37,7 @@ setup_logging("10_reconstruct_datasets")
 # Import reconstruction registry and config loader
 from framework.plugin_registry import get_reconstruction_models
 from utils.config_loader import load_config
-from utils.experiment_naming import decode_missingness_label
+from utils.experiment_naming import build_reconstructed_relative_path, decode_missingness_label
 from utils.performance_metrics import PerformanceMonitor, format_metrics
 from reconstruction_models.sd2_settings import resolve_sd2_runtime_settings
 
@@ -242,6 +242,9 @@ Examples:
   
   # Use custom config file
   python reconstruct_datasets.py --config config/my_config.yaml
+
+  # Heavy CPU model with fewer parallel workers
+  python reconstruct_datasets.py --models sarimax --n-jobs 6
         """,
     )
 
@@ -279,6 +282,14 @@ Examples:
 
     parser.add_argument("--force", action="store_true", help="Overwrite existing reconstructed datasets")
 
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Parallel CPU workers for reconstruction tasks (default: computation.n_jobs from config, usually 20)",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -297,6 +308,7 @@ Examples:
         filter_rate=args.filter_rate,
         filter_iteration=args.filter_iteration,
         force=args.force,
+        n_jobs=args.n_jobs,
     )
 
 
@@ -309,6 +321,7 @@ def run_reconstruct_datasets(
     filter_rate: List[int] | None = None,
     filter_iteration: List[int] | None = None,
     force: bool = False,
+    n_jobs: int | None = None,
 ) -> bool:
     """Step 4: reconstruct degraded training series."""
     input_dir = config.get_missing_dir()
@@ -391,9 +404,15 @@ def run_reconstruct_datasets(
             metadata = parse_degraded_filename(degraded_file.name)
 
             for model_name in model_list:
-                base_name = degraded_file.stem
-                output_filename = f"{base_name}_{model_name}.csv"
-                output_file = os.path.join(output_dir, output_filename)
+                relative = build_reconstructed_relative_path(
+                    metadata["dataset"],
+                    metadata["technique"],
+                    metadata["structure"],
+                    metadata["rate_percent"],
+                    metadata["iteration"],
+                    model_name,
+                )
+                output_file = os.path.join(output_dir, relative.as_posix())
 
                 tasks.append(
                     {
@@ -413,7 +432,9 @@ def run_reconstruct_datasets(
     gpu_tasks = [t for t in tasks if is_gpu_model(t["model_name"])]
     cpu_tasks = [t for t in tasks if not is_gpu_model(t["model_name"])]
 
-    n_jobs = config.get_n_jobs()
+    n_jobs = config.get_n_jobs() if n_jobs is None else n_jobs
+    if n_jobs < 1:
+        raise ValueError("--n-jobs must be at least 1")
 
     if n_jobs == -1:
         import multiprocessing

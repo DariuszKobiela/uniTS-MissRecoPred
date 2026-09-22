@@ -29,7 +29,11 @@ setup_logging("11_calculate_reconstruction_error")
 
 # Import config loader
 from utils.config_loader import load_config
-from utils.experiment_naming import decode_missingness_label, encode_missingness_label
+from utils.experiment_naming import (
+    encode_missingness_label,
+    iter_reconstructed_csv_files,
+    parse_reconstructed_metadata,
+)
 from reconstruction_metrics import (
     compute_reconstruction_metrics,
     list_primary_metric_keys,
@@ -135,55 +139,6 @@ def load_performance_metrics(results_dir: str) -> dict:
         return {}
 
 
-def parse_filename(filename):
-    """
-    Parse reconstructed filename to extract metadata.
-    Format: datasetName_technique_rateP_iteration_model.csv
-    Dataset name and model name can contain underscores.
-    
-    Returns:
-        dict with keys: dataset_name, technique, rate_percent, iteration, model
-    """
-    name_without_ext = filename.replace('.csv', '')
-    parts = name_without_ext.split('_')
-    
-    if len(parts) < 5:
-        raise ValueError(f"Invalid filename format: {filename}")
-    
-    # Find the rate pattern (XXp where XX is a number)
-    rate_idx = None
-    for i, part in enumerate(parts):
-        if part.endswith('p') and part[:-1].isdigit():
-            rate_idx = i
-            break
-    
-    if rate_idx is None or rate_idx < 1 or rate_idx + 2 >= len(parts):
-        raise ValueError(f"Invalid filename format: {filename}")
-    
-    # Parse from the rate position:
-    # Before rate: dataset_technique
-    # Rate position: rateP
-    # After rate: iteration_model...
-    technique, structure = decode_missingness_label(parts[rate_idx - 1])
-    rate_percent = int(parts[rate_idx].replace('p', ''))
-    iteration = int(parts[rate_idx + 1])
-    
-    # Dataset is everything before technique
-    dataset_name = '_'.join(parts[:rate_idx - 1])
-    
-    # Model is everything after iteration
-    model = '_'.join(parts[rate_idx + 2:])
-    
-    return {
-        'dataset_name': dataset_name,
-        'technique': technique,
-        'structure': structure,
-        'rate_percent': rate_percent,
-        'iteration': iteration,
-        'model': model
-    }
-
-
 def get_degraded_filename(dataset_name, technique, structure, rate_percent, iteration):
     """
     Generate degraded filename from metadata.
@@ -273,12 +228,11 @@ def process_file_wrapper(args):
     Returns:
         dict with status ('success' or 'error') and result data or error message
     """
-    reconstructed_file_path, dataset_mapping, missing_dir, config, performance_metrics = args
+    reconstructed_file_path, dataset_mapping, missing_dir, config, performance_metrics, fixed_dir = args
     filename = os.path.basename(reconstructed_file_path)
     
     try:
-        # Parse filename
-        metadata = parse_filename(filename)
+        metadata = parse_reconstructed_metadata(fixed_dir, reconstructed_file_path)
         
         # Find corresponding source file
         dataset_name = metadata['dataset_name']
@@ -439,7 +393,7 @@ def run_calculate_reconstruction_error(config) -> bool:
         print(f"❌ Fixed data directory not found: {fixed_dir}")
         return False
 
-    reconstructed_files = sorted(reconstructed_dir.glob("*.csv"))
+    reconstructed_files = list(iter_reconstructed_csv_files(reconstructed_dir))
 
     if not reconstructed_files:
         print(f"❌ No reconstructed datasets found in {fixed_dir}")
@@ -478,7 +432,7 @@ def run_calculate_reconstruction_error(config) -> bool:
         print(f"\n🚀 Processing with {n_jobs} parallel jobs...")
 
         job_args = [
-            (str(f), dataset_mapping, missing_dir, config, performance_metrics)
+            (str(f), dataset_mapping, missing_dir, config, performance_metrics, str(fixed_dir))
             for f in reconstructed_files
         ]
 
@@ -523,7 +477,14 @@ def run_calculate_reconstruction_error(config) -> bool:
             dynamic_ncols=True,
         ):
             filename = reconstructed_file.name
-            args = (str(reconstructed_file), dataset_mapping, missing_dir, config, performance_metrics)
+            args = (
+                str(reconstructed_file),
+                dataset_mapping,
+                missing_dir,
+                config,
+                performance_metrics,
+                str(fixed_dir),
+            )
 
             processed_count += 1
             print(f"\n[{processed_count}/{len(reconstructed_files)}] Processing: {filename}")
