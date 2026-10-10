@@ -106,7 +106,6 @@ def _inpaint_gaf_window(
         series_filled = series_filled.fillna(0)
 
     # Convert to GAF image
-    print("  Converting time series to GAF image...")
     gaf_image = series_to_gaf(series_filled, size=image_size)
 
     # Create PIL images
@@ -130,8 +129,6 @@ def _inpaint_gaf_window(
 
     pipeline = get_model(model_id)
 
-    print(f"  Running Stable Diffusion 2 inpainting (GAF, {variant})...")
-    print(f"    Steps: {num_inference_steps}, Guidance: {guidance_scale}")
 
     # Run inpainting
     result = pipeline(
@@ -148,14 +145,12 @@ def _inpaint_gaf_window(
     gaf_reconstructed = result_array.astype(np.float64) / 127.5 - 1.0
 
     # Convert GAF back to time series
-    print("  Converting GAF image back to time series...")
     reconstructed_series = gaf_to_series(gaf_reconstructed, len(data), series_filled)
 
     # Merge: keep original values, use reconstructed for missing
     result_series = data.copy()
     result_series[mask] = reconstructed_series[mask]
 
-    print(f"  Stable Diffusion 2 GAF ({variant}) inpainting completed")
     return result_series
 
 

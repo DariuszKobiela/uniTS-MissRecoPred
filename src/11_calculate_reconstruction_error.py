@@ -341,6 +341,12 @@ Examples:
         help='Path to configuration file (default: config/config.yaml)'
     )
     
+    parser.add_argument(
+        "--reconstruction-models",
+        nargs="+",
+        help="Only score these reconstruction models (default: every CSV in the fixed directory)",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -350,10 +356,13 @@ Examples:
         print(f"❌ Configuration file not found: {args.config}")
         return
 
-    run_calculate_reconstruction_error(config)
+    run_calculate_reconstruction_error(
+        config,
+        reconstruction_models=args.reconstruction_models,
+    )
 
 
-def run_calculate_reconstruction_error(config) -> bool:
+def run_calculate_reconstruction_error(config, reconstruction_models: list[str] | None = None) -> bool:
     """Step 5: reconstruction error metrics CSV."""
     metric_keys = config.get_reconstruction_error_metrics_to_compute()
     primary_metric = config.get_reconstruction_primary_metric()
@@ -394,6 +403,13 @@ def run_calculate_reconstruction_error(config) -> bool:
         return False
 
     reconstructed_files = list(iter_reconstructed_csv_files(reconstructed_dir))
+    if reconstruction_models:
+        selected_models = set(reconstruction_models)
+        reconstructed_files = [
+            path
+            for path in reconstructed_files
+            if parse_reconstructed_metadata(reconstructed_dir, path)["model"] in selected_models
+        ]
 
     if not reconstructed_files:
         print(f"❌ No reconstructed datasets found in {fixed_dir}")
@@ -414,6 +430,8 @@ def run_calculate_reconstruction_error(config) -> bool:
     print(f"Missing data directory: {missing_dir}")
     print(f"Fixed data directory: {fixed_dir}")
     print(f"  Reconstructed: {len(reconstructed_files)} files")
+    if reconstruction_models:
+        print(f"  Reconstruction models: {reconstruction_models}")
     print(f"Output directory: {output_dir}")
     print(f"Output file: {output_filename}")
     print("="*70)

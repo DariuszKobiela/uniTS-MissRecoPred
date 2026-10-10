@@ -38,6 +38,8 @@ tmux kill-session -t rebuttal
 
 Z wewnątrz sesji to samo robi `exit` w ostatnim oknie.
 
+Druga sesja: rebuttal2
+
 ## Profil maszyny i równoległość
 
 Eksperyment jest skonfigurowany dla jednej NVIDIA RTX 6000 Ada (48 GiB VRAM),
@@ -77,7 +79,9 @@ Wyniki:
 
 - oczyszczone CSV w `data/1_cleaned_data/`;
 - `data/1_cleaned_data/reports/cleaning_report.csv` z liczbą braków, liczbą
-  wartości uzupełnionych przez ffill i liczbą usuniętych wierszy początkowych.
+wartości uzupełnionych przez ffill i liczbą usuniętych wierszy początkowych.
+
+
 
 ## 2. Analiza horyzontów
 
@@ -132,6 +136,8 @@ Jeżeli ustawienia inferencji nie są z góry ustalone, HPO wolno wykonać tylko
 ```bash
 make optimize-sd2-design
 ```
+
+
 
 ## 5. Generowanie zbioru treningowego SD2
 
@@ -234,6 +240,19 @@ uv run python src/10_reconstruct_datasets.py \
   interpolate_linear interpolate_cubic interpolate_pchip knn sarimax
 ```
 
+`impute_ffill`, `impute_bfill` oraz interpolacje zostawiają `NaN`, gdy luka
+dotyka początku lub końca serii. Po ich wyniku skrypt uzupełnia te pozostałe
+próbki najbliższą obserwacją (`ffill`, potem `bfill`) i zapisuje ich liczbę
+w `edge_fallback_count` raportu `performance_metrics_*.csv`. Jeśli te pliki
+powstały przed tym krokiem, nadpisz tylko te pięć modeli:
+
+```bash
+uv run python src/10_reconstruct_datasets.py \
+  --models impute_ffill impute_bfill \
+  interpolate_linear interpolate_cubic interpolate_pchip \
+  --force
+```
+
 Następnie SD2 zero-shot:
 
 ```bash
@@ -267,11 +286,9 @@ uv run python scripts/migrate_fixed_data_layout.py --dry-run
 uv run python scripts/migrate_fixed_data_layout.py
 ```
 
-## 11. Metryki rekonstrukcji
 
-```bash
-make calculate-reconstruction-error
-```
+
+## 11. Metryki rekonstrukcji
 
 Skrypt: `src/11_calculate_reconstruction_error.py`.
 
@@ -279,24 +296,96 @@ Porównuje rekonstrukcje z pełnym train wyłącznie na pozycjach sztucznie
 usuniętych. Zwraca `reconstruction_results_*.csv` z metrykami jakości,
 metadanymi warunku eksperymentalnego i pomiarami wykonania.
 
+Trzy batche, każdy po zakończeniu odpowiadającej grupy rekonstrukcji.
+`make calculate-reconstruction-error` bez filtra liczy wszystko, co jest w
+`data/4_fixed_data/`.
+
+Batch 1, metody klasyczne (można teraz):
+
+```bash
+uv run python src/11_calculate_reconstruction_error.py \
+  --reconstruction-models \
+  impute_mean impute_median impute_ffill impute_bfill \
+  interpolate_linear interpolate_cubic interpolate_pchip \
+  knn sarimax
+```
+
+Batch 2, SD2 zero-shot (dopiero gdy te cztery modele są kompletne):
+
+```bash
+uv run python src/11_calculate_reconstruction_error.py \
+  --reconstruction-models \
+  stable_diffusion_2_gaf stable_diffusion_2_mtf \
+  stable_diffusion_2_rp stable_diffusion_2_spec
+```
+
+Batch 3, SD2 fine-tuned:
+
+```bash
+uv run python src/11_calculate_reconstruction_error.py \
+  --reconstruction-models \
+  stable_diffusion_2_gaf_finetuned stable_diffusion_2_mtf_finetuned \
+  stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
+```
+
 ## 12. Prognozy rolling-origin
 
 **tmux:** krok długotrwały.
 
-```bash
-make evaluate-rolling-origins
-```
-
 Skrypt: `src/12_evaluate_rolling_origins.py`.
 
-Dopasowuje lokalnie XGBoost i SARIMAX oraz liczy persistence, seasonal-naive i
-XGBoost bezpośrednio na brakach. Każdy origin daje jedną prognozę do `H_max`, z
-której powstają miary skumulowane i biny lead-time. Używa pięciu originów dla
-boiler/pump i trzech dla vibration.
+Dopasowuje lokalnie wyłącznie prosty XGBoost oraz jawnie niesezonowy
+ARIMA(1,1,1) (technicznie `SARIMAX` z `seasonal_order=(0,0,0,0)`). Każdy origin
+daje jedną prognozę do `H_max`, z której powstają miary skumulowane i biny
+lead-time. Używa pięciu originów dla boiler/pump i trzech dla vibration.
 
 Zwraca prognozy, `prediction_results_rolling_origins_*.csv`,
 `origin_summary_*.csv` oraz `run_summary_*.json` w
 `prediction_experiment_results/`.
+
+Skrypt zapisuje checkpoint po ukończeniu każdego tasku (źródło × model) w
+`prediction_experiment_results/rolling_origins/task_checkpoints/`. Po przerwaniu
+uruchom ponownie tę samą komendę: ukończone taski zostaną pominięte, a tylko
+niedokończone policzone ponownie. Aby celowo przeliczyć cały wybrany batch od
+nowa, dodaj `--force`.
+
+Te same trzy batche co w kroku 11. Baseline oryginalnego trainu i direct-missing
+jest tylko w batchu 1 (`--include-baselines`).
+
+Batch 1:
+
+```bash
+uv run python src/12_evaluate_rolling_origins.py \
+  --models xgboost sarimax \
+  --include-baselines \
+  --reconstruction-models \
+  impute_mean impute_median impute_ffill impute_bfill \
+  interpolate_linear interpolate_cubic interpolate_pchip \
+  knn sarimax
+```
+
+Batch 2, SD2 zero-shot:
+
+```bash
+uv run python src/12_evaluate_rolling_origins.py \
+  --models xgboost sarimax \
+  --reconstruction-models \
+  stable_diffusion_2_gaf stable_diffusion_2_mtf \
+  stable_diffusion_2_rp stable_diffusion_2_spec
+```
+
+Batch 3, SD2 fine-tuned:
+
+```bash
+uv run python src/12_evaluate_rolling_origins.py \
+  --models xgboost sarimax \
+  --reconstruction-models \
+  stable_diffusion_2_gaf_finetuned stable_diffusion_2_mtf_finetuned \
+  stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
+```
+
+Przed krokiem 13 sklej pliki CSV z trzech batchy (osobno metryki rekonstrukcji
+i osobno rolling-origin) i podaj scalone pliki do `src/13_batch_statistics.py`.
 
 ## 13. Statystyka zbiorcza
 

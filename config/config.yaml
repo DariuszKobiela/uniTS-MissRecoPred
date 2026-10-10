@@ -165,7 +165,7 @@ prediction:
   # Prediction error metrics (script 12 → prediction_results_*.csv); see src/prediction_metrics/
   error_metrics:
     compute: [mae, rmse, mase, mape, smape]
-    primary_metric: "mae"
+    primary_metric: "smape"
     # minimize | maximize | auto (auto uses each metric's registered direction; all built-ins → minimize)
     primary_metric_objective: "auto"
 

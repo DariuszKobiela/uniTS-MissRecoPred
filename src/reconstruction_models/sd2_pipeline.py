@@ -19,6 +19,8 @@ from pathlib import Path
 import torch
 from diffusers import StableDiffusionInpaintPipeline
 
+from utils.progress import progress_write
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LOCAL_BASE_DIR = _REPO_ROOT / "models_cache" / "sd2_inpainting_base"
 _DEFAULT_LOCAL_FINETUNED_DIR = _REPO_ROOT / "models" / "sd2_windowed" / "best_model"
@@ -65,25 +67,25 @@ _MODEL_CACHE: dict[str, StableDiffusionInpaintPipeline] = {}
 
 def get_model(model_id: str) -> StableDiffusionInpaintPipeline:
     """Load a Stable Diffusion 2 inpainting pipeline (cached per model_id)."""
-    if model_id not in _MODEL_CACHE:
-        if model_id in {MODEL_ID_HF_FINETUNED, str(_DEFAULT_LOCAL_FINETUNED_DIR)} or "sd2_windowed" in str(model_id):
-            model_id = get_finetuned_model_id()
+    if model_id in {MODEL_ID_HF_FINETUNED, str(_DEFAULT_LOCAL_FINETUNED_DIR)} or "sd2_windowed" in str(model_id):
+        model_id = get_finetuned_model_id()
 
+    if model_id not in _MODEL_CACHE:
         local_dir = Path(model_id)
         is_local = local_dir.is_dir() and (local_dir / "model_index.json").is_file()
 
-        print("Loading model... please wait")
+        progress_write("Loading model... please wait")
         if is_local:
-            print(f"Loading Stable Diffusion 2 inpainting weights from {local_dir}")
+            progress_write(f"Loading Stable Diffusion 2 inpainting weights from {local_dir}")
         else:
-            print(f"Loading Stable Diffusion 2 model from HuggingFace: {model_id}")
-            print("This may take a while on first run (downloading weights)...")
+            progress_write(f"Loading Stable Diffusion 2 model from HuggingFace: {model_id}")
+            progress_write("This may take a while on first run (downloading weights)...")
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.float16 if device == "cuda" else torch.float32
 
-        print(f"Using device: {device}")
-        print("  Notice: Safety checker is disabled for scientific time series reconstruction.")
+        progress_write(f"Using device: {device}")
+        progress_write("  Notice: Safety checker is disabled for scientific time series reconstruction.")
         load_kwargs = dict(
             torch_dtype=dtype,
             safety_checker=None,
@@ -107,12 +109,19 @@ def get_model(model_id: str) -> StableDiffusionInpaintPipeline:
             total_vram_gib = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
             if total_vram_gib < 24:
                 pipeline.enable_attention_slicing()
-                pipeline.enable_vae_slicing()
+                if hasattr(pipeline, "enable_vae_slicing"):
+                    pipeline.enable_vae_slicing()
+                elif hasattr(pipeline, "vae") and hasattr(pipeline.vae, "enable_slicing"):
+                    pipeline.vae.enable_slicing()
+                else:
+                    progress_write(
+                        "VAE slicing is unavailable in this Diffusers version; continuing without it"
+                    )
             else:
-                print(f"High-VRAM GPU ({total_vram_gib:.1f} GiB): slicing disabled for throughput")
+                progress_write(f"High-VRAM GPU ({total_vram_gib:.1f} GiB): slicing disabled for throughput")
 
         _MODEL_CACHE[model_id] = pipeline
-        print("Model loaded successfully and cached")
+        progress_write("Model loaded successfully and cached")
 
     return _MODEL_CACHE[model_id]
 

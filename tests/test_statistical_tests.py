@@ -77,3 +77,9 @@ def test_unmatched_conditions_are_not_compared():
     ab = result.query("model_a == 'a' and model_b == 'b'").iloc[0]
     assert ab["n_exact_pairs"] == 11
     assert ab["n_datasets"] == 6
+
+
+def test_parallel_pairwise_matches_sequential():
+    sequential = pairwise_comparisons(_comparison_frame(), n_jobs=1)
+    parallel = pairwise_comparisons(_comparison_frame(), n_jobs=2)
+    pd.testing.assert_frame_equal(sequential, parallel)

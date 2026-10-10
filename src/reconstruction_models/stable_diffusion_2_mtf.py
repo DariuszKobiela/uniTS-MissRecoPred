@@ -149,7 +149,6 @@ def _inpaint_mtf_window(
         series_filled = series_filled.fillna(0)
 
     # Convert to MTF image
-    print("  Converting time series to MTF image...")
     mtf_image, mtf_metadata = series_to_mtf(series_filled, size=image_size, return_metadata=True)
 
     # Create PIL images
@@ -174,8 +173,6 @@ def _inpaint_mtf_window(
 
     pipeline = get_model(model_id)
 
-    print(f"  Running Stable Diffusion 2 inpainting (MTF, {variant})...")
-    print(f"    Steps: {num_inference_steps}, Guidance: {guidance_scale}")
 
     # Run inpainting
     result = pipeline(
@@ -192,7 +189,6 @@ def _inpaint_mtf_window(
     mtf_reconstructed = result_array.astype(np.float64) / 255.0
 
     # Convert MTF back to time series
-    print("  Converting MTF image back to time series...")
     reconstructed_series = mtf_to_series(
         mtf_reconstructed,
         len(data),
@@ -203,7 +199,6 @@ def _inpaint_mtf_window(
     result_series = data.copy()
     result_series[mask] = reconstructed_series[mask]
 
-    print(f"  Stable Diffusion 2 MTF ({variant}) inpainting completed")
     return result_series
 
 

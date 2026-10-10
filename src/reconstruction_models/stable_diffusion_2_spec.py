@@ -131,7 +131,6 @@ def _inpaint_spec_window(
         series_filled = series_filled.fillna(0)
 
     # Convert to Spectrogram
-    print("  Converting time series to Spectrogram...")
     spec_image, spec_metadata = series_to_spectrogram(series_filled, size=image_size, return_metadata=True)
 
     # Create PIL images
@@ -159,8 +158,6 @@ def _inpaint_spec_window(
 
     pipeline = get_model(model_id)
 
-    print(f"  Running Stable Diffusion 2 inpainting (Spectrogram, {variant})...")
-    print(f"    Steps: {num_inference_steps}, Guidance: {guidance_scale}")
 
     # Run inpainting
     result = pipeline(
@@ -177,7 +174,6 @@ def _inpaint_spec_window(
     spec_reconstructed = result_array.astype(float) / 255.0 * (spec_max - spec_min) + spec_min
 
     # Convert Spectrogram back to time series
-    print("  Converting Spectrogram back to time series...")
     reconstructed_series = spectrogram_to_series(
         spec_reconstructed,
         len(data),
@@ -189,7 +185,6 @@ def _inpaint_spec_window(
     result_series = data.copy()
     result_series[mask] = reconstructed_series[mask]
 
-    print(f"  Stable Diffusion 2 Spectrogram ({variant}) inpainting completed")
     return result_series
 
 

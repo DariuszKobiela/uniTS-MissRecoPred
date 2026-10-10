@@ -39,6 +39,10 @@ from framework.plugin_registry import get_reconstruction_models
 from utils.config_loader import load_config
 from utils.experiment_naming import build_reconstructed_relative_path, decode_missingness_label
 from utils.performance_metrics import PerformanceMonitor, format_metrics
+from reconstruction_models.edge_fallback import (
+    EDGE_FALLBACK_MODELS,
+    apply_nearest_edge_fallback,
+)
 from reconstruction_models.sd2_settings import resolve_sd2_runtime_settings
 
 
@@ -85,7 +89,9 @@ def is_gpu_model(model_name: str) -> bool:
     return model_name.startswith("stable_diffusion_2")
 
 
-def process_single_reconstruction(task: Dict[str, Any]) -> Dict[str, Any]:
+def process_single_reconstruction(
+    task: Dict[str, Any], *, raise_errors: bool = False
+) -> Dict[str, Any]:
     """
     Worker function to process a single reconstruction task.
 
@@ -124,6 +130,8 @@ def process_single_reconstruction(task: Dict[str, Any]) -> Dict[str, Any]:
             "metrics": metrics,
         }
     except Exception as e:
+        if raise_errors:
+            raise
         return {
             "status": "error",
             "message": str(e),
@@ -181,14 +189,26 @@ def reconstruct_dataset(
         print(f"    Applying {reconstruction_model}...")
         reconstructed_series = model_func(series)
 
+    edge_fallback_count = 0
+    if reconstruction_model in EDGE_FALLBACK_MODELS:
+        reconstructed_series, edge_fallback_count = apply_nearest_edge_fallback(reconstructed_series)
+        if edge_fallback_count:
+            print(f"    Edge fallback: {edge_fallback_count} sample(s) filled by nearest observation")
+
     # Stop monitoring and collect metrics
     metrics = monitor.stop()
+    n_samples = len(reconstructed_series)
+    metrics["edge_fallback_count"] = edge_fallback_count
+    metrics["edge_fallback_fraction"] = (
+        edge_fallback_count / n_samples if n_samples else 0.0
+    )
 
     # Create output DataFrame with original timestamps
     output_df = df.copy()
     output_df.iloc[:, 0] = reconstructed_series.values
 
-    # Save reconstructed dataset
+    # Save reconstructed dataset (hierarchical layout may not exist yet)
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     output_df.to_csv(output_file)
     print(f"    ✓ Saved to: {output_file}")
     print(f"    📊 {format_metrics(metrics)}")
@@ -457,6 +477,7 @@ def run_reconstruct_datasets(
         desc="Reconstruction (all models)",
         unit="task",
         dynamic_ncols=True,
+        position=0,
     )
 
     if cpu_tasks:
@@ -483,18 +504,15 @@ def run_reconstruct_datasets(
     if gpu_tasks:
         print(f"\n🎨 Processing GPU models sequentially...", flush=True)
         try:
-            gpu_results = Parallel(
-                n_jobs=1,
-                backend="loky",
-                return_as="generator_unordered",
-            )(
-                delayed(process_single_reconstruction)(task)
-                for task in gpu_tasks
-            )
-            for result in gpu_results:
+            # Keep GPU work in the main process so both tqdm bars can share
+            # stable terminal positions. GPU failures are usually systemic,
+            # so stop immediately and preserve the original traceback.
+            for task in gpu_tasks:
+                result = process_single_reconstruction(task, raise_errors=True)
                 all_results.append(result)
                 progress.set_postfix_str(str(result.get("model", "")), refresh=False)
                 progress.update()
+                progress.refresh()
         except Exception as e:
             print(f"\n❌ GPU processing failed: {type(e).__name__}: {e}", flush=True)
             progress.close()
@@ -544,6 +562,8 @@ def run_reconstruct_datasets(
                     "gpu_percent": metrics.get("gpu_percent", None),
                     "gpu_memory_mb": metrics.get("gpu_memory_mb", None),
                     "gpu_memory_total_mb": metrics.get("gpu_memory_total_mb", None),
+                    "edge_fallback_count": metrics.get("edge_fallback_count", 0),
+                    "edge_fallback_fraction": metrics.get("edge_fallback_fraction", 0.0),
                     "timestamp": timestamp,
                 }
             )

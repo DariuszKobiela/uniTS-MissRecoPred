@@ -89,14 +89,16 @@ def reconstruct_in_windows(
     )
     active = [plan for plan in plans if missing[plan.core_start : plan.core_stop].any()]
     window_progress = tqdm(
-        active,
+        total=len(active),
         desc=progress_label or "SD2 windows",
         unit="window",
         miniters=1,
         smoothing=0.05,
         disable=False,
+        position=1,
+        leave=False,
     )
-    for plan in window_progress:
+    for plan in active:
         window_progress.set_postfix_str(
             f"[{plan.window_start}:{plan.window_stop}] core[{plan.core_start}:{plan.core_stop}]",
             refresh=False,
@@ -113,4 +115,10 @@ def reconstruct_in_windows(
         local_positions = targets - plan.window_start
         result.iloc[targets] = reconstructed.iloc[local_positions].to_numpy()
 
+        window_progress.update(1)
+        # Status prints from the reconstructor may overwrite tqdm's line. Force
+        # the global progress back onto the terminal after every SD2 window.
+        window_progress.refresh()
+
+    window_progress.close()
     return result

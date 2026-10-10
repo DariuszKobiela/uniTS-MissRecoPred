@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Paired statistical tests for model comparisons without pseudoreplication."""
 
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 from itertools import combinations
 import pandas as pd
 import numpy as np
@@ -113,6 +115,43 @@ def _paired_values(
     )
 
 
+def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, float, bool]) -> dict:
+    """Run one paired comparison on small dataset-level summary arrays."""
+    model_a, model_b, values_a, values_b, exact_pairs, normality_alpha, lower_is_better = task
+    differences = values_a - values_b
+    n = len(differences)
+    shapiro_p = float(stats.shapiro(differences).pvalue) if 3 <= n <= 5000 else np.nan
+    use_t = n >= 3 and np.isfinite(shapiro_p) and shapiro_p >= normality_alpha
+    if n < 2:
+        test, statistic, p_value = "insufficient_pairs", np.nan, np.nan
+        effect_name, effect_size = "cohen_dz", np.nan
+    elif use_t:
+        result = stats.ttest_rel(values_a, values_b)
+        test, statistic, p_value = "paired_t", float(result.statistic), float(result.pvalue)
+        sd = differences.std(ddof=1)
+        effect_name = "cohen_dz"
+        effect_size = float(differences.mean() / sd) if sd > 0 else 0.0
+    else:
+        test = "wilcoxon"
+        if np.allclose(differences, 0):
+            statistic, p_value = 0.0, 1.0
+        else:
+            result = stats.wilcoxon(differences, zero_method="wilcox")
+            statistic, p_value = float(result.statistic), float(result.pvalue)
+        effect_name, effect_size = "rank_biserial", _rank_biserial(differences)
+    ci_low, ci_high = _bootstrap_mean_ci(differences)
+    mean_difference = float(differences.mean()) if n else np.nan
+    return {
+        "model_a": model_a, "model_b": model_b, "test": test,
+        "n_datasets": n, "n_exact_pairs": exact_pairs, "shapiro_p": shapiro_p,
+        "statistic": statistic, "p_value": p_value, "mean_difference": mean_difference,
+        "ci_95_low": ci_low, "ci_95_high": ci_high, "effect_name": effect_name,
+        "effect_size": effect_size,
+        "a_better": (mean_difference < 0 if lower_is_better else mean_difference > 0)
+        if np.isfinite(mean_difference) else False,
+    }
+
+
 def pairwise_comparisons(
     df: pd.DataFrame,
     metric: str = "mad",
@@ -122,82 +161,47 @@ def pairwise_comparisons(
     lower_is_better: bool = True,
     show_progress: bool = False,
     progress_desc: str = "Pairwise comparisons",
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
-    """Compare every model pair using dataset-level paired observations.
-
-    Exact records are matched by dataset × mechanism × rate × gap pattern × seed
-    (using the corresponding column names available in ``df``). Differences from
-    repeated conditions are averaged within each dataset before inference.
-    """
+    """Compare model pairs, optionally evaluating tests and bootstraps in processes."""
     required = {"model", metric}
     if missing := required.difference(df.columns):
         raise ValueError(f"Missing required columns: {sorted(missing)}")
     pairs = _resolve_pair_columns(df, pair_columns)
-    records = []
-    model_pairs = list(combinations(sorted(df["model"].dropna().unique()), 2))
-    iterator = tqdm(
-        model_pairs,
-        desc=progress_desc,
-        unit="pair",
-        dynamic_ncols=True,
-        disable=not show_progress,
-    )
-    for model_a, model_b in iterator:
-        values_a, values_b, exact_pairs = _paired_values(
-            df, model_a, model_b, metric, pairs
+    models = sorted(df["model"].dropna().unique())
+    grouped = df.groupby([*pairs, "model"], dropna=False, as_index=False)[metric].mean()
+    wide = grouped.pivot(index=pairs, columns="model", values=metric)
+    dataset_column = next(c for c in ("dataset_name", "dataset") if c in pairs)
+    tasks = []
+    for model_a, model_b in combinations(models, 2):
+        paired = wide[[model_a, model_b]].dropna(subset=[model_a, model_b])
+        by_dataset = paired.groupby(level=dataset_column).mean()
+        tasks.append((model_a, model_b, by_dataset[model_a].to_numpy(dtype=float),
+                      by_dataset[model_b].to_numpy(dtype=float), len(paired),
+                      normality_alpha, lower_is_better))
+    workers = max(1, int(n_jobs))
+    executor = None
+    if workers == 1 or len(tasks) < 2:
+        results = map(_evaluate_pair, tasks)
+    else:
+        executor = ProcessPoolExecutor(
+            max_workers=min(workers, len(tasks)),
+            mp_context=mp.get_context("spawn"),
         )
-        differences = values_a - values_b
-        n = len(differences)
-        shapiro_p = (
-            float(stats.shapiro(differences).pvalue) if 3 <= n <= 5000 else np.nan
-        )
-        use_t = n >= 3 and np.isfinite(shapiro_p) and shapiro_p >= normality_alpha
-        if n < 2:
-            test, statistic, p_value = "insufficient_pairs", np.nan, np.nan
-            effect_name, effect_size = "cohen_dz", np.nan
-        elif use_t:
-            result = stats.ttest_rel(values_a, values_b)
-            test, statistic, p_value = "paired_t", float(result.statistic), float(result.pvalue)
-            sd = differences.std(ddof=1)
-            effect_name = "cohen_dz"
-            effect_size = float(differences.mean() / sd) if sd > 0 else 0.0
-        else:
-            test = "wilcoxon"
-            if np.allclose(differences, 0):
-                statistic, p_value = 0.0, 1.0
-            else:
-                result = stats.wilcoxon(differences, zero_method="wilcox")
-                statistic, p_value = float(result.statistic), float(result.pvalue)
-            effect_name, effect_size = "rank_biserial", _rank_biserial(differences)
-        ci_low, ci_high = _bootstrap_mean_ci(differences)
-        mean_difference = float(differences.mean()) if n else np.nan
-        records.append(
-            {
-                "model_a": model_a,
-                "model_b": model_b,
-                "test": test,
-                "n_datasets": n,
-                "n_exact_pairs": exact_pairs,
-                "shapiro_p": shapiro_p,
-                "statistic": statistic,
-                "p_value": p_value,
-                "mean_difference": mean_difference,
-                "ci_95_low": ci_low,
-                "ci_95_high": ci_high,
-                "effect_name": effect_name,
-                "effect_size": effect_size,
-                "a_better": (
-                    mean_difference < 0 if lower_is_better else mean_difference > 0
-                ) if np.isfinite(mean_difference) else False,
-            }
-        )
+        results = executor.map(_evaluate_pair, tasks)
+    iterator = tqdm(results, total=len(tasks), desc=progress_desc, unit="pair",
+                    dynamic_ncols=True, disable=not show_progress)
+    try:
+        records = list(iterator)
+    finally:
+        if executor is not None:
+            executor.shutdown()
     result = pd.DataFrame.from_records(records)
     if result.empty:
         return result
     result["p_holm"] = _holm_adjust(result["p_value"])
     result["significant"] = result["p_holm"] < alpha
     return result
-
 
 def friedman_test(
     df: pd.DataFrame,

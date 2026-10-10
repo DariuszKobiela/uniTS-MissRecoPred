@@ -1,0 +1,142 @@
+"""
+Shared Stable Diffusion 2 inpainting loader.
+
+Two weights are used across GAF / MTF / RP / Spectrogram encodings:
+
+- Base (off-the-shelf): local snapshot at ``models_cache/sd2_inpainting_base``
+  (unzipped from ``sd2_inpainting_base.zip``). If missing, falls back to
+  ``stabilityai/stable-diffusion-2-inpainting`` on the Hub (gated).
+- Fine-tuned on all four encodings: local ``models/sd2_windowed/best_model``
+  when present; legacy Hub weights are never used in fail-closed rebuttal mode.
+"""
+
+from __future__ import annotations
+
+import os
+import warnings
+from pathlib import Path
+
+import torch
+from diffusers import StableDiffusionInpaintPipeline
+
+from utils.progress import progress_write
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_BASE_DIR = _REPO_ROOT / "models_cache" / "sd2_inpainting_base"
+_DEFAULT_LOCAL_FINETUNED_DIR = _REPO_ROOT / "models" / "sd2_windowed" / "best_model"
+
+MODEL_ID_HF_BASE = "stabilityai/stable-diffusion-2-inpainting"
+MODEL_ID_HF_FINETUNED = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec"
+
+MODEL_ID_BASE = (
+    str(_LOCAL_BASE_DIR)
+    if (_LOCAL_BASE_DIR / "model_index.json").is_file()
+    else MODEL_ID_HF_BASE
+)
+
+
+def fail_closed_enabled() -> bool:
+    """Rebuttal mode: fine-tuned SD2 must not silently fall back to legacy Hub weights."""
+    return os.environ.get("SD2_FAIL_CLOSED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_finetuned_model_id() -> str:
+    """Return the local fine-tuned snapshot or fail closed before using legacy Hub weights."""
+    override = Path(os.environ.get("SD2_FINETUNED_MODEL", str(_DEFAULT_LOCAL_FINETUNED_DIR)))
+    if (override / "model_index.json").is_file():
+        return str(override)
+    if fail_closed_enabled():
+        raise FileNotFoundError(
+            "Fine-tuned SD2 model not found at "
+            f"{override / 'model_index.json'}. "
+            "Train models/sd2_windowed/best_model or set SD2_FAIL_CLOSED=0 "
+            "to allow legacy Hugging Face fallback (not valid for rebuttal reporting)."
+        )
+    return MODEL_ID_HF_FINETUNED
+
+
+def get_finetuned_model_id() -> str:
+    """Resolve fine-tuned weights on demand so imports succeed before training."""
+    return resolve_finetuned_model_id()
+
+
+MODEL_ID_FINETUNED = MODEL_ID_HF_FINETUNED
+
+_MODEL_CACHE: dict[str, StableDiffusionInpaintPipeline] = {}
+
+
+def get_model(model_id: str) -> StableDiffusionInpaintPipeline:
+    """Load a Stable Diffusion 2 inpainting pipeline (cached per model_id)."""
+    if model_id in {MODEL_ID_HF_FINETUNED, str(_DEFAULT_LOCAL_FINETUNED_DIR)} or "sd2_windowed" in str(model_id):
+        model_id = get_finetuned_model_id()
+
+    if model_id not in _MODEL_CACHE:
+        local_dir = Path(model_id)
+        is_local = local_dir.is_dir() and (local_dir / "model_index.json").is_file()
+
+        progress_write("Loading model... please wait")
+        if is_local:
+            progress_write(f"Loading Stable Diffusion 2 inpainting weights from {local_dir}")
+        else:
+            progress_write(f"Loading Stable Diffusion 2 model from HuggingFace: {model_id}")
+            progress_write("This may take a while on first run (downloading weights)...")
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
+
+        progress_write(f"Using device: {device}")
+        progress_write("  Notice: Safety checker is disabled for scientific time series reconstruction.")
+        load_kwargs = dict(
+            torch_dtype=dtype,
+            safety_checker=None,
+            use_safetensors=True,
+        )
+        if is_local:
+            load_kwargs["local_files_only"] = True
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*safety_checker.*")
+            warnings.filterwarnings("ignore", message=".*dtype.*")
+            pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+                model_id,
+                **load_kwargs,
+            )
+
+        if device == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            pipeline = pipeline.to(device)
+            total_vram_gib = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            if total_vram_gib < 24:
+                pipeline.enable_attention_slicing()
+                if hasattr(pipeline, "enable_vae_slicing"):
+                    pipeline.enable_vae_slicing()
+                elif hasattr(pipeline, "vae") and hasattr(pipeline.vae, "enable_slicing"):
+                    pipeline.vae.enable_slicing()
+                else:
+                    progress_write(
+                        "VAE slicing is unavailable in this Diffusers version; continuing without it"
+                    )
+            else:
+                progress_write(f"High-VRAM GPU ({total_vram_gib:.1f} GiB): slicing disabled for throughput")
+
+        _MODEL_CACHE[model_id] = pipeline
+        progress_write("Model loaded successfully and cached")
+
+    return _MODEL_CACHE[model_id]
+
+
+def seeded_generator(
+    pipeline: StableDiffusionInpaintPipeline,
+    seed: int,
+) -> torch.Generator:
+    """Create the explicit per-call generator expected by Diffusers."""
+    device = getattr(pipeline, "_execution_device", None)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.Generator(device=device).manual_seed(int(seed))
+
+
+def clear_model_cache() -> None:
+    """Drop cached pipelines (used by hyperparameter search)."""
+    _MODEL_CACHE.clear()

@@ -31,3 +31,8 @@ def tqdm(iterable: Iterable[T] | None = None, **kwargs: Any):
 def tqdm_auto(iterable: Iterable[T] | None = None, **kwargs: Any):
     """Notebook-aware variant used by the SD2 fine-tuning script."""
     return _tqdm_auto(iterable, **_defaults(kwargs))
+
+
+def progress_write(message: str) -> None:
+    """Print a message without overwriting any active tqdm bars."""
+    _tqdm.write(message)

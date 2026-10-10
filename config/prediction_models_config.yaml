@@ -1,4 +1,5 @@
-# Parametry aktywnych modeli używanych w ocenie rolling-origin.
+# Parametry jedynych aktywnych modeli używanych w ocenie rolling-origin:
+# prostego XGBoost oraz niesezonowego ARIMA.
 global_training:
   seed: 42
 
@@ -10,5 +11,6 @@ xgboost:
   n_jobs: 1  # Jeden wątek na fit; równoległość zapewnia 20 procesów rolling-origin
 
 sarimax:
+  # SARIMAX z zerowym składnikiem sezonowym jest modelem ARIMA(1,1,1).
   order: [1, 1, 1]
-  seasonal_order: [1, 1, 1, 12]
+  seasonal_order: [0, 0, 0, 0]

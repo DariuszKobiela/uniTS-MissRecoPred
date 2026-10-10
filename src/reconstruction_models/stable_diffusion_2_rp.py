@@ -111,7 +111,6 @@ def _inpaint_rp_window(
         series_filled = series_filled.fillna(0)
 
     # Convert to RP image
-    print("  Converting time series to RP image...")
     rp_image = series_to_rp(series_filled, size=image_size)
 
     # Create PIL images
@@ -135,8 +134,6 @@ def _inpaint_rp_window(
 
     pipeline = get_model(model_id)
 
-    print(f"  Running Stable Diffusion 2 inpainting (RP, {variant})...")
-    print(f"    Steps: {num_inference_steps}, Guidance: {guidance_scale}")
 
     # Run inpainting
     result = pipeline(
@@ -153,14 +150,12 @@ def _inpaint_rp_window(
     rp_reconstructed = result_array.astype(np.float64) / 255.0
 
     # Convert RP back to time series
-    print("  Converting RP image back to time series...")
     reconstructed_series = rp_to_series(rp_reconstructed, len(data), series_filled)
 
     # Merge
     result_series = data.copy()
     result_series[mask] = reconstructed_series[mask]
 
-    print(f"  Stable Diffusion 2 RP ({variant}) inpainting completed")
     return result_series
 
 

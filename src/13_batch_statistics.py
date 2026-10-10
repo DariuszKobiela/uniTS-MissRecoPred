@@ -69,6 +69,7 @@ def export_statistics(
     output_dir: Path,
     prefix: str,
     lower_is_better: bool = True,
+    workers: int = 20,
 ) -> dict:
     pairwise = pairwise_comparisons(
         frame,
@@ -77,6 +78,7 @@ def export_statistics(
         lower_is_better=lower_is_better,
         show_progress=True,
         progress_desc=f"{prefix}: paired tests",
+        n_jobs=workers,
     )
     omnibus = friedman_test(frame, metric=metric, pair_columns=pair_columns)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -90,6 +92,7 @@ def export_statistics(
         "friedman_file": str(omnibus_path),
         "omnibus": omnibus,
         "n_pairwise_rows": len(pairwise),
+        "workers": workers,
     }
 
 
@@ -106,6 +109,7 @@ def main() -> None:
     )
     parser.add_argument("--output-dir", default="prediction_experiment_results/batch_statistics")
     parser.add_argument("--metric", default=None)
+    parser.add_argument("--workers", type=int, default=20)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -137,6 +141,7 @@ def main() -> None:
                 output_dir=output_dir,
                 prefix="rolling_origin",
                 lower_is_better=True,
+                workers=args.workers,
             )
         )
         export_progress.update()
@@ -152,6 +157,7 @@ def main() -> None:
                 output_dir=output_dir,
                 prefix="reconstruction",
                 lower_is_better=True,
+                workers=args.workers,
             )
         )
         export_progress.update()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -230,6 +231,61 @@ def save_origin_prediction(
     return str(path)
 
 
+def task_checkpoint_signature(task: dict[str, Any]) -> str:
+    """Stable identity of one source × forecasting-model evaluation task."""
+    payload = {
+        "metadata": task["metadata"],
+        "model_name": task["model_name"],
+        "model_params": task["model_params"],
+        "test_path": task["test_path"],
+        "horizons": task["horizons"],
+        "n_origins": task["n_origins"],
+        "metric_keys": task["metric_keys"],
+        "seed": task["seed"],
+        "include_lead_time_bins": task["include_lead_time_bins"],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _json_default(value: Any):
+    """Keep numeric checkpoint values numeric when they originate in NumPy."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def task_checkpoint_path(checkpoint_dir: Path, task: dict[str, Any]) -> Path:
+    return checkpoint_dir / f"task_{task_checkpoint_signature(task)}.json"
+
+
+def load_task_checkpoint(path: Path, signature: str) -> list[dict[str, Any]] | None:
+    """Return completed task rows only when their exact task signature matches."""
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload.get("rows")
+        if payload.get("signature") == signature and isinstance(rows, list) and rows:
+            return rows
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def save_task_checkpoint(path: Path, signature: str, rows: list[dict[str, Any]]) -> None:
+    """Atomically mark a task complete, so an interrupted task is never skipped."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"signature": signature, "rows": rows}, default=_json_default),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def evaluate_source_model(task: dict[str, Any]) -> list[dict[str, Any]]:
     metadata = task["metadata"]
     model_name = task["model_name"]
@@ -369,7 +425,15 @@ def aggregate_origin_results(frame: pd.DataFrame, metric_keys: list[str]) -> pd.
     return frame.groupby(present, dropna=False).agg(**aggregations).reset_index()
 
 
-def run(config, pred_config, models: list[str] | None = None, n_origins: int | None = None) -> Path:
+def run(
+    config,
+    pred_config,
+    models: list[str] | None = None,
+    n_origins: int | None = None,
+    reconstruction_models: list[str] | None = None,
+    include_baselines: bool = False,
+    force: bool = False,
+) -> Path:
     settings = config.get_rolling_origin_settings()
     selected = models or settings.get("models", list(SUPPORTED_MODELS))
     selected = [str(model).lower() for model in selected]
@@ -385,12 +449,24 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
 
     test_paths = {path.stem: str(path) for path in Path(config.get_splitted_test_dir()).glob("*.csv")}
     sources = discover_sources(config)
+    if reconstruction_models:
+        allowed = set(reconstruction_models)
+        sources = [
+            source
+            for source in sources
+            if (
+                source["source_type"] == "reconstructed"
+                and source["reconstruction_model"] in allowed
+            )
+            or (include_baselines and source["source_type"] != "reconstructed")
+        ]
     if not sources:
         raise FileNotFoundError("No original, reconstructed, or degraded training series found")
 
     output_root = Path(config.get_prediction_results_dir()) / "rolling_origins"
     predictions_dir = output_root / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = output_root / "task_checkpoints"
     metric_keys = config.get_prediction_error_metrics_to_compute()
     include_lead_time_bins = bool(settings.get("lead_time_bins", True))
 
@@ -452,22 +528,51 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
     if max_workers == 1:
         for task in tasks:
             task["show_origin_progress"] = True
+    completed_rows: list[dict[str, Any]] = []
+    pending_tasks: list[dict[str, Any]] = []
+    skipped_tasks = 0
+    for task in tasks:
+        signature = task_checkpoint_signature(task)
+        task["checkpoint_signature"] = signature
+        task["checkpoint_path"] = str(task_checkpoint_path(checkpoint_dir, task))
+        cached_rows = None if force else load_task_checkpoint(Path(task["checkpoint_path"]), signature)
+        if cached_rows is None:
+            pending_tasks.append(task)
+        else:
+            completed_rows.extend(cached_rows)
+            skipped_tasks += 1
+
     print("=" * 72)
-    print("ROLLING-ORIGIN TEST EVALUATION (AUTHORITATIVE REBUTTAL PATH)")
+    print("PREDICTION STARTED: ROLLING-ORIGIN TEST EVALUATION")
     print("=" * 72)
-    print(f"Models: {selected}")
+    print(f"Forecast models: {selected}")
+    if reconstruction_models:
+        print(f"Reconstruction models: {reconstruction_models}")
+        print(f"Include original/direct-missing baselines: {include_baselines}")
     print(f"Default origins: {default_origins}; per-dataset overrides: {origin_counts}")
-    print(f"Tasks (source x model): {len(tasks)}")
+    print(f"Tasks total (source x model): {len(tasks)}")
+    print(f"Already complete / skipped: {skipped_tasks}")
+    print(f"Tasks to run: {len(pending_tasks)}{' (forced recomputation)' if force else ''}")
     print(f"Workers: {max_workers}")
     print("Each origin fits once to H_max; cumulative and lead-time metrics are sliced.")
     print("=" * 72)
 
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = completed_rows
     errors: list[dict[str, str]] = []
+    progress = tqdm(
+        total=len(tasks),
+        initial=skipped_tasks,
+        desc="Predictions rolling-origin",
+        unit="task",
+    )
     if max_workers == 1:
-        for task in tqdm(tasks, desc="Rolling origins", unit="task"):
+        for task in pending_tasks:
             try:
-                results.extend(evaluate_source_model(task))
+                task_rows = evaluate_source_model(task)
+                save_task_checkpoint(
+                    Path(task["checkpoint_path"]), task["checkpoint_signature"], task_rows
+                )
+                results.extend(task_rows)
             except Exception as exc:
                 errors.append(
                     {
@@ -476,26 +581,28 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
                         "error": str(exc),
                     }
                 )
+            progress.update()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {executor.submit(evaluate_source_model, task): task for task in tasks}
-            for future in tqdm(
-                as_completed(future_to_task),
-                total=len(future_to_task),
-                desc="Rolling origins",
-                unit="task",
-            ):
+            future_to_task = {executor.submit(evaluate_source_model, task): task for task in pending_tasks}
+            for future in as_completed(future_to_task):
                 task = future_to_task[future]
                 try:
-                    results.extend(future.result())
+                    task_rows = future.result()
+                    save_task_checkpoint(
+                        Path(task["checkpoint_path"]), task["checkpoint_signature"], task_rows
+                    )
+                    results.extend(task_rows)
                 except Exception as exc:
                     errors.append(
                         {
                             "source": task["metadata"]["path"],
                             "model": task["model_name"],
-                            "error": str(exc),
-                        }
-                    )
+                        "error": str(exc),
+                    }
+                )
+                progress.update()
+    progress.close()
 
     if not results:
         raise RuntimeError(f"All rolling-origin tasks failed: {errors[:5]}")
@@ -518,6 +625,9 @@ def run(config, pred_config, models: list[str] | None = None, n_origins: int | N
                 "default_origins": default_origins,
                 "origin_counts": origin_counts,
                 "tasks": len(tasks),
+                "skipped_completed_tasks": skipped_tasks,
+                "completed_tasks_this_run": len(pending_tasks) - len(errors),
+                "force": force,
                 "successful_metric_rows": len(results),
                 "errors": errors,
                 "result_file": str(output_path),
@@ -538,11 +648,34 @@ def main() -> None:
     parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--models", nargs="+", choices=sorted(SUPPORTED_MODELS))
     parser.add_argument("--n-origins", type=int)
+    parser.add_argument(
+        "--reconstruction-models",
+        nargs="+",
+        help="Only forecast these reconstructed series. Omit to use every reconstructed file.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Recompute all selected tasks even if completed task checkpoints exist.",
+    )
+    parser.add_argument(
+        "--include-baselines",
+        action="store_true",
+        help="With --reconstruction-models, also evaluate original train and direct-missing series.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     pred_config = load_prediction_models_config()
-    run(config, pred_config, models=args.models, n_origins=args.n_origins)
+    run(
+        config,
+        pred_config,
+        models=args.models,
+        n_origins=args.n_origins,
+        reconstruction_models=args.reconstruction_models,
+        include_baselines=args.include_baselines,
+        force=args.force,
+    )
 
 
 if __name__ == "__main__":
