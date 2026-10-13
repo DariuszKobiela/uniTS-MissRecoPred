@@ -55,6 +55,7 @@ def test_resolve_n_origins_per_dataset():
 
 def test_validation_length_respects_bounds():
     assert compute_validation_length(1000, share=0.10, min_samples=64, max_samples=500) == 100
+    assert compute_validation_length(80_000, share=0.10, min_samples=64, max_samples=4096) == 4096
 
 
 def test_short_series_raises():

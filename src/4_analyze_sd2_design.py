@@ -288,6 +288,36 @@ def validation_slice(source: pd.Series, window_samples: int, case_number: int, n
     return source.iloc[start : start + length].reset_index(drop=True)
 
 
+def apply_hpo_missingness(
+    clean: pd.Series,
+    mechanism_name: str,
+    rate: float,
+    *,
+    seed: int,
+) -> pd.Series:
+    """Apply an HPO mask, guaranteeing a measurable case for positive rates."""
+    degraded = MECHANISMS[mechanism_name](clean, rate, seed=seed)
+    if rate > 0 and len(degraded) and not degraded.isna().any():
+        rng = np.random.default_rng(seed)
+        degraded.iloc[int(rng.integers(0, len(degraded)))] = np.nan
+    return degraded
+
+
+def build_hpo_cases(
+    rates: list[float],
+    repeats_per_condition: int,
+) -> list[tuple[str, float, int]]:
+    """Balanced validation design used identically by every Optuna trial."""
+    if repeats_per_condition < 1:
+        raise ValueError("--hpo-repeats must be at least 1")
+    return [
+        (mechanism, rate, repeat)
+        for repeat in range(repeats_per_condition)
+        for mechanism in MECHANISMS
+        for rate in rates
+    ]
+
+
 def run_representation_ablations(
     args: argparse.Namespace,
     metadata: dict,
@@ -362,10 +392,7 @@ def run_empirical_search(
     if torch.cuda.is_available():
         print("Using CUDA for --run-inference")
     else:
-        print(
-            "CUDA is not available; --run-inference will run on CPU. "
-            "This is supported but much slower than GPU."
-        )
+        print("CUDA is not available; --run-inference will run on CPU. This is supported but much slower than GPU.")
 
     registry = get_reconstruction_models()
     models = args.models or [
@@ -395,9 +422,14 @@ def run_empirical_search(
             source = load_series(hpo_dir / filename)
             if source.empty:
                 raise ValueError(f"Empty SD2 validation series: {hpo_dir / filename}")
+            hpo_cases = build_hpo_cases(args.rates, args.hpo_repeats)
+            supported_window_sizes = [size for size in args.window_sizes if size <= len(source)]
+            window_samples_identifiable = bool(supported_window_sizes)
+            if not supported_window_sizes:
+                supported_window_sizes = [len(source)]
 
             def objective(trial):
-                window_samples = trial.suggest_categorical("window_samples", args.window_sizes)
+                window_samples = trial.suggest_categorical("window_samples", supported_window_sizes)
                 image_size = trial.suggest_categorical("image_size", args.image_sizes)
                 prompt_index = trial.suggest_int("prompt_index", 0, len(PROMPT_CANDIDATES[encoding]) - 1)
                 steps = trial.suggest_categorical("num_inference_steps", args.steps)
@@ -405,23 +437,27 @@ def run_empirical_search(
                 prompt = PROMPT_CANDIDATES[encoding][prompt_index]
                 losses = []
 
-                for case_number in range(args.cases_per_dataset):
+                for case_number, (mechanism_name, rate, repeat) in enumerate(hpo_cases):
                     clean = validation_slice(
                         source,
                         window_samples,
                         case_number,
-                        args.cases_per_dataset,
+                        len(hpo_cases),
                     )
-                    mechanism_name = list(MECHANISMS)[case_number % len(MECHANISMS)]
-                    rate = args.rates[case_number % len(args.rates)]
                     with contextlib.redirect_stdout(io.StringIO()):
-                        degraded = MECHANISMS[mechanism_name](clean, rate, seed=args.seed + case_number)
+                        degraded = apply_hpo_missingness(
+                            clean,
+                            mechanism_name,
+                            rate,
+                            seed=args.seed + case_number,
+                        )
+                    sd2_seed = args.sd2_seeds[case_number % len(args.sd2_seeds)]
                     started = time.perf_counter()
                     try:
                         with contextlib.redirect_stdout(io.StringIO()):
                             reconstructed = registry[model_name](
                                 degraded,
-                                seed=args.sd2_seeds[0],
+                                seed=sd2_seed,
                                 num_inference_steps=steps,
                                 guidance_scale=guidance,
                                 window_samples=window_samples,
@@ -441,15 +477,17 @@ def run_empirical_search(
                                 "dataset": dataset,
                                 "trial": trial.number,
                                 "case": case_number,
+                                "repeat": repeat,
                                 "mechanism": mechanism_name,
                                 "missing_rate": rate,
+                                "effective_missing_rate": float(degraded.isna().mean()),
                                 "window_samples": window_samples,
                                 "image_size": image_size,
                                 "prompt_index": prompt_index,
                                 "prompt": prompt,
                                 "num_inference_steps": steps,
                                 "guidance_scale": guidance,
-                                "sd2_seed": args.sd2_seeds[0],
+                                "sd2_seed": sd2_seed,
                                 "metric": args.metric,
                                 "metric_value": raw,
                                 "seconds": elapsed,
@@ -473,8 +511,14 @@ def run_empirical_search(
                                 "error": str(exc),
                             }
                         )
-                        return float("inf")
-                return float(np.mean(losses)) if losses else float("inf")
+                        # Failed reconstruction is not a valid optimization result.
+                        # Returning +inf would let Optuna expose arbitrary best_params
+                        # when every trial failed.
+                        raise optuna.TrialPruned(str(exc)) from exc
+                loss = float(np.mean(losses)) if losses else float("nan")
+                if not np.isfinite(loss):
+                    raise optuna.TrialPruned("trial produced a non-finite objective")
+                return loss
 
             study = optuna.create_study(
                 direction="minimize",
@@ -486,6 +530,27 @@ def run_empirical_search(
                 callbacks=[lambda _study, _trial: search_progress.update()],
                 show_progress_bar=False,
             )
+            successful_trials = [
+                trial
+                for trial in study.trials
+                if trial.state == optuna.trial.TrialState.COMPLETE
+                and trial.value is not None
+                and np.isfinite(trial.value)
+            ]
+            if not successful_trials:
+                # Preserve diagnostics, but never select or persist a bogus winner.
+                pd.DataFrame(trial_rows).to_csv(output_dir / "sd2_inference_trials.csv", index=False)
+                search_progress.close()
+                errors = [
+                    str(row.get("error", "unknown error"))
+                    for row in trial_rows
+                    if row.get("model") == model_name and row.get("dataset") == dataset and row.get("status") == "error"
+                ]
+                summary = "; ".join(f"{count}x {message}" for message, count in Counter(errors).most_common(3))
+                raise RuntimeError(
+                    f"SD2 HPO produced no successful trials for {model_name} / {dataset}. "
+                    f"No winner or runtime override was selected. Errors: {summary or 'none recorded'}"
+                )
             winner = dict(study.best_params)
             winner.update(
                 {
@@ -496,6 +561,7 @@ def run_empirical_search(
                     "objective": float(study.best_value),
                     "metric": args.metric,
                     "status": "empirical_gpu",
+                    "window_samples_identifiable": window_samples_identifiable,
                 }
             )
             winners.append(winner)
@@ -525,9 +591,7 @@ def run_seed_sensitivity(
         dynamic_ncols=True,
     )
     for winner in winners:
-        filename = next(
-            name for name in metadata["series"] if Path(name).stem == winner["dataset"]
-        )
+        filename = next(name for name in metadata["series"] if Path(name).stem == winner["dataset"])
         info = metadata["series"][filename]
         source = load_series(hpo_dir / filename)
         clean = validation_slice(source, int(winner["window_samples"]), 0, 1)
@@ -548,9 +612,7 @@ def run_seed_sensitivity(
                         image_size=int(winner["image_size"]),
                         prompt=winner["prompt"],
                     )
-                value = float(
-                    compute_metrics_from_series(clean, degraded, reconstructed)[args.metric]
-                )
+                value = float(compute_metrics_from_series(clean, degraded, reconstructed)[args.metric])
                 rows.append(
                     {
                         "model": winner["model"],
@@ -689,7 +751,8 @@ def write_report(
             f"- Missing rates: {search_space['missing_rates']}",
             f"- Explicit SD2 sensitivity seeds: {search_space['sd2_seeds']}",
             f"- Trials per model/dataset: {search_space['trials_per_model_dataset']}",
-            f"- Validation cases per trial: {search_space['cases_per_trial']}",
+            f"- Validation cases per trial: {search_space['cases_per_trial']} ",
+            f"  ({search_space['repeats_per_condition']} repeat(s) of every mechanism x rate condition)",
             "",
             "Representation-specific prompt candidates:",
         ]
@@ -731,8 +794,7 @@ def write_report(
         )
         for row in summary.itertuples():
             lines.append(
-                f"| {row.ablation} | {row.encoding.upper()} | {row.image_size} | "
-                f"{row.mean:.6g} | {row.count} |"
+                f"| {row.ablation} | {row.encoding.upper()} | {row.image_size} | {row.mean:.6g} | {row.count} |"
             )
 
     (output_dir / "sd2_design_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -749,8 +811,14 @@ def main() -> None:
     parser.add_argument("--rates", default="0.02,0.05,0.20,0.50")
     parser.add_argument("--context-samples", type=int, default=64)
     parser.add_argument("--metric", default="smape")
-    parser.add_argument("--n-trials", type=int, default=12)
+    parser.add_argument("--n-trials", type=int, default=24)
     parser.add_argument("--cases-per-dataset", type=int, default=3)
+    parser.add_argument(
+        "--hpo-repeats",
+        type=int,
+        default=1,
+        help="Independent deterministic repeats for every HPO mechanism/rate condition.",
+    )
     parser.add_argument("--models", nargs="*")
     parser.add_argument(
         "--ablation-encodings",
@@ -821,9 +889,9 @@ def main() -> None:
 
     if args.run_inference:
         if hpo_dir == cleaned_dir:
-            print(
-                "⚠️  SD2 validation partition not found; HPO falls back to cleaned data. "
-                "Run make create-split before GPU HPO for leakage-free selection."
+            raise FileNotFoundError(
+                "SD2 validation partition not found. Run make create-split before "
+                "GPU HPO; optimizing on cleaned data would leak rolling-test samples."
             )
         write_hpo_disjointness_proof(
             output_dir,
@@ -855,16 +923,16 @@ def main() -> None:
             overrides = {}
 
         runtime_keys = (
-            "window_samples",
             "image_size",
             "num_inference_steps",
             "guidance_scale",
             "prompt",
         )
         for winner in empirical_winners:
-            overrides.setdefault(winner["dataset"], {})[winner["model"]] = {
-                key: winner[key] for key in runtime_keys
-            }
+            selected_keys = list(runtime_keys)
+            if winner.get("window_samples_identifiable", False):
+                selected_keys.insert(0, "window_samples")
+            overrides.setdefault(winner["dataset"], {})[winner["model"]] = {key: winner[key] for key in selected_keys}
         runtime_payload = {
             "schema_version": "1.0",
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -882,7 +950,8 @@ def main() -> None:
         "sd2_seeds": args.sd2_seeds,
         "prompts": PROMPT_CANDIDATES,
         "trials_per_model_dataset": args.n_trials,
-        "cases_per_trial": args.cases_per_dataset,
+        "repeats_per_condition": args.hpo_repeats,
+        "cases_per_trial": len(build_hpo_cases(args.rates, args.hpo_repeats)),
     }
 
     payload = {
@@ -891,9 +960,7 @@ def main() -> None:
         "recommendations": recommendations,
         "search_space": search_space,
         "legacy_dataset_audit": audit,
-        "ablation_output": (
-            "sd2_representation_ablations.csv" if args.run_ablation else None
-        ),
+        "ablation_output": ("sd2_representation_ablations.csv" if args.run_ablation else None),
         "note": "Analytical winners are provisional; use --run-inference for model-based selection.",
     }
     (output_dir / "sd2_recommendations.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")

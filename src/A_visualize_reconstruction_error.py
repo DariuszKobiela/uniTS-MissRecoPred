@@ -20,6 +20,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from reconstruction_metrics import get_metric_spec, list_metric_specs_ordered
 from utils.config_loader import load_config
+from utils.inpainting_transform_ui import render_inpainting_transform_invertibility
+
+
+RAW_PAGE_SIZE = 500
+MAX_BROWSER_DOWNLOAD_ROWS = 50_000
 
 
 def load_results(file_path: str) -> pd.DataFrame:
@@ -425,11 +430,17 @@ def main():
     all_models = sorted(df['model'].unique().tolist())
     all_techniques = sorted(df['technique'].unique().tolist())
     all_rates = sorted(df['rate_percent'].unique().tolist())
+    gap_column = "structure" if "structure" in df.columns else "gap_pattern"
+    all_gap_patterns = sorted(df[gap_column].dropna().unique().tolist())
     
     selected_datasets = st.sidebar.multiselect("Dataset", all_datasets, default=all_datasets)
     selected_models = st.sidebar.multiselect("Model", all_models, default=all_models)
     selected_techniques = st.sidebar.multiselect("Technique", all_techniques, default=all_techniques)
     selected_rates = st.sidebar.multiselect("Missing Rate (%)", all_rates, default=all_rates)
+    selected_gap_patterns = st.sidebar.multiselect(
+        "Gap pattern", all_gap_patterns, default=all_gap_patterns,
+        help="Rodzaj rozmieszczenia braków: continuous, scattered lub mixed.",
+    )
     
     # Apply filters to dataframe
     df_filtered = df.copy()
@@ -441,6 +452,8 @@ def main():
         df_filtered = df_filtered[df_filtered['technique'].isin(selected_techniques)]
     if selected_rates:
         df_filtered = df_filtered[df_filtered['rate_percent'].isin(selected_rates)]
+    if selected_gap_patterns:
+        df_filtered = df_filtered[df_filtered[gap_column].isin(selected_gap_patterns)]
     
     # Display overview metrics
     st.header("📈 Overview")
@@ -460,6 +473,7 @@ def main():
         worst_v = s.max() if lower_is_better else s.min()
         st.metric(f"Worst {metric_label}", f"{worst_v:.4f}" if len(s) else "—")
     
+    render_inpainting_transform_invertibility()
     st.markdown("---")
     
     # Visualization tabs
@@ -849,7 +863,7 @@ def main():
     
     with tab8:
         st.header("📊 Statistical Significance Tests")
-        st.caption("Dataset-level paired tests with Holm correction")
+        st.caption("Paired tests with selectable inference unit and Holm correction")
         
         if len(df_filtered) == 0:
             st.warning("No data available with current filters")
@@ -866,6 +880,33 @@ def main():
                 get_model_statistics,
                 get_significance_summary
             )
+            from utils.statistical_tests_ui import (
+                render_friedman_explanation, render_holm_explanation,
+                render_normality_and_test_selection,
+            )
+
+
+            inference_label = st.radio(
+                "Inference unit",
+                ["Condition-level (benchmark)", "Dataset-level (confirmatory)"],
+                horizontal=True,
+                key="reconstruction_inference_unit",
+            )
+            inference_unit = (
+                "condition" if inference_label.startswith("Condition") else "dataset"
+            )
+            if inference_unit == "condition":
+                st.warning(
+                    "Benchmark-level inference: dataset × mechanism × gap pattern × rate "
+                    "cells are the analysis units after averaging stochastic iterations. "
+                    "Conclusions apply to this benchmark and do not by themselves "
+                    "generalize beyond the three datasets."
+                )
+            else:
+                st.info(
+                    "Confirmatory dataset-level inference averages repeated conditions "
+                    "within each dataset. With only three datasets, statistical power is low."
+                )
             
             # Info box explaining the analysis
             with st.expander("ℹ️ How to interpret this analysis", expanded=False):
@@ -877,8 +918,10 @@ def main():
                 differences; a paired t-test or Wilcoxon signed-rank test is
                 then selected. Pairwise p-values use Holm correction.
 
-                Repeated conditions are averaged within each dataset before
-                inference, so they are not treated as independent replications.
+                In dataset-level mode, repeated conditions are averaged within
+                each dataset. Condition-level mode first matches exact
+                realizations, then averages iterations within dataset ×
+                mechanism × gap pattern × rate cells used as inference units.
                 
                 **Legend**:
                 - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model (highly significant)
@@ -916,20 +959,32 @@ def main():
             )
             
             st.divider()
+            pairwise_details = pairwise_comparisons(
+                df_filtered, metric=metric_col, lower_is_better=lower_is_better,
+                inference_unit=inference_unit, n_jobs=20
+            )
+            render_normality_and_test_selection(pairwise_details)
+            st.divider()
+
             
-            omnibus = friedman_test(df_filtered, metric=metric_col)
+            omnibus = friedman_test(
+                df_filtered, metric=metric_col, inference_unit=inference_unit
+            )
             st.subheader("Friedman Omnibus Test")
+            render_friedman_explanation(omnibus)
             if np.isfinite(omnibus["p_value"]):
                 st.write(
                     f"χ² = {omnibus['statistic']:.4f}, "
                     f"p = {omnibus['p_value']:.4g}, "
-                    f"datasets = {omnibus['n_datasets']}, models = {omnibus['n_models']}"
+                    f"datasets = {omnibus['n_datasets']}, units = {omnibus['n_units']}, "
+                    f"models = {omnibus['n_models']}"
                 )
             else:
                 st.info("At least three models and two complete dataset blocks are required.")
 
             st.subheader("Pairwise Statistical Significance Matrix")
             st.caption("Cells use Holm-adjusted p-values")
+            render_holm_explanation(len(pairwise_details))
             
             # Calculate significance matrix
             significance_matrix = perform_pairwise_ttests(
@@ -938,6 +993,8 @@ def main():
                 alpha_01=0.01,
                 alpha_05=0.05,
                 lower_is_better=lower_is_better,
+                inference_unit=inference_unit,
+                n_jobs=20,
             )
             
             # Create color mapping for heatmap
@@ -987,7 +1044,9 @@ def main():
             # Optional: Show p-values matrix
             with st.expander("🔬 Show detailed p-values matrix", expanded=False):
                 st.caption("Exact p-values for all pairwise comparisons")
-                pvalue_matrix = get_pairwise_pvalues(df_filtered, metric=metric_col)
+                pvalue_matrix = get_pairwise_pvalues(
+                    df_filtered, metric=metric_col, inference_unit=inference_unit, n_jobs=20
+                )
                 
                 # Style p-values: highlight significant ones
                 def color_pvalue(val):
@@ -1003,7 +1062,8 @@ def main():
 
             with st.expander("🔬 Show paired tests, effect sizes, and 95% CIs", expanded=False):
                 details = pairwise_comparisons(
-                    df_filtered, metric=metric_col, lower_is_better=lower_is_better
+                    df_filtered, metric=metric_col, lower_is_better=lower_is_better,
+                    inference_unit=inference_unit, n_jobs=20
                 )
                 st.dataframe(details, width="stretch")
     
@@ -1405,10 +1465,27 @@ def main():
             ascending=(sort_order == 'Ascending')
         )
         
-        st.dataframe(df_display, width='stretch')
-        
+        total_rows = len(df_display)
+        total_pages = max(1, (total_rows + RAW_PAGE_SIZE - 1) // RAW_PAGE_SIZE)
+        page = st.number_input(
+            "Page", min_value=1, max_value=total_pages, value=1, step=1,
+            help=f"The browser receives at most {RAW_PAGE_SIZE} rows at a time.",
+        )
+        start = (page - 1) * RAW_PAGE_SIZE
+        st.dataframe(df_display.iloc[start:start + RAW_PAGE_SIZE], width="stretch")
+        st.caption(
+            f"Rows {start + 1 if total_rows else 0}–"
+            f"{min(start + RAW_PAGE_SIZE, total_rows)} of {total_rows}."
+        )
+
         # Download button
-        csv = df_display.to_csv(index=False)
+        download_df = df_display.head(MAX_BROWSER_DOWNLOAD_ROWS)
+        if total_rows > MAX_BROWSER_DOWNLOAD_ROWS:
+            st.warning(
+                f"Browser download is limited to {MAX_BROWSER_DOWNLOAD_ROWS:,} of {total_rows:,} rows "
+                "to stay below Streamlit's message-size limit. Use the source CSV for the full data."
+            )
+        csv = download_df.to_csv(index=False)
         st.download_button(
             label="📥 Download filtered data as CSV",
             data=csv,

@@ -70,6 +70,7 @@ def export_statistics(
     prefix: str,
     lower_is_better: bool = True,
     workers: int = 20,
+    inference_unit: str = "condition",
 ) -> dict:
     pairwise = pairwise_comparisons(
         frame,
@@ -79,8 +80,14 @@ def export_statistics(
         show_progress=True,
         progress_desc=f"{prefix}: paired tests",
         n_jobs=workers,
+        inference_unit=inference_unit,
     )
-    omnibus = friedman_test(frame, metric=metric, pair_columns=pair_columns)
+    omnibus = friedman_test(
+        frame,
+        metric=metric,
+        pair_columns=pair_columns,
+        inference_unit=inference_unit,
+    )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     pairwise_path = output_dir / f"{prefix}_pairwise_{metric}_{timestamp}.csv"
     omnibus_path = output_dir / f"{prefix}_friedman_{metric}_{timestamp}.json"
@@ -93,6 +100,7 @@ def export_statistics(
         "omnibus": omnibus,
         "n_pairwise_rows": len(pairwise),
         "workers": workers,
+        "inference_unit": inference_unit,
     }
 
 

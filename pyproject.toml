@@ -24,6 +24,7 @@ dependencies = [
     
     # Rolling-origin prediction
     "xgboost>=2.1.0",
+    "prophet>=1.1.6",
     
     # Force newer versions for Python 3.12 compatibility
     "numba>=0.60.0",

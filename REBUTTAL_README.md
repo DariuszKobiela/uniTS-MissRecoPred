@@ -19,8 +19,10 @@ ocena prognoz rolling-origin. Dokładne polecenia i artefakty opisuje
   XGBoost na danych z brakami oraz wskaźnikami missingness.
 - Boiler i pump używają pięciu originów, vibration trzech.
 - Podstawowe metryki prognozy to MAE, RMSE i MASE; MAPE oraz sMAPE są wtórne.
-- Statystyka uwzględnia pełny klucz parowania i eksportuje test Friedmana,
-  porównania parowe, korektę Holma, wielkość efektu i przedziały bootstrapowe.
+- Statystyka paruje pełne realizacje, następnie uśrednia 10 iteracji w komórkach
+  dataset × mechanizm × struktura × stopa braków (n=108) i eksportuje test
+  Friedmana, porównania parowe, korektę Holma, wielkość efektu i przedziały
+  bootstrapowe.
 
 ## Oczekiwane artefakty
 

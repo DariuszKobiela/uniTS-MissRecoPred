@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-
+from export_prediction_parquet_by_model import export_by_model
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +28,10 @@ ROLLING_INPUTS = [
     "prediction_experiment_results/prediction_results_rolling_origins_20261007_161856.csv",
     "prediction_experiment_results/prediction_results_rolling_origins_20261008_111344.csv",
     "prediction_experiment_results/prediction_results_rolling_origins_20261010_153028.csv",
+    # Complete Prophet batch for all 17 reconstruction methods and originals.
+    "prediction_experiment_results/prediction_results_rolling_origins_20261010_194434.csv",
+    # Complete Holt-Winters batch for all 17 reconstruction methods and originals.
+    "prediction_experiment_results/prediction_results_rolling_origins_20261010_201923.csv",
 ]
 
 RECONSTRUCTION_KEY = [
@@ -115,6 +119,10 @@ def main() -> None:
         / f"prediction_results_rolling_origins_merged_{stamp}.csv"
     )
     rolling.to_csv(rolling_path, index=False)
+    parquet_manifest = export_by_model(
+        rolling_path,
+        ROOT / "prediction_experiment_results" / "latest_by_model",
+    )
 
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -128,6 +136,9 @@ def main() -> None:
         "rolling_origin": {
             "output": str(rolling_path.relative_to(ROOT)),
             "rows": len(rolling),
+            "prediction_models": (
+                rolling["prediction_model"].value_counts().sort_index().to_dict()
+            ),
             "reconstruction_models": (
                 rolling["reconstruction_model"]
                 .fillna("<baseline>")
@@ -136,6 +147,7 @@ def main() -> None:
                 .to_dict()
             ),
             "sources": rolling_sources,
+            "parquet_manifest": str(parquet_manifest.relative_to(ROOT)),
         },
     }
     manifest_path = ROOT / f"merged_results_manifest_{stamp}.json"

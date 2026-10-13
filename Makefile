@@ -1,4 +1,4 @@
-.PHONY: help setup test-unit clean-datasets recommend-horizons create-split analyze-sd2-design analyze-sd2-ablation optimize-sd2-design generate-sd2-training-data analyze-synthetic-real-gap train-sd2-windowed degrade-datasets analyze-missingness reconstruct-datasets calculate-reconstruction-error evaluate-rolling-origins batch-statistics summarize-run visualize-reconstruction-error visualize-prediction-error pipeline-rebuttal
+.PHONY: help setup test-unit clean-datasets recommend-horizons create-split analyze-sd2-design analyze-sd2-ablation optimize-sd2-design generate-sd2-training-data analyze-synthetic-real-gap train-sd2-windowed degrade-datasets analyze-missingness reconstruct-datasets calculate-reconstruction-error evaluate-rolling-origins batch-statistics summarize-run manuscript-artifacts visualize-reconstruction-error visualize-prediction-error pipeline-rebuttal
 
 help:
 	@echo "uniTS-MissRecoPred — aktywna ścieżka eksperymentu"
@@ -31,7 +31,7 @@ analyze-sd2-design:
 analyze-sd2-ablation:
 	uv run python src/4_analyze_sd2_design.py --run-ablation
 
-optimize-sd2-design:
+optimize-sd2-design: create-split
 	uv run python src/4_analyze_sd2_design.py --run-inference
 
 generate-sd2-training-data:
@@ -67,6 +67,9 @@ batch-statistics:
 
 summarize-run:
 	uv run python src/14_summarize_run.py
+
+manuscript-artifacts:
+	uv run python scripts/generate_manuscript_artifacts.py
 
 visualize-prediction-error:
 	uv run streamlit run src/B_visualize_prediction_error.py

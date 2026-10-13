@@ -49,6 +49,9 @@ experiments/
 # CSV files
 *.csv
 
+# PARQUET files
+*.parquet
+
 # JSON files
 *.json
 

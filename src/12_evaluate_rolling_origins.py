@@ -17,8 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
-from utils.progress import tqdm
 
+from prediction_models.holt_winters import predict_holt_winters
+from prediction_models.prophet import predict_prophet
 from prediction_models.sarimax import predict_sarimax
 from utils.config_loader import load_config, load_prediction_models_config
 from utils.experiment_naming import (
@@ -27,6 +28,7 @@ from utils.experiment_naming import (
     iter_reconstructed_csv_files,
     parse_reconstructed_metadata,
 )
+from utils.progress import tqdm
 from utils.rolling_origins import (
     evaluate_forecast_slices,
     expanding_history,
@@ -40,6 +42,8 @@ from utils.rolling_origins import (
 from utils.split_plan import resolve_n_origins
 
 SUPPORTED_MODELS = {
+    "holt_winters",
+    "prophet",
     "sarimax",
     "xgboost",
     "persistence",
@@ -200,6 +204,18 @@ def forecast_at_origin(
                 "fitted_seasonal_order": attrs.get("fitted_seasonal_order", ""),
             }
         )
+        return np.asarray(forecast, dtype=np.float64), metadata
+    if model_name == "prophet":
+        params = dict(model_params)
+        params["seasonal_period"] = seasonal_period
+        forecast = predict_prophet(history, horizon, **params)
+        metadata.update(dict(forecast.attrs))
+        return np.asarray(forecast, dtype=np.float64), metadata
+    if model_name == "holt_winters":
+        params = dict(model_params)
+        params["seasonal_period"] = seasonal_period
+        forecast = predict_holt_winters(history, horizon, **params)
+        metadata.update(dict(forecast.attrs))
         return np.asarray(forecast, dtype=np.float64), metadata
     raise ValueError(f"Unsupported rolling-origin model: {model_name}")
 
@@ -425,6 +441,21 @@ def aggregate_origin_results(frame: pd.DataFrame, metric_keys: list[str]) -> pd.
     return frame.groupby(present, dropna=False).agg(**aggregations).reset_index()
 
 
+def stop_process_pool(executor: ProcessPoolExecutor, futures) -> None:
+    """Cancel queued work and terminate active workers after Ctrl+C."""
+    for future in futures:
+        future.cancel()
+    processes = list(getattr(executor, "_processes", {}).values())
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=2)
+        if process.is_alive():
+            process.kill()
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
 def run(
     config,
     pred_config,
@@ -583,8 +614,11 @@ def run(
                 )
             progress.update()
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        executor = ProcessPoolExecutor(max_workers=max_workers)
+        futures = []
+        try:
             future_to_task = {executor.submit(evaluate_source_model, task): task for task in pending_tasks}
+            futures = list(future_to_task)
             for future in as_completed(future_to_task):
                 task = future_to_task[future]
                 try:
@@ -602,6 +636,13 @@ def run(
                     }
                 )
                 progress.update()
+        except KeyboardInterrupt:
+            progress.close()
+            stop_process_pool(executor, futures)
+            print("\nPrediction interrupted; completed task checkpoints were preserved.")
+            raise
+        else:
+            executor.shutdown()
     progress.close()
 
     if not results:

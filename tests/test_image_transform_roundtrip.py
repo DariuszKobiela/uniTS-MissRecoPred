@@ -67,6 +67,23 @@ def test_mtf_is_a_transition_field_and_has_bounded_quantization_error(
     assert _rmse(reference_series, reconstructed) < 0.12
 
 
+def test_mtf_decoder_aligns_pipeline_output_to_encoded_size():
+    series = pd.Series(np.sin(np.linspace(0.0, 4.0 * np.pi, 32)))
+    image, metadata = series_to_mtf(series, size=64, return_metadata=True)
+    metadata["missing_encoded"][40] = True
+    pipeline_sized_image = image[::2, ::2]
+
+    reconstructed = mtf_to_series(
+        pipeline_sized_image,
+        len(series),
+        series,
+        metadata=metadata,
+    )
+
+    assert len(reconstructed) == len(series)
+    assert np.isfinite(reconstructed).all()
+
+
 def test_spectrogram_round_trip_uses_retained_stft_phase(
     reference_series: pd.Series,
 ):

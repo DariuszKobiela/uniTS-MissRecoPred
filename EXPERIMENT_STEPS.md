@@ -334,7 +334,7 @@ uv run python src/11_calculate_reconstruction_error.py \
 
 Skrypt: `src/12_evaluate_rolling_origins.py`.
 
-Dopasowuje lokalnie wyłącznie prosty XGBoost oraz jawnie niesezonowy
+Dopasowuje lokalnie prosty XGBoost, Prophet oraz jawnie niesezonowy
 ARIMA(1,1,1) (technicznie `SARIMAX` z `seasonal_order=(0,0,0,0)`). Każdy origin
 daje jedną prognozę do `H_max`, z której powstają miary skumulowane i biny
 lead-time. Używa pięciu originów dla boiler/pump i trzech dla vibration.
@@ -387,6 +387,59 @@ uv run python src/12_evaluate_rolling_origins.py \
 Przed krokiem 13 sklej pliki CSV z trzech batchy (osobno metryki rekonstrukcji
 i osobno rolling-origin) i podaj scalone pliki do `src/13_batch_statistics.py`.
 
+Po scaleniu można odświeżyć szybkie pliki dashboardu per model:
+
+```bash
+uv run python scripts/export_prediction_parquet_by_model.py
+```
+
+Pliki `zstd` Parquet i manifest powstają w
+`prediction_experiment_results/latest_by_model/`. Dashboard predykcji ładuje
+tylko wybrane modele; historyczne CSV pozostają dostępne jako osobny tryb.
+
+### Doliczenie modelu Prophet
+
+Po instalacji zaktualizowanych zależności (`uv sync --frozen --extra dev`) można
+doliczyć wyłącznie Prophet, bez ponownego uruchamiania dotychczasowych modeli.
+Użyj kolejno tych samych trzech batchy:
+
+```bash
+uv run python src/12_evaluate_rolling_origins.py \
+  --models prophet --include-baselines \
+  --reconstruction-models \
+  impute_mean impute_median impute_ffill impute_bfill \
+  interpolate_linear interpolate_cubic interpolate_pchip knn sarimax
+
+uv run python src/12_evaluate_rolling_origins.py \
+  --models prophet \
+  --reconstruction-models \
+  stable_diffusion_2_gaf stable_diffusion_2_mtf \
+  stable_diffusion_2_rp stable_diffusion_2_spec
+
+uv run python src/12_evaluate_rolling_origins.py \
+  --models prophet \
+  --reconstruction-models \
+  stable_diffusion_2_gaf_finetuned stable_diffusion_2_mtf_finetuned \
+  stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
+```
+
+### Doliczenie modelu Holt-Winters
+
+Holt-Winters korzysta z okresów sezonowych przypisanych datasetom w
+`config/config.yaml`. Cały eksperyment można uruchomić jedną komendą:
+
+```bash
+uv run python src/12_evaluate_rolling_origins.py \
+  --models holt_winters --include-baselines \
+  --reconstruction-models \
+  impute_mean impute_median impute_ffill impute_bfill \
+  interpolate_linear interpolate_cubic interpolate_pchip knn sarimax \
+  stable_diffusion_2_gaf stable_diffusion_2_mtf \
+  stable_diffusion_2_rp stable_diffusion_2_spec \
+  stable_diffusion_2_gaf_finetuned stable_diffusion_2_mtf_finetuned \
+  stable_diffusion_2_rp_finetuned stable_diffusion_2_spec_finetuned
+```
+
 ## 13. Statystyka zbiorcza
 
 **tmux:** krok długotrwały (bootstrap wielu porównań).
@@ -399,7 +452,9 @@ Skrypt: `src/13_batch_statistics.py`.
 
 Pobiera najnowszy wynik rolling-origin i eksportuje test Friedmana, porównania
 parowe, test normalności różnic, korektę Holma, wielkości efektu oraz 95%
-przedziały bootstrapowe. Wyniki zapisuje w
+przedziały bootstrapowe. Główną jednostką inferencji jest komórka
+dataset × mechanizm × struktura × stopa braków; 10 iteracji jest najpierw
+uśrednianych wewnątrz komórki (dla rekonstrukcji daje to n=108). Wyniki zapisuje w
 `prediction_experiment_results/batch_statistics/`.
 
 ## 14. Jedno podsumowanie runu
@@ -414,6 +469,20 @@ Zbiera ścieżki oraz liczby wierszy najważniejszych artefaktów: raportu
 czyszczenia, splitu, treningu SD2, realizacji braków, rekonstrukcji,
 rolling-origin i statystyki. Zwraca jeden plik `experiment_run_summary.json` ze
 statusem `complete` lub `incomplete`.
+
+## 15. Artefakty manuskryptu
+
+```bash
+make manuscript-artifacts
+```
+
+Skrypt `scripts/generate_manuscript_artifacts.py` czyta wyłącznie zamrożone,
+datowane pliki scalone z 2026-10-10. Kontroluje kompletność siatki i duplikaty,
+najpierw uśrednia powtórzenia wewnątrz komórek, a następnie generuje tabele,
+figury, statystyki i manifest pochodzenia w
+`LG/DataMiningAndKnowledgeDiscovery/generated/` oraz
+`LG/DataMiningAndKnowledgeDiscovery/images/generated/`. Pliki źródłowe wyników
+nie są modyfikowane.
 
 ## Opcjonalne wizualizacje
 

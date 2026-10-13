@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Paired statistical tests for model comparisons without pseudoreplication."""
 
-from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from itertools import combinations
-import pandas as pd
-import numpy as np
-from scipy import stats
 from typing import Dict, Sequence
-from utils.progress import tqdm
 
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+from utils.progress import tqdm
 
 DEFAULT_PAIR_CANDIDATES = (
     ("dataset_name", "dataset"),
@@ -18,6 +19,8 @@ DEFAULT_PAIR_CANDIDATES = (
     ("structure", "gap_pattern"),
     ("iteration", "reconstruction_iteration", "seed"),
 )
+
+REPLICATE_COLUMNS = {"iteration", "reconstruction_iteration", "seed"}
 
 
 def _resolve_pair_columns(df: pd.DataFrame, pair_columns: Sequence[str] | None) -> list[str]:
@@ -115,12 +118,32 @@ def _paired_values(
     )
 
 
-def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, float, bool]) -> dict:
-    """Run one paired comparison on small dataset-level summary arrays."""
-    model_a, model_b, values_a, values_b, exact_pairs, normality_alpha, lower_is_better = task
+SHAPIRO_MAX_N = 5_000
+SHAPIRO_RANDOM_STATE = 42
+
+
+def _shapiro_wilk(differences: np.ndarray) -> tuple[float, int, bool]:
+    """Run Shapiro-Wilk, using a reproducible random sample above 5,000."""
+    values = np.asarray(differences, dtype=float)
+    n = len(values)
+    if n < 3 or np.allclose(values, values[0]):
+        return np.nan, 0, False
+    sampled = n > SHAPIRO_MAX_N
+    if sampled:
+        rng = np.random.default_rng(SHAPIRO_RANDOM_STATE)
+        values = values[rng.choice(n, size=SHAPIRO_MAX_N, replace=False)]
+    return float(stats.shapiro(values).pvalue), len(values), sampled
+
+
+def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, int, str, float, bool]) -> dict:
+    """Run one paired comparison on dataset- or condition-level summaries."""
+    (model_a, model_b, values_a, values_b, exact_pairs, n_source_datasets,
+     inference_unit, normality_alpha, lower_is_better) = task
     differences = values_a - values_b
     n = len(differences)
-    shapiro_p = float(stats.shapiro(differences).pvalue) if 3 <= n <= 5000 else np.nan
+    # SciPy warns that p-values are inaccurate above 5,000 observations.
+    # Use a reproducible random subsample rather than leaving shapiro_p empty.
+    shapiro_p, shapiro_n, shapiro_sampled = _shapiro_wilk(differences)
     use_t = n >= 3 and np.isfinite(shapiro_p) and shapiro_p >= normality_alpha
     if n < 2:
         test, statistic, p_value = "insufficient_pairs", np.nan, np.nan
@@ -143,7 +166,10 @@ def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, float, boo
     mean_difference = float(differences.mean()) if n else np.nan
     return {
         "model_a": model_a, "model_b": model_b, "test": test,
-        "n_datasets": n, "n_exact_pairs": exact_pairs, "shapiro_p": shapiro_p,
+        "n_units": n, "n_datasets": n_source_datasets,
+        "inference_unit": inference_unit, "n_exact_pairs": exact_pairs,
+        "shapiro_p": shapiro_p, "shapiro_n": shapiro_n,
+        "shapiro_sampled": shapiro_sampled,
         "statistic": statistic, "p_value": p_value, "mean_difference": mean_difference,
         "ci_95_low": ci_low, "ci_95_high": ci_high, "effect_name": effect_name,
         "effect_size": effect_size,
@@ -162,23 +188,38 @@ def pairwise_comparisons(
     show_progress: bool = False,
     progress_desc: str = "Pairwise comparisons",
     n_jobs: int = 1,
+    inference_unit: str = "dataset",
 ) -> pd.DataFrame:
-    """Compare model pairs, optionally evaluating tests and bootstraps in processes."""
+    """Compare models after exact pairing and aggregation to inference units.
+
+    Condition inference uses dataset x mechanism x structure x rate cells and
+    averages stochastic iterations within each cell. Dataset inference also
+    averages all experimental conditions within each source dataset.
+    """
     required = {"model", metric}
     if missing := required.difference(df.columns):
         raise ValueError(f"Missing required columns: {sorted(missing)}")
     pairs = _resolve_pair_columns(df, pair_columns)
+    if inference_unit not in {"dataset", "condition"}:
+        raise ValueError("inference_unit must be dataset or condition")
     models = sorted(df["model"].dropna().unique())
     grouped = df.groupby([*pairs, "model"], dropna=False, as_index=False)[metric].mean()
     wide = grouped.pivot(index=pairs, columns="model", values=metric)
     dataset_column = next(c for c in ("dataset_name", "dataset") if c in pairs)
+    condition_columns = [column for column in pairs if column not in REPLICATE_COLUMNS]
     tasks = []
     for model_a, model_b in combinations(models, 2):
         paired = wide[[model_a, model_b]].dropna(subset=[model_a, model_b])
-        by_dataset = paired.groupby(level=dataset_column).mean()
-        tasks.append((model_a, model_b, by_dataset[model_a].to_numpy(dtype=float),
-                      by_dataset[model_b].to_numpy(dtype=float), len(paired),
-                      normality_alpha, lower_is_better))
+        n_source_datasets = paired.index.get_level_values(dataset_column).nunique()
+        if inference_unit == "dataset":
+            inference_frame = paired.groupby(level=dataset_column).mean()
+        else:
+            inference_frame = paired.groupby(level=condition_columns).mean()
+        tasks.append((model_a, model_b,
+                      inference_frame[model_a].to_numpy(dtype=float),
+                      inference_frame[model_b].to_numpy(dtype=float), len(paired),
+                      n_source_datasets, inference_unit, normality_alpha,
+                      lower_is_better))
     workers = max(1, int(n_jobs))
     executor = None
     if workers == 1 or len(tasks) < 2:
@@ -207,22 +248,32 @@ def friedman_test(
     df: pd.DataFrame,
     metric: str = "mad",
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
 ) -> Dict[str, float]:
-    """Friedman omnibus test on complete, dataset-level model blocks."""
+    """Friedman omnibus test on dataset or iteration-averaged condition blocks."""
     pairs = _resolve_pair_columns(df, pair_columns)
+    if inference_unit not in {"dataset", "condition"}:
+        raise ValueError("inference_unit must be dataset or condition")
     models = sorted(df["model"].dropna().unique())
     grouped = df.groupby([*pairs, "model"], dropna=False, as_index=False)[metric].mean()
     wide = grouped.pivot(index=pairs, columns="model", values=metric)
     dataset_column = next(c for c in ("dataset_name", "dataset") if c in pairs)
-    wide = wide.groupby(level=dataset_column).mean().dropna(subset=models)
+    n_datasets = wide.index.get_level_values(dataset_column).nunique()
+    if inference_unit == "dataset":
+        wide = wide.groupby(level=dataset_column).mean()
+    else:
+        condition_columns = [column for column in pairs if column not in REPLICATE_COLUMNS]
+        wide = wide.groupby(level=condition_columns).mean()
+    wide = wide.dropna(subset=models)
+    base = {"n_datasets": n_datasets, "n_units": len(wide),
+            "n_models": len(models), "inference_unit": inference_unit}
     if len(models) < 3 or len(wide) < 2:
-        return {"statistic": np.nan, "p_value": np.nan, "n_datasets": len(wide), "n_models": len(models)}
+        return {"statistic": np.nan, "p_value": np.nan, **base}
     result = stats.friedmanchisquare(*(wide[model].to_numpy() for model in models))
     return {
         "statistic": float(result.statistic),
         "p_value": float(result.pvalue),
-        "n_datasets": len(wide),
-        "n_models": len(models),
+        **base,
     }
 
 
@@ -233,17 +284,19 @@ def perform_pairwise_ttests(
     alpha_05: float = 0.05,
     lower_is_better: bool = True,
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
     Perform pairwise t-tests between all models.
-    
+
     Args:
         df: DataFrame with columns: model, mad (or other metric), and multiple observations per model
         metric: Column name to compare (default: 'mad')
         alpha_01: Significance level for highly significant differences (default: 0.01)
         alpha_05: Significance level for significant differences (default: 0.05)
         lower_is_better: If False (e.g. R²), higher mean counts as better
-    
+
     Returns:
         DataFrame with pairwise comparison results:
         - Rows and columns are model names
@@ -260,13 +313,14 @@ def perform_pairwise_ttests(
         lower_is_better=lower_is_better,
         alpha=alpha_05,
         pair_columns=pair_columns,
+        inference_unit=inference_unit,
+        n_jobs=n_jobs,
     )
     models = sorted(df['model'].dropna().unique())
-    n_models = len(models)
-    
+
     # Initialize result matrix
     result_matrix = pd.DataFrame(0, index=models, columns=models)
-    
+
     for row in comparisons.itertuples():
         value = 0
         if row.p_holm < alpha_01:
@@ -275,46 +329,68 @@ def perform_pairwise_ttests(
             value = 1 if row.a_better else -1
         result_matrix.loc[row.model_a, row.model_b] = value
         result_matrix.loc[row.model_b, row.model_a] = -value
-    
+
     return result_matrix
+
+
+def significance_matrix_from_comparisons(
+    comparisons: pd.DataFrame,
+    models: Sequence[str],
+    alpha_01: float = 0.01,
+    alpha_05: float = 0.05,
+) -> pd.DataFrame:
+    """Build the display matrix from already-computed pairwise results."""
+    result = pd.DataFrame(0, index=sorted(models), columns=sorted(models))
+    for row in comparisons.itertuples():
+        value = 0
+        if row.p_holm < alpha_01:
+            value = 2 if row.a_better else -2
+        elif row.p_holm < alpha_05:
+            value = 1 if row.a_better else -1
+        result.loc[row.model_a, row.model_b] = value
+        result.loc[row.model_b, row.model_a] = -value
+    return result
 
 
 def get_pairwise_pvalues(
     df: pd.DataFrame,
     metric: str = 'mad',
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
     Get matrix of p-values for all pairwise comparisons.
-    
+
     Args:
         df: DataFrame with columns: model, mad (or other metric)
         metric: Column name to compare (default: 'mad')
-    
+
     Returns:
         DataFrame with p-values for each pair of models
     """
     models = sorted(df['model'].unique())
     pvalue_matrix = pd.DataFrame(1.0, index=models, columns=models)
-    
+
     for row in pairwise_comparisons(
-        df, metric=metric, pair_columns=pair_columns
+        df, metric=metric, pair_columns=pair_columns,
+        inference_unit=inference_unit, n_jobs=n_jobs
     ).itertuples():
         pvalue_matrix.loc[row.model_a, row.model_b] = row.p_holm
         pvalue_matrix.loc[row.model_b, row.model_a] = row.p_holm
-    
+
     return pvalue_matrix
 
 
 def get_model_statistics(df: pd.DataFrame, metric: str = 'mad', lower_is_better: bool = True) -> pd.DataFrame:
     """
     Calculate summary statistics for each model.
-    
+
     Args:
         df: DataFrame with columns: model, mad (or other metric)
         metric: Column name to analyze (default: 'mad')
         lower_is_better: Sort order for mean column (False for R²)
-    
+
     Returns:
         DataFrame with statistics per model (mean, std, count, etc.)
     """
@@ -326,22 +402,22 @@ def get_model_statistics(df: pd.DataFrame, metric: str = 'mad', lower_is_better:
         ('max', 'max'),
         ('count', 'count')
     ]).reset_index()
-    
+
     # Calculate standard error
     stats_df['se'] = stats_df['std'] / np.sqrt(stats_df['count'])
-    
+
     stats_df = stats_df.sort_values('mean', ascending=lower_is_better)
-    
+
     return stats_df
 
 
 def get_significance_summary(significance_matrix: pd.DataFrame) -> Dict[str, int]:
     """
     Summarize significance results for each model.
-    
+
     Args:
         significance_matrix: Output from perform_pairwise_ttests()
-    
+
     Returns:
         Dictionary with model names as keys and summary statistics:
         - significantly_better_001: Count of models this model is better than (p<0.01)
@@ -351,10 +427,10 @@ def get_significance_summary(significance_matrix: pd.DataFrame) -> Dict[str, int
         - no_difference: Count of models with no significant difference
     """
     summary = {}
-    
+
     for model in significance_matrix.index:
         row = significance_matrix.loc[model]
-        
+
         summary[model] = {
             'significantly_better_p001': (row == 2).sum(),
             'significantly_better_p005': (row == 1).sum(),
@@ -362,17 +438,17 @@ def get_significance_summary(significance_matrix: pd.DataFrame) -> Dict[str, int
             'significantly_worse_p005': (row == -1).sum(),
             'significantly_worse_p001': (row == -2).sum(),
         }
-    
+
     return summary
 
 
 def format_significance_text(value: int) -> str:
     """
     Format significance value as human-readable text.
-    
+
     Args:
         value: Significance code from perform_pairwise_ttests()
-    
+
     Returns:
         Text description
     """
@@ -388,4 +464,3 @@ def format_significance_text(value: int) -> str:
         return "-2 (p<0.01)"
     else:
         return "?"
-

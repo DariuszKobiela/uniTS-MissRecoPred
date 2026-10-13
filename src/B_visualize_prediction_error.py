@@ -27,10 +27,58 @@ from prediction_metrics import (
     list_metric_specs_ordered,
 )
 from utils.config_loader import load_config
+from utils.inpainting_transform_ui import render_inpainting_transform_invertibility
+
+
+RAW_PAGE_SIZE = 500
+MAX_BROWSER_DOWNLOAD_ROWS = 50_000
 
 
 def _heatmap_texttemplate(value_is_percent: bool) -> str:
     return "%{text}%" if value_is_percent else "%{text}"
+
+
+@st.cache_data(
+    persist="disk", show_spinner=False, max_entries=32,
+)
+def _cached_statistical_analysis(
+    cache_key: str,
+    _frame: pd.DataFrame,
+    metric: str,
+    lower_is_better: bool,
+    pair_columns: tuple[str, ...],
+    inference_unit: str,
+) -> tuple[pd.DataFrame, dict]:
+    """Cache expensive tests; cache_key captures source version and filters."""
+    del cache_key  # Its value participates in Streamlit's cache key.
+    from utils.statistical_tests import friedman_test, pairwise_comparisons
+
+    comparisons = pairwise_comparisons(
+        _frame, metric=metric, lower_is_better=lower_is_better,
+        pair_columns=pair_columns, inference_unit=inference_unit, n_jobs=20,
+    )
+    omnibus = friedman_test(
+        _frame, metric=metric, pair_columns=pair_columns,
+        inference_unit=inference_unit,
+    )
+    return comparisons, omnibus
+
+
+def _significance_matrix_from_comparisons(
+    comparisons: pd.DataFrame, models, alpha_01: float = 0.01, alpha_05: float = 0.05
+) -> pd.DataFrame:
+    """Build a significance matrix without rerunning pairwise tests."""
+    model_names = sorted(models)
+    result = pd.DataFrame(0, index=model_names, columns=model_names)
+    for row in comparisons.itertuples():
+        value = 0
+        if row.p_holm < alpha_01:
+            value = 2 if row.a_better else -2
+        elif row.p_holm < alpha_05:
+            value = 1 if row.a_better else -1
+        result.loc[row.model_a, row.model_b] = value
+        result.loc[row.model_b, row.model_a] = -value
+    return result
 
 
 class PredictionMetricView(NamedTuple):
@@ -83,13 +131,51 @@ def _style_row_best_worst(row, lower_is_better: bool):
     ]
 
 
-def load_results(file_path: str) -> pd.DataFrame:
-    """Load results from CSV file"""
+@st.cache_resource(show_spinner="Loading prediction results…")
+def _read_results_cached(file_path: str, modified_ns: int) -> pd.DataFrame:
+    """Load a result file once per path and modification timestamp."""
+    del modified_ns  # Used only as part of the Streamlit cache key.
+    path = Path(file_path)
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path, low_memory=False)
+
+
+@st.cache_resource(show_spinner="Loading selected prediction models…")
+def _read_model_results_cached(
+    file_paths: tuple[str, ...], modified_ns: tuple[int, ...]
+) -> pd.DataFrame:
+    """Load only selected per-model Parquet files."""
+    del modified_ns
+    return pd.concat((pd.read_parquet(path) for path in file_paths), ignore_index=True)
+
+
+def load_results(file_path: str | Path) -> pd.DataFrame:
+    """Load results from CSV file."""
     try:
-        df = pd.read_csv(file_path)
-        return df
+        path = Path(file_path)
+        return _read_results_cached(str(path), path.stat().st_mtime_ns)
     except Exception as e:
         st.error(f"Error loading results: {e}")
+        return pd.DataFrame()
+
+
+def get_available_model_results() -> dict[str, Path]:
+    """Latest partitioned Parquet results keyed by prediction model."""
+    directory = Path("prediction_experiment_results/latest_by_model")
+    if not directory.exists():
+        return {}
+    return {path.stem: path for path in sorted(directory.glob("*.parquet"))}
+
+
+def load_model_results(paths: list[Path]) -> pd.DataFrame:
+    """Load selected model partitions with a modification-aware cache key."""
+    try:
+        path_strings = tuple(str(path) for path in paths)
+        modified = tuple(path.stat().st_mtime_ns for path in paths)
+        return _read_model_results_cached(path_strings, modified)
+    except Exception as e:
+        st.error(f"Error loading model results: {e}")
         return pd.DataFrame()
 
 
@@ -1284,26 +1370,55 @@ def main():
     # Sidebar for file selection
     st.sidebar.header("Settings")
     
-    # Get available result files
+    # Get available result sources.
     available_files = get_available_results()
+    available_model_files = get_available_model_results()
     
-    if not available_files:
+    if not available_files and not available_model_files:
         st.error("No result files found in `prediction_experiment_results/` directory.")
         st.info("Run `python src/12_evaluate_rolling_origins.py` first to generate results.")
         return
     
-    # File selection
-    file_names = [f.name for f in available_files]
-    selected_file_name = st.sidebar.selectbox(
-        "Select Results File",
-        file_names,
-        help="Choose a prediction results file to visualize"
-    )
-    
-    selected_file = next(f for f in available_files if f.name == selected_file_name)
-    
-    # Load data
-    df = load_results(selected_file)
+    source_options = []
+    if available_model_files:
+        source_options.append("Latest by model (Parquet)")
+    if available_files:
+        source_options.append("Historical merged/batch CSV")
+    selected_source = st.sidebar.radio("Results source", source_options)
+
+    if selected_source == "Latest by model (Parquet)":
+        parquet_models = list(available_model_files)
+        models_to_load = st.sidebar.multiselect(
+            "Load prediction models",
+            parquet_models,
+            default=parquet_models,
+            help="Only selected model files are read into memory.",
+        )
+        if not models_to_load:
+            st.info("Select at least one prediction model in the sidebar.")
+            return
+        selected_paths = [available_model_files[model] for model in models_to_load]
+        df = load_model_results(selected_paths)
+        selected_file_name = "latest_by_model_" + "_".join(models_to_load)
+        source_description = ", ".join(path.name for path in selected_paths)
+        source_fingerprint = tuple(
+            (str(path.resolve()), path.stat().st_mtime_ns, path.stat().st_size)
+            for path in selected_paths
+        )
+    else:
+        file_names = [f.name for f in available_files]
+        selected_file_name = st.sidebar.selectbox(
+            "Select Results File",
+            file_names,
+            help="Choose a historical prediction results CSV",
+        )
+        selected_file = next(f for f in available_files if f.name == selected_file_name)
+        df = load_results(selected_file)
+        source_description = selected_file_name
+        source_fingerprint = (
+            str(selected_file.resolve()), selected_file.stat().st_mtime_ns,
+            selected_file.stat().st_size,
+        )
     
     if df.empty:
         st.error("Failed to load data or file is empty")
@@ -1336,7 +1451,7 @@ def main():
     
     # Display file info
     st.sidebar.success(f"✓ Loaded {len(df)} records")
-    st.sidebar.info(f"File: {selected_file_name}")
+    st.sidebar.info(f"Source: {source_description}")
     
     # Main filters
     st.sidebar.header("🔍 Filters")
@@ -1349,6 +1464,8 @@ def main():
     # Get techniques and rates (may have NaN for original data)
     all_techniques = sorted([t for t in df['technique'].dropna().unique().tolist()])
     all_rates = sorted([r for r in df['rate_percent'].dropna().unique().tolist()])
+    gap_column = "structure" if "structure" in df.columns else "gap_pattern"
+    all_gap_patterns = sorted(df[gap_column].dropna().unique().tolist())
     all_recon_models = sorted(
         [rm for rm in df["reconstruction_model"].dropna().unique().tolist()]
     )
@@ -1364,21 +1481,31 @@ def main():
     selected_datasets = st.sidebar.multiselect("Dataset", all_datasets, default=all_datasets)
     selected_techniques = st.sidebar.multiselect("Technique", all_techniques, default=all_techniques)
     selected_rates = st.sidebar.multiselect("Missing Rate (%)", [int(r) for r in all_rates], default=[int(r) for r in all_rates])
+    selected_gap_patterns = st.sidebar.multiselect(
+        "Gap pattern", all_gap_patterns, default=all_gap_patterns,
+        help="Rodzaj rozmieszczenia braków: continuous, scattered lub mixed.",
+    )
     all_horizons = sorted(df["forecast_horizon"].dropna().unique().tolist()) if "forecast_horizon" in df.columns else []
-    selected_horizons = st.sidebar.multiselect("Forecast horizon", all_horizons, default=all_horizons)
+    selected_horizon = st.sidebar.selectbox(
+        "Forecast horizon",
+        ["All", *all_horizons],
+        help="Selecting one horizon filters the large result table before chart aggregation.",
+    )
     all_scopes = sorted(df["metric_scope"].dropna().unique().tolist()) if "metric_scope" in df.columns else []
     selected_scopes = st.sidebar.multiselect("Metric scope", all_scopes, default=all_scopes)
     
     # Apply filters to dataframe
-    df_filtered = df.copy()
+    df_filtered = df
     if selected_datasets:
         df_filtered = df_filtered[df_filtered['dataset_name'].isin(selected_datasets)]
     if selected_pred_models:
         df_filtered = df_filtered[df_filtered['prediction_model'].isin(selected_pred_models)]
-    if selected_horizons:
-        df_filtered = df_filtered[df_filtered["forecast_horizon"].isin(selected_horizons)]
+    if selected_horizon != "All":
+        df_filtered = df_filtered[df_filtered["forecast_horizon"] == selected_horizon]
     if selected_scopes:
         df_filtered = df_filtered[df_filtered["metric_scope"].isin(selected_scopes)]
+    if selected_gap_patterns:
+        df_filtered = df_filtered[df_filtered[gap_column].isin(selected_gap_patterns)]
     
     # Filter reconstructed data by technique and rate
     df_recon = df_filtered[df_filtered['source_type'] == 'reconstructed'].copy()
@@ -1390,6 +1517,13 @@ def main():
     # Filter out NaN values for selected metric
     df_filtered = df_filtered[df_filtered[m.key].notna()]
     df_recon = df_recon[df_recon[m.key].notna()]
+
+    statistics_data_key = repr((
+        "stats-v2-shapiro-sample-5000",
+        source_fingerprint, m.key, tuple(selected_pred_models),
+        tuple(selected_datasets), tuple(selected_techniques), tuple(selected_rates),
+        tuple(selected_gap_patterns), selected_horizon, tuple(selected_scopes),
+    ))
     
     # Display overview metrics for RECONSTRUCTION MODELS
     st.header("📈 Overview: Reconstruction Models")
@@ -1419,6 +1553,7 @@ def main():
     else:
         st.warning("No reconstructed data with current filters")
     
+    render_inpainting_transform_invertibility()
     st.markdown("---")
     
     # Load training metrics for new tabs
@@ -1431,6 +1566,14 @@ def main():
             df_recon_perf = df_recon_perf[df_recon_perf["technique"].isin(selected_techniques)]
         if selected_rates:
             df_recon_perf = df_recon_perf[df_recon_perf["rate_percent"].isin(selected_rates)]
+        perf_gap_column = (
+            "structure" if "structure" in df_recon_perf.columns else "gap_pattern"
+            if "gap_pattern" in df_recon_perf.columns else None
+        )
+        if selected_gap_patterns and perf_gap_column:
+            df_recon_perf = df_recon_perf[
+                df_recon_perf[perf_gap_column].isin(selected_gap_patterns)
+            ]
     
     # Visualization tabs - RECONSTRUCTION MODEL focused
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
@@ -1602,7 +1745,13 @@ def main():
             )
             st.caption(f"Showing {min(n_show, len(df_rows))} of {len(df_rows)} prediction rows.")
             
-            csv_rows = df_rows.to_csv(index=False)
+            download_rows = df_rows.head(MAX_BROWSER_DOWNLOAD_ROWS)
+            if len(df_rows) > MAX_BROWSER_DOWNLOAD_ROWS:
+                st.warning(
+                    f"Browser download is limited to {MAX_BROWSER_DOWNLOAD_ROWS:,} of "
+                    f"{len(df_rows):,} rows to stay below Streamlit's message-size limit."
+                )
+            csv_rows = download_rows.to_csv(index=False)
             st.download_button(
                 label="📥 Download full per-prediction data (CSV)",
                 data=csv_rows,
@@ -1744,7 +1893,7 @@ def main():
     # Tab 8: Statistical Tests
     with tab8:
         st.header("📊 Statistical Significance Tests")
-        st.caption("Dataset-level paired tests with Holm correction")
+        st.caption("Paired tests with selectable inference unit and Holm correction")
         
         if len(df_recon) == 0:
             st.warning("No reconstructed data available")
@@ -1756,6 +1905,33 @@ def main():
                 get_model_statistics,
                 get_significance_summary
             )
+
+            from utils.statistical_tests_ui import (
+                render_friedman_explanation, render_holm_explanation,
+                render_normality_and_test_selection,
+            )
+
+            inference_label = st.radio(
+                "Inference unit",
+                ["Condition-level (benchmark)", "Dataset-level (confirmatory)"],
+                horizontal=True,
+                key="prediction_dashboard_inference_unit",
+            )
+            inference_unit = (
+                "condition" if inference_label.startswith("Condition") else "dataset"
+            )
+            if inference_unit == "condition":
+                st.warning(
+                    "Benchmark-level inference uses matched experimental cells after "
+                    "averaging reconstruction iterations. It measures differences inside "
+                    "this benchmark and does not alone support generalization beyond the "
+                    "three datasets."
+                )
+            else:
+                st.info(
+                    "Confirmatory dataset-level inference averages repeated conditions. "
+                    "With only three datasets, statistical power is low."
+                )
             
             with st.expander("ℹ️ How to interpret this analysis", expanded=False):
                 st.markdown(f"""
@@ -1764,8 +1940,10 @@ def main():
                 Conditions are matched before comparison. Normality is tested
                 on paired differences, followed by a paired t-test or Wilcoxon
                 test. Holm-adjusted p-values control family-wise error.
-                Repeated conditions are averaged within each dataset, avoiding
-                pseudoreplication.
+                Dataset-level mode averages repeated conditions within each
+                dataset. Condition-level mode first matches exact realizations,
+                then averages reconstruction iterations within experimental
+                cells used as inference units.
                 
                 **Legend**:
                 - **🟩 +2 (p<0.01)**: Row model is **significantly better** than column model
@@ -1778,7 +1956,11 @@ def main():
             st.divider()
             
             # Rename column for statistical functions
-            df_for_stats = df_recon.rename(columns={'reconstruction_model': 'model'})
+            df_for_stats = (
+                df_recon
+                .drop(columns=["model"], errors="ignore")
+                .rename(columns={"reconstruction_model": "model"})
+            )
             recon_pair_columns = [
                 column for column in (
                     "dataset_name", "source_type", "technique", "rate_percent",
@@ -1799,28 +1981,32 @@ def main():
             )
             
             st.divider()
+            with st.spinner("Obliczanie testów lub odczyt z cache…"):
+                recon_pairwise_details, recon_friedman = _cached_statistical_analysis(
+                    f"{statistics_data_key}|reconstruction|{inference_unit}",
+                    df_for_stats, m.key, m.lower_is_better,
+                    tuple(recon_pair_columns), inference_unit,
+                )
+            render_normality_and_test_selection(recon_pairwise_details)
+            st.divider()
+
             
-            recon_friedman = friedman_test(
-                df_for_stats, metric=m.key, pair_columns=recon_pair_columns
-            )
             st.subheader("Friedman Omnibus Test")
+            render_friedman_explanation(recon_friedman)
             if np.isfinite(recon_friedman["p_value"]):
                 st.write(
                     f"χ² = {recon_friedman['statistic']:.4f}, "
                     f"p = {recon_friedman['p_value']:.4g}, "
-                    f"datasets = {recon_friedman['n_datasets']}"
+                    f"datasets = {recon_friedman['n_datasets']}, "
+                    f"units = {recon_friedman['n_units']}"
                 )
             else:
                 st.info("At least three models and two complete dataset blocks are required.")
 
             st.subheader("Pairwise Statistical Significance Matrix")
-            significance_matrix = perform_pairwise_ttests(
-                df_for_stats,
-                metric=m.key,
-                alpha_01=0.01,
-                alpha_05=0.05,
-                lower_is_better=m.lower_is_better,
-                pair_columns=recon_pair_columns,
+            render_holm_explanation(len(recon_pairwise_details))
+            significance_matrix = _significance_matrix_from_comparisons(
+                recon_pairwise_details, df_for_stats["model"].dropna().unique()
             )
             
             def color_significance(val):
@@ -1852,25 +2038,21 @@ def main():
             st.dataframe(summary_df, width='stretch')
 
             with st.expander("🔬 Reconstruction effect sizes and 95% CIs", expanded=False):
-                st.dataframe(
-                    pairwise_comparisons(
-                        df_for_stats,
-                        metric=m.key,
-                        lower_is_better=m.lower_is_better,
-                        pair_columns=recon_pair_columns,
-                    ),
-                    width="stretch",
-                )
+                st.dataframe(recon_pairwise_details, width="stretch")
             
             # ====================================================================
             # PREDICTION MODEL PAIRED TESTS
             # ====================================================================
             st.markdown("---")
             st.header("📊 Statistical Tests: Prediction Models")
-            st.caption("Dataset-level paired tests between prediction models")
+            st.caption("Paired tests between prediction models using the selected inference unit")
             
             # Rename column for statistical functions
-            df_pred_stats = df_recon.rename(columns={'prediction_model': 'model'})
+            df_pred_stats = (
+                df_recon
+                .drop(columns=["model"], errors="ignore")
+                .rename(columns={"prediction_model": "model"})
+            )
             pred_pair_columns = [
                 column for column in (
                     "dataset_name", "source_type", "technique", "rate_percent",
@@ -1891,28 +2073,32 @@ def main():
             )
             
             st.divider()
+            with st.spinner("Obliczanie testów lub odczyt z cache…"):
+                pred_pairwise_details, pred_friedman = _cached_statistical_analysis(
+                    f"{statistics_data_key}|prediction|{inference_unit}",
+                    df_pred_stats, m.key, m.lower_is_better,
+                    tuple(pred_pair_columns), inference_unit,
+                )
+            render_normality_and_test_selection(pred_pairwise_details)
+            st.divider()
+
             
-            pred_friedman = friedman_test(
-                df_pred_stats, metric=m.key, pair_columns=pred_pair_columns
-            )
             st.subheader("Friedman Omnibus Test (Prediction Models)")
+            render_friedman_explanation(pred_friedman)
             if np.isfinite(pred_friedman["p_value"]):
                 st.write(
                     f"χ² = {pred_friedman['statistic']:.4f}, "
                     f"p = {pred_friedman['p_value']:.4g}, "
-                    f"datasets = {pred_friedman['n_datasets']}"
+                    f"datasets = {pred_friedman['n_datasets']}, "
+                    f"units = {pred_friedman['n_units']}"
                 )
             else:
                 st.info("At least three models and two complete dataset blocks are required.")
 
             st.subheader("Pairwise Statistical Significance Matrix (Prediction Models)")
-            pred_significance_matrix = perform_pairwise_ttests(
-                df_pred_stats,
-                metric=m.key,
-                alpha_01=0.01,
-                alpha_05=0.05,
-                lower_is_better=m.lower_is_better,
-                pair_columns=pred_pair_columns,
+            render_holm_explanation(len(pred_pairwise_details))
+            pred_significance_matrix = _significance_matrix_from_comparisons(
+                pred_pairwise_details, df_pred_stats["model"].dropna().unique()
             )
             
             styled_pred_matrix = pred_significance_matrix.style.map(color_significance)
@@ -1930,15 +2116,7 @@ def main():
             st.dataframe(pred_summary_df, width='stretch')
 
             with st.expander("🔬 Prediction effect sizes and 95% CIs", expanded=False):
-                st.dataframe(
-                    pairwise_comparisons(
-                        df_pred_stats,
-                        metric=m.key,
-                        lower_is_better=m.lower_is_better,
-                        pair_columns=pred_pair_columns,
-                    ),
-                    width="stretch",
-                )
+                st.dataframe(pred_pairwise_details, width="stretch")
     
     # Tab 9: By Dataset
     with tab9:
@@ -2389,9 +2567,26 @@ def main():
         
         df_display = df_display.sort_values(sort_column, ascending=(sort_order == 'Ascending'))
         
-        st.dataframe(df_display, width='stretch')
-        
-        csv = df_display.to_csv(index=False)
+        total_rows = len(df_display)
+        total_pages = max(1, (total_rows + RAW_PAGE_SIZE - 1) // RAW_PAGE_SIZE)
+        page = st.number_input(
+            "Page", min_value=1, max_value=total_pages, value=1, step=1,
+            help=f"The browser receives at most {RAW_PAGE_SIZE} rows at a time.",
+        )
+        start = (page - 1) * RAW_PAGE_SIZE
+        st.dataframe(df_display.iloc[start:start + RAW_PAGE_SIZE], width="stretch")
+        st.caption(
+            f"Rows {start + 1 if total_rows else 0}–"
+            f"{min(start + RAW_PAGE_SIZE, total_rows)} of {total_rows}."
+        )
+
+        download_df = df_display.head(MAX_BROWSER_DOWNLOAD_ROWS)
+        if total_rows > MAX_BROWSER_DOWNLOAD_ROWS:
+            st.warning(
+                f"Browser download is limited to {MAX_BROWSER_DOWNLOAD_ROWS:,} of {total_rows:,} rows "
+                "to stay below Streamlit's message-size limit. Use the source CSV for the full data."
+            )
+        csv = download_df.to_csv(index=False)
         st.download_button(
             label="📥 Download CSV",
             data=csv,

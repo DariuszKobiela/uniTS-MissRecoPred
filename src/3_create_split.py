@@ -164,34 +164,26 @@ def split_dataset(
     for note in boundaries.notes:
         print(f"  ℹ️  {note}")
 
-    if (
-        train_exists
-        and validation_exists
-        and test_exists
-        and not config.get_overwrite_existing()
-    ):
+    if train_exists and validation_exists and test_exists and not config.get_overwrite_existing():
         try:
+            existing_train_n = len(pd.read_csv(train_output_file, index_col=0))
+            existing_validation_n = len(pd.read_csv(validation_output_file, index_col=0))
             existing_test_n = len(pd.read_csv(test_output_file, index_col=0))
         except Exception:
-            existing_test_n = None
-        if existing_test_n == boundaries.test_length:
+            existing_train_n = existing_validation_n = existing_test_n = None
+        if (
+            existing_train_n == boundaries.reconstruction_length
+            and existing_validation_n == boundaries.validation_length
+            and existing_test_n == boundaries.test_length
+        ):
             print(f"  ⏭️  Skipping (files exist with test holdout={boundaries.test_length})")
             return {"status": "skipped", "boundaries": boundaries, "horizons": horizons}
 
     train_df, validation_df, test_df = split_time_series_three_way(df, boundaries)
 
-    print(
-        f"  📈 Reconstruction train: {len(train_df)} "
-        f"({len(train_df) / total_samples * 100:.1f}%)"
-    )
-    print(
-        f"  🧪 SD2 validation:      {len(validation_df)} "
-        f"({len(validation_df) / total_samples * 100:.1f}%)"
-    )
-    print(
-        f"  📉 Rolling test:        {len(test_df)} "
-        f"({len(test_df) / total_samples * 100:.1f}%)"
-    )
+    print(f"  📈 Reconstruction train: {len(train_df)} ({len(train_df) / total_samples * 100:.1f}%)")
+    print(f"  🧪 SD2 validation:      {len(validation_df)} ({len(validation_df) / total_samples * 100:.1f}%)")
+    print(f"  📉 Rolling test:        {len(test_df)} ({len(test_df) / total_samples * 100:.1f}%)")
 
     for path, frame in (
         (train_output_file, train_df),

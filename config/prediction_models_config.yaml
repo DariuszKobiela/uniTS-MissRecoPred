@@ -1,5 +1,4 @@
-# Parametry jedynych aktywnych modeli używanych w ocenie rolling-origin:
-# prostego XGBoost oraz niesezonowego ARIMA.
+# Parametry aktywnych modeli używanych w ocenie rolling-origin.
 global_training:
   seed: 42
 
@@ -14,3 +13,22 @@ sarimax:
   # SARIMAX z zerowym składnikiem sezonowym jest modelem ARIMA(1,1,1).
   order: [1, 1, 1]
   seasonal_order: [0, 0, 0, 0]
+
+prophet:
+  # Calendar seasonalities are disabled because datasets use different sample intervals.
+  yearly_seasonality: false
+  weekly_seasonality: false
+  daily_seasonality: false
+  n_changepoints: 5
+  changepoint_prior_scale: 0.05
+  seasonality_mode: additive
+  seasonal_fourier_order: 5
+  max_points: 2000
+
+holt_winters:
+  trend: add
+  seasonal: add
+  damped_trend: false
+  # Keep recent complete cycles; seasonal periods come from config/config.yaml.
+  max_seasonal_cycles: 4
+  initialization_method: heuristic

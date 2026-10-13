@@ -43,7 +43,14 @@ def _empirical_override(
     dataset_overrides = _dataset_override(payload.get("overrides", {}), dataset)
     if not isinstance(dataset_overrides, dict):
         return {}
-    override = dataset_overrides.get(model_name, dataset_overrides.get(encoding, {}))
+    # HPO normally targets zero-shot models, but these inference parameters also
+    # apply to the corresponding fine-tuned model. An explicit fine-tuned entry
+    # remains highest priority.
+    base_model_name = model_name.removesuffix("_finetuned")
+    override = dataset_overrides.get(
+        model_name,
+        dataset_overrides.get(base_model_name, dataset_overrides.get(encoding, {})),
+    )
     return override if isinstance(override, dict) else {}
 
 

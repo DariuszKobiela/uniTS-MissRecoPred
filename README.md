@@ -36,7 +36,7 @@ Pełny pipeline wykonuje kolejno:
 - `src/1_*.py` … `src/14_*.py` — wykonywalne etapy eksperymentu w kolejności;
 - `src/A_*.py`, `src/B_*.py` — opcjonalne narzędzia pomocnicze;
 - `src/reconstruction_models/` — aktywne modele rekonstrukcji;
-- `src/prediction_models/` — modele SARIMAX i XGBoost używane przez rolling-origin;
+- `src/prediction_models/` — modele Holt-Winters, Prophet, SARIMAX i XGBoost używane przez rolling-origin;
 - `src/utils/` — moduły współdzielone;
 - `config/` — aktywna konfiguracja;
 - `tests/` — testy aktywnej ścieżki;

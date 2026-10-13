@@ -115,12 +115,32 @@ def _paired_values(
     )
 
 
-def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, float, bool]) -> dict:
+SHAPIRO_MAX_N = 5_000
+SHAPIRO_RANDOM_STATE = 42
+
+
+def _shapiro_wilk(differences: np.ndarray) -> tuple[float, int, bool]:
+    """Run Shapiro-Wilk, using a reproducible random sample above 5,000."""
+    values = np.asarray(differences, dtype=float)
+    n = len(values)
+    if n < 3 or np.allclose(values, values[0]):
+        return np.nan, 0, False
+    sampled = n > SHAPIRO_MAX_N
+    if sampled:
+        rng = np.random.default_rng(SHAPIRO_RANDOM_STATE)
+        values = values[rng.choice(n, size=SHAPIRO_MAX_N, replace=False)]
+    return float(stats.shapiro(values).pvalue), len(values), sampled
+
+
+def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, int, str, float, bool]) -> dict:
     """Run one paired comparison on small dataset-level summary arrays."""
-    model_a, model_b, values_a, values_b, exact_pairs, normality_alpha, lower_is_better = task
+    (model_a, model_b, values_a, values_b, exact_pairs, n_source_datasets,
+     inference_unit, normality_alpha, lower_is_better) = task
     differences = values_a - values_b
     n = len(differences)
-    shapiro_p = float(stats.shapiro(differences).pvalue) if 3 <= n <= 5000 else np.nan
+    # SciPy warns that p-values are inaccurate above 5,000 observations.
+    # Use a reproducible random subsample rather than leaving shapiro_p empty.
+    shapiro_p, shapiro_n, shapiro_sampled = _shapiro_wilk(differences)
     use_t = n >= 3 and np.isfinite(shapiro_p) and shapiro_p >= normality_alpha
     if n < 2:
         test, statistic, p_value = "insufficient_pairs", np.nan, np.nan
@@ -143,7 +163,10 @@ def _evaluate_pair(task: tuple[str, str, np.ndarray, np.ndarray, int, float, boo
     mean_difference = float(differences.mean()) if n else np.nan
     return {
         "model_a": model_a, "model_b": model_b, "test": test,
-        "n_datasets": n, "n_exact_pairs": exact_pairs, "shapiro_p": shapiro_p,
+        "n_units": n, "n_datasets": n_source_datasets,
+        "inference_unit": inference_unit, "n_exact_pairs": exact_pairs,
+        "shapiro_p": shapiro_p, "shapiro_n": shapiro_n,
+        "shapiro_sampled": shapiro_sampled,
         "statistic": statistic, "p_value": p_value, "mean_difference": mean_difference,
         "ci_95_low": ci_low, "ci_95_high": ci_high, "effect_name": effect_name,
         "effect_size": effect_size,
@@ -162,12 +185,15 @@ def pairwise_comparisons(
     show_progress: bool = False,
     progress_desc: str = "Pairwise comparisons",
     n_jobs: int = 1,
+    inference_unit: str = "dataset",
 ) -> pd.DataFrame:
-    """Compare model pairs, optionally evaluating tests and bootstraps in processes."""
+    """Compare model pairs at dataset or matched-condition level."""
     required = {"model", metric}
     if missing := required.difference(df.columns):
         raise ValueError(f"Missing required columns: {sorted(missing)}")
     pairs = _resolve_pair_columns(df, pair_columns)
+    if inference_unit not in {"dataset", "condition"}:
+        raise ValueError("inference_unit must be dataset or condition")
     models = sorted(df["model"].dropna().unique())
     grouped = df.groupby([*pairs, "model"], dropna=False, as_index=False)[metric].mean()
     wide = grouped.pivot(index=pairs, columns="model", values=metric)
@@ -175,10 +201,17 @@ def pairwise_comparisons(
     tasks = []
     for model_a, model_b in combinations(models, 2):
         paired = wide[[model_a, model_b]].dropna(subset=[model_a, model_b])
-        by_dataset = paired.groupby(level=dataset_column).mean()
-        tasks.append((model_a, model_b, by_dataset[model_a].to_numpy(dtype=float),
-                      by_dataset[model_b].to_numpy(dtype=float), len(paired),
-                      normality_alpha, lower_is_better))
+        n_source_datasets = paired.index.get_level_values(dataset_column).nunique()
+        inference_frame = (
+            paired.groupby(level=dataset_column).mean()
+            if inference_unit == "dataset"
+            else paired
+        )
+        tasks.append((model_a, model_b,
+                      inference_frame[model_a].to_numpy(dtype=float),
+                      inference_frame[model_b].to_numpy(dtype=float), len(paired),
+                      n_source_datasets, inference_unit, normality_alpha,
+                      lower_is_better))
     workers = max(1, int(n_jobs))
     executor = None
     if workers == 1 or len(tasks) < 2:
@@ -207,22 +240,29 @@ def friedman_test(
     df: pd.DataFrame,
     metric: str = "mad",
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
 ) -> Dict[str, float]:
-    """Friedman omnibus test on complete, dataset-level model blocks."""
+    """Friedman omnibus test on dataset or matched-condition blocks."""
     pairs = _resolve_pair_columns(df, pair_columns)
+    if inference_unit not in {"dataset", "condition"}:
+        raise ValueError("inference_unit must be dataset or condition")
     models = sorted(df["model"].dropna().unique())
     grouped = df.groupby([*pairs, "model"], dropna=False, as_index=False)[metric].mean()
     wide = grouped.pivot(index=pairs, columns="model", values=metric)
     dataset_column = next(c for c in ("dataset_name", "dataset") if c in pairs)
-    wide = wide.groupby(level=dataset_column).mean().dropna(subset=models)
+    n_datasets = wide.index.get_level_values(dataset_column).nunique()
+    if inference_unit == "dataset":
+        wide = wide.groupby(level=dataset_column).mean()
+    wide = wide.dropna(subset=models)
+    base = {"n_datasets": n_datasets, "n_units": len(wide),
+            "n_models": len(models), "inference_unit": inference_unit}
     if len(models) < 3 or len(wide) < 2:
-        return {"statistic": np.nan, "p_value": np.nan, "n_datasets": len(wide), "n_models": len(models)}
+        return {"statistic": np.nan, "p_value": np.nan, **base}
     result = stats.friedmanchisquare(*(wide[model].to_numpy() for model in models))
     return {
         "statistic": float(result.statistic),
         "p_value": float(result.pvalue),
-        "n_datasets": len(wide),
-        "n_models": len(models),
+        **base,
     }
 
 
@@ -233,6 +273,8 @@ def perform_pairwise_ttests(
     alpha_05: float = 0.05,
     lower_is_better: bool = True,
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
     Perform pairwise t-tests between all models.
@@ -260,6 +302,8 @@ def perform_pairwise_ttests(
         lower_is_better=lower_is_better,
         alpha=alpha_05,
         pair_columns=pair_columns,
+        inference_unit=inference_unit,
+        n_jobs=n_jobs,
     )
     models = sorted(df['model'].dropna().unique())
     n_models = len(models)
@@ -283,6 +327,8 @@ def get_pairwise_pvalues(
     df: pd.DataFrame,
     metric: str = 'mad',
     pair_columns: Sequence[str] | None = None,
+    inference_unit: str = "dataset",
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
     Get matrix of p-values for all pairwise comparisons.
@@ -298,7 +344,8 @@ def get_pairwise_pvalues(
     pvalue_matrix = pd.DataFrame(1.0, index=models, columns=models)
     
     for row in pairwise_comparisons(
-        df, metric=metric, pair_columns=pair_columns
+        df, metric=metric, pair_columns=pair_columns,
+        inference_unit=inference_unit, n_jobs=n_jobs
     ).itertuples():
         pvalue_matrix.loc[row.model_a, row.model_b] = row.p_holm
         pvalue_matrix.loc[row.model_b, row.model_a] = row.p_holm

@@ -1,6 +1,6 @@
 # SD2 window, resolution, prompt and parameter analysis
 
-Generated: 2026-09-21T18:26:23.669853+00:00
+Generated: 2026-10-13T14:28:41.941329+00:00
 
 ## Interpretation
 
@@ -21,9 +21,18 @@ Generated: 2026-09-21T18:26:23.669853+00:00
 
 | dataset | window samples | image size | status |
 | --- | ---: | ---: | --- |
-| boiler_outlet_temp_univ | 2048 | 512 | provisional_analytical |
-| pump_sensor_28_univ | 2048 | 512 | provisional_analytical |
-| vibration_sensor_S1 | 512 | 512 | provisional_analytical |
+| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 1024 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
+| boiler_outlet_temp_univ | 1024 | 512 | empirical_gpu |
+| pump_sensor_28_univ | 1024 | 512 | empirical_gpu |
+| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
+| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 2048 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
+| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 2048 | 1024 | empirical_gpu |
+| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
 
 ## Existing training dataset audit
 
@@ -49,33 +58,33 @@ Generated: 2026-09-21T18:26:23.669853+00:00
 
 | dataset | window | span | image | samples/pixel | mean retained matrix context | potential calls/file | memory vs 512 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 512 | 1.00 | 80.9% | 222 | 1.0x |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 1024 | 0.50 | 90.1% | 222 | 4.0x |
-| boiler_outlet_temp_univ | 512 | 42.7 min | 2048 | 0.25 | 94.9% | 222 | 16.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 512 | 2.00 | 67.0% | 95 | 1.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 1024 | 1.00 | 80.9% | 95 | 4.0x |
-| boiler_outlet_temp_univ | 1024 | 1.4 h | 2048 | 0.50 | 90.1% | 95 | 16.0x |
-| boiler_outlet_temp_univ | 2048 | 2.8 h | 512 | 4.00 | 48.8% | 45 | 1.0x |
-| boiler_outlet_temp_univ | 2048 | 2.8 h | 1024 | 2.00 | 67.0% | 45 | 4.0x |
-| boiler_outlet_temp_univ | 2048 | 2.8 h | 2048 | 1.00 | 80.9% | 45 | 16.0x |
-| pump_sensor_28_univ | 512 | 8.5 h | 512 | 1.00 | 80.9% | 570 | 1.0x |
-| pump_sensor_28_univ | 512 | 8.5 h | 1024 | 0.50 | 90.1% | 570 | 4.0x |
-| pump_sensor_28_univ | 512 | 8.5 h | 2048 | 0.25 | 94.9% | 570 | 16.0x |
-| pump_sensor_28_univ | 1024 | 17.1 h | 512 | 2.00 | 67.0% | 245 | 1.0x |
-| pump_sensor_28_univ | 1024 | 17.1 h | 1024 | 1.00 | 80.9% | 245 | 4.0x |
-| pump_sensor_28_univ | 1024 | 17.1 h | 2048 | 0.50 | 90.1% | 245 | 16.0x |
-| pump_sensor_28_univ | 2048 | 1.4 d | 512 | 4.00 | 48.8% | 114 | 1.0x |
-| pump_sensor_28_univ | 2048 | 1.4 d | 1024 | 2.00 | 67.0% | 114 | 4.0x |
-| pump_sensor_28_univ | 2048 | 1.4 d | 2048 | 1.00 | 80.9% | 114 | 16.0x |
-| vibration_sensor_S1 | 512 | 3.0 d | 512 | 0.36 | 92.7% | 1 | 1.0x |
-| vibration_sensor_S1 | 512 | 3.0 d | 1024 | 0.18 | 96.3% | 1 | 4.0x |
-| vibration_sensor_S1 | 512 | 3.0 d | 2048 | 0.09 | 98.1% | 1 | 16.0x |
-| vibration_sensor_S1 | 1024 | 3.0 d | 512 | 0.36 | 92.7% | 1 | 1.0x |
-| vibration_sensor_S1 | 1024 | 3.0 d | 1024 | 0.18 | 96.3% | 1 | 4.0x |
-| vibration_sensor_S1 | 1024 | 3.0 d | 2048 | 0.09 | 98.1% | 1 | 16.0x |
-| vibration_sensor_S1 | 2048 | 3.0 d | 512 | 0.36 | 92.7% | 1 | 1.0x |
-| vibration_sensor_S1 | 2048 | 3.0 d | 1024 | 0.18 | 96.3% | 1 | 4.0x |
-| vibration_sensor_S1 | 2048 | 3.0 d | 2048 | 0.09 | 98.1% | 1 | 16.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 512 | 1.00 | 68.8% | 222 | 1.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 1024 | 0.50 | 82.6% | 222 | 4.0x |
+| boiler_outlet_temp_univ | 512 | 42.7 min | 2048 | 0.25 | 90.8% | 222 | 16.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 512 | 2.00 | 55.2% | 95 | 1.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 1024 | 1.00 | 68.8% | 95 | 4.0x |
+| boiler_outlet_temp_univ | 1024 | 1.4 h | 2048 | 0.50 | 82.6% | 95 | 16.0x |
+| boiler_outlet_temp_univ | 2048 | 2.8 h | 512 | 4.00 | 42.1% | 45 | 1.0x |
+| boiler_outlet_temp_univ | 2048 | 2.8 h | 1024 | 2.00 | 55.2% | 45 | 4.0x |
+| boiler_outlet_temp_univ | 2048 | 2.8 h | 2048 | 1.00 | 68.8% | 45 | 16.0x |
+| pump_sensor_28_univ | 512 | 8.5 h | 512 | 1.00 | 68.8% | 570 | 1.0x |
+| pump_sensor_28_univ | 512 | 8.5 h | 1024 | 0.50 | 82.6% | 570 | 4.0x |
+| pump_sensor_28_univ | 512 | 8.5 h | 2048 | 0.25 | 90.8% | 570 | 16.0x |
+| pump_sensor_28_univ | 1024 | 17.1 h | 512 | 2.00 | 55.2% | 245 | 1.0x |
+| pump_sensor_28_univ | 1024 | 17.1 h | 1024 | 1.00 | 68.8% | 245 | 4.0x |
+| pump_sensor_28_univ | 1024 | 17.1 h | 2048 | 0.50 | 82.6% | 245 | 16.0x |
+| pump_sensor_28_univ | 2048 | 1.4 d | 512 | 4.00 | 42.1% | 114 | 1.0x |
+| pump_sensor_28_univ | 2048 | 1.4 d | 1024 | 2.00 | 55.2% | 114 | 4.0x |
+| pump_sensor_28_univ | 2048 | 1.4 d | 2048 | 1.00 | 68.8% | 114 | 16.0x |
+| vibration_sensor_S1 | 512 | 3.0 d | 512 | 0.36 | 87.0% | 1 | 1.0x |
+| vibration_sensor_S1 | 512 | 3.0 d | 1024 | 0.18 | 93.2% | 1 | 4.0x |
+| vibration_sensor_S1 | 512 | 3.0 d | 2048 | 0.09 | 96.6% | 1 | 16.0x |
+| vibration_sensor_S1 | 1024 | 3.0 d | 512 | 0.36 | 87.0% | 1 | 1.0x |
+| vibration_sensor_S1 | 1024 | 3.0 d | 1024 | 0.18 | 93.2% | 1 | 4.0x |
+| vibration_sensor_S1 | 1024 | 3.0 d | 2048 | 0.09 | 96.6% | 1 | 16.0x |
+| vibration_sensor_S1 | 2048 | 3.0 d | 512 | 0.36 | 87.0% | 1 | 1.0x |
+| vibration_sensor_S1 | 2048 | 3.0 d | 1024 | 0.18 | 93.2% | 1 | 4.0x |
+| vibration_sensor_S1 | 2048 | 3.0 d | 2048 | 0.09 | 96.6% | 1 | 16.0x |
 
 ## GPU optimization search space
 
@@ -83,7 +92,7 @@ Generated: 2026-09-21T18:26:23.669853+00:00
 - Image sizes: [512, 1024, 2048]
 - Inference steps: [20, 30, 42, 50]
 - Guidance scales: [1.0, 3.0, 5.0, 7.5]
-- Missing rates: [0.03, 0.08, 0.2]
+- Missing rates: [0.02, 0.05, 0.2, 0.5]
 - Explicit SD2 sensitivity seeds: [42, 43, 44, 45, 46]
 - Trials per model/dataset: 12
 - Validation cases per trial: 3
@@ -94,36 +103,7 @@ Representation-specific prompt candidates:
 - RP: high quality continuous recurrence distance plot mathematical visualization | grayscale continuous recurrence distance plot, symmetric matrix with zero diagonal | scientific sensor recurrence distance matrix, preserve symmetry and local dynamics
 - SPEC: high quality spectrogram mathematical visualization | grayscale time frequency spectrogram of a continuous industrial sensor signal | scientific sensor spectrogram, coherent frequency bands and temporal continuity
 
-## Round-trip and oracle ablations
+## GPU validation
 
-- `round_trip` scores all clean samples after encode, 8-bit image quantization, and decode; diffusion is bypassed.
-- `oracle_clean_image` scores only simulated missing positions after substituting the ideal clean encoded image for the SD2 output.
-- The oracle uses clean-image decoder metadata and is a representation ceiling, not a deployable imputation method.
-- Summary metric: smape. Detailed results: sd2_representation_ablations.csv
-
-| ablation | encoding | image | mean metric | cases |
-| --- | --- | ---: | ---: | ---: |
-| oracle_clean_image | GAF | 512 | 0.667967 | 57 |
-| oracle_clean_image | GAF | 1024 | 0.398324 | 57 |
-| oracle_clean_image | GAF | 2048 | 0.170611 | 57 |
-| oracle_clean_image | MTF | 512 | 1.17656 | 57 |
-| oracle_clean_image | MTF | 1024 | 0.970038 | 57 |
-| oracle_clean_image | MTF | 2048 | 0.900527 | 57 |
-| oracle_clean_image | RP | 512 | 0.623271 | 57 |
-| oracle_clean_image | RP | 1024 | 0.346676 | 57 |
-| oracle_clean_image | RP | 2048 | 0.114789 | 57 |
-| oracle_clean_image | SPEC | 512 | 3.65663 | 57 |
-| oracle_clean_image | SPEC | 1024 | 3.43626 | 57 |
-| oracle_clean_image | SPEC | 2048 | 3.42567 | 57 |
-| round_trip | GAF | 512 | 0.603384 | 19 |
-| round_trip | GAF | 1024 | 0.353631 | 19 |
-| round_trip | GAF | 2048 | 0.157448 | 19 |
-| round_trip | MTF | 512 | 0.945166 | 19 |
-| round_trip | MTF | 1024 | 0.80341 | 19 |
-| round_trip | MTF | 2048 | 0.731343 | 19 |
-| round_trip | RP | 512 | 0.582536 | 19 |
-| round_trip | RP | 1024 | 0.326167 | 19 |
-| round_trip | RP | 2048 | 0.12039 | 19 |
-| round_trip | SPEC | 512 | 3.70593 | 19 |
-| round_trip | SPEC | 1024 | 3.45927 | 19 |
-| round_trip | SPEC | 2048 | 3.45815 | 19 |
+Successful validation cases: 234
+Detailed results: sd2_inference_trials.csv

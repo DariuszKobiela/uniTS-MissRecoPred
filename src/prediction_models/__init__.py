@@ -1,14 +1,18 @@
 """Prediction models used by the rolling-origin experiment."""
 
+from .holt_winters import predict_holt_winters
+from .prophet import predict_prophet
 from .sarimax import predict_sarimax
 from .xgboost import predict_xgboost
 
 PREDICTION_MODELS = {
+    "holt_winters": predict_holt_winters,
+    "prophet": predict_prophet,
     "sarimax": predict_sarimax,
     "xgboost": predict_xgboost,
 }
 GPU_MODELS: set[str] = set()
-DETERMINISTIC_MODELS = {"sarimax"}
+DETERMINISTIC_MODELS = {"holt_winters", "prophet", "sarimax"}
 
 
 def get_available_models():
@@ -33,5 +37,5 @@ def is_deterministic_model(model_name: str) -> bool:
 __all__ = [
     "PREDICTION_MODELS", "GPU_MODELS", "DETERMINISTIC_MODELS",
     "get_available_models", "is_gpu_model", "is_deterministic_model",
-    "predict_sarimax", "predict_xgboost",
+    "predict_holt_winters", "predict_prophet", "predict_sarimax", "predict_xgboost",
 ]

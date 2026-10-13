@@ -106,6 +106,15 @@ def mtf_to_series(
     transition = np.asarray(metadata["transition"], dtype=np.float64)
     states = np.asarray(metadata["reference_states"], dtype=np.int64).copy()
     missing_encoded = np.asarray(metadata["missing_encoded"], dtype=bool)
+    encoded_size = len(states)
+    if field.shape != (encoded_size, encoded_size):
+        field = np.asarray(
+            Image.fromarray(field.astype(np.float32), mode="F").resize(
+                (encoded_size, encoded_size),
+                resample=Image.Resampling.BILINEAR,
+            ),
+            dtype=np.float64,
+        )
     known = np.flatnonzero(~missing_encoded)
 
     if len(known):

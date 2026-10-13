@@ -62,7 +62,7 @@ MCAR/MAR/MNAR validation gaps, and uses Optuna to select:
 For a safer first run, keep native image resolution:
 
     uv run python src/4_analyze_sd2_design.py \
-      --run-inference --image-sizes 512 --n-trials 12 --cases-per-dataset 3
+      --run-inference --image-sizes 512 --n-trials 24 --hpo-repeats 1
 
 The GPU run writes:
 
@@ -74,7 +74,7 @@ The GPU run writes:
 
 Every SD2 call receives an explicit Diffusers generator seed. Local windows use
 successive seeds beginning at the configured `computation.stable_diffusion.seed`.
-GPU optimization uses a fixed seed during parameter selection and then repeats
+GPU optimization evaluates every trial on the full MCAR/MAR/MNAR x 2%/5%/20%/50% validation grid with deterministic masks. `--hpo-repeats` adds independent masks per condition. The configured diffusion seeds rotate across validation conditions and then repeats
 each winning model--dataset setting with five seeds (42--46 by default) on a
 representative MCAR case. Use `--sd2-seeds` to provide any set of three to five
 seeds.
