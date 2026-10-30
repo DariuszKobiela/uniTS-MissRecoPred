@@ -26,7 +26,7 @@ _LOCAL_BASE_DIR = _REPO_ROOT / "models_cache" / "sd2_inpainting_base"
 _DEFAULT_LOCAL_FINETUNED_DIR = _REPO_ROOT / "models" / "sd2_windowed" / "best_model"
 
 MODEL_ID_HF_BASE = "stabilityai/stable-diffusion-2-inpainting"
-MODEL_ID_HF_FINETUNED = "Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec"
+MODEL_ID_HF_FINETUNED = "dariusz-kobiela/stable-diffusion-2-inpainting-gaf-mtf-rp-spec"
 
 MODEL_ID_BASE = (
     str(_LOCAL_BASE_DIR)

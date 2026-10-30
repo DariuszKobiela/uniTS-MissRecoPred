@@ -125,6 +125,7 @@ hyperparameter_optimization/*.txt
 .cache/
 models_cache/
 .huggingface/
+release/huggingface/
 
 # Logs
 *.log

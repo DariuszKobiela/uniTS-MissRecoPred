@@ -30,6 +30,9 @@ def test_hpo_missingness_guarantees_a_measurable_short_case():
         (mechanism, rate) for mechanism in ("MCAR", "MAR", "MNAR") for rate in (0.02, 0.05, 0.20, 0.50)
     }
 
+    assert module.effective_context_samples(64, len(clean)) == 11
+    assert module.effective_context_samples(64, 500) == 64
+
 
 def test_window_plan_has_disjoint_complete_cores_and_bounded_windows():
     plans = plan_reconstruction_windows(1000, window_samples=512, context_samples=64)

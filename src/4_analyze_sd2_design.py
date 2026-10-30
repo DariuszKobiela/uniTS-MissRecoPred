@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import pandas as pd
-from utils.progress import tqdm
 
 from framework.plugin_registry import get_reconstruction_models
 from missingness_techniques.mar import apply_mar
@@ -29,6 +28,7 @@ from reconstruction_metrics import compute_metrics_from_series, get_metric_spec
 from reconstruction_models.sd2_settings import DEFAULT_PROMPTS
 from reconstruction_models.sd2_windowing import plan_reconstruction_windows
 from utils.config_loader import load_config
+from utils.progress import tqdm
 
 PROMPT_CANDIDATES = {
     "gaf": [
@@ -288,6 +288,20 @@ def validation_slice(source: pd.Series, window_samples: int, case_number: int, n
     return source.iloc[start : start + length].reset_index(drop=True)
 
 
+def effective_context_samples(requested_context_samples: int, effective_window_samples: int) -> int:
+    """Clamp reconstruction context to the window that is actually available.
+
+    Short validation partitions can be smaller than every configured HPO window.
+    The window planner requires two context regions plus at least one core sample,
+    so using the production context unchanged would make every such trial invalid.
+    """
+    if requested_context_samples < 0:
+        raise ValueError("context_samples must be non-negative")
+    if effective_window_samples < 2:
+        raise ValueError("SD2 inference requires at least 2 samples")
+    return min(requested_context_samples, (effective_window_samples - 1) // 2)
+
+
 def apply_hpo_missingness(
     clean: pd.Series,
     mechanism_name: str,
@@ -317,6 +331,14 @@ def build_hpo_cases(
         for rate in rates
     ]
 
+
+
+def write_inference_trial_checkpoint(output_dir: Path, trial_rows: list[dict]) -> None:
+    """Atomically persist all completed HPO trials collected so far."""
+    checkpoint = output_dir / "sd2_inference_trials.csv"
+    temporary = output_dir / ".sd2_inference_trials.csv.tmp"
+    pd.DataFrame(trial_rows).to_csv(temporary, index=False)
+    temporary.replace(checkpoint)
 
 def run_representation_ablations(
     args: argparse.Namespace,
@@ -389,6 +411,10 @@ def run_empirical_search(
     import optuna
     import torch
 
+    # Optuna's per-trial INFO messages write over tqdm's single global bar.
+    # Trial diagnostics are persisted in sd2_inference_trials.csv instead.
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
     if torch.cuda.is_available():
         print("Using CUDA for --run-inference")
     else:
@@ -444,6 +470,10 @@ def run_empirical_search(
                         case_number,
                         len(hpo_cases),
                     )
+                    context_samples = effective_context_samples(
+                        production_context_samples,
+                        len(clean),
+                    )
                     with contextlib.redirect_stdout(io.StringIO()):
                         degraded = apply_hpo_missingness(
                             clean,
@@ -454,14 +484,14 @@ def run_empirical_search(
                     sd2_seed = args.sd2_seeds[case_number % len(args.sd2_seeds)]
                     started = time.perf_counter()
                     try:
-                        with contextlib.redirect_stdout(io.StringIO()):
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                             reconstructed = registry[model_name](
                                 degraded,
                                 seed=sd2_seed,
                                 num_inference_steps=steps,
                                 guidance_scale=guidance,
                                 window_samples=window_samples,
-                                context_samples=production_context_samples,
+                                context_samples=context_samples,
                                 image_size=image_size,
                                 prompt=prompt,
                             )
@@ -482,6 +512,8 @@ def run_empirical_search(
                                 "missing_rate": rate,
                                 "effective_missing_rate": float(degraded.isna().mean()),
                                 "window_samples": window_samples,
+                                "effective_window_samples": len(clean),
+                                "context_samples": context_samples,
                                 "image_size": image_size,
                                 "prompt_index": prompt_index,
                                 "prompt": prompt,
@@ -505,6 +537,8 @@ def run_empirical_search(
                                 "trial": trial.number,
                                 "case": case_number,
                                 "window_samples": window_samples,
+                                "effective_window_samples": len(clean),
+                                "context_samples": context_samples,
                                 "image_size": image_size,
                                 "prompt": prompt,
                                 "status": "error",
@@ -524,10 +558,15 @@ def run_empirical_search(
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=args.seed),
             )
+            def update_search_progress(_study, trial) -> None:
+                write_inference_trial_checkpoint(output_dir, trial_rows)
+                search_progress.set_postfix_str(f"{model_name} / {dataset}; trial {trial.number + 1}/{args.n_trials}")
+                search_progress.update()
+
             study.optimize(
                 objective,
                 n_trials=args.n_trials,
-                callbacks=[lambda _study, _trial: search_progress.update()],
+                callbacks=[update_search_progress],
                 show_progress_bar=False,
             )
             successful_trials = [
@@ -539,7 +578,7 @@ def run_empirical_search(
             ]
             if not successful_trials:
                 # Preserve diagnostics, but never select or persist a bogus winner.
-                pd.DataFrame(trial_rows).to_csv(output_dir / "sd2_inference_trials.csv", index=False)
+                write_inference_trial_checkpoint(output_dir, trial_rows)
                 search_progress.close()
                 errors = [
                     str(row.get("error", "unknown error"))
@@ -568,7 +607,7 @@ def run_empirical_search(
     search_progress.close()
 
     result = pd.DataFrame(trial_rows)
-    result.to_csv(output_dir / "sd2_inference_trials.csv", index=False)
+    write_inference_trial_checkpoint(output_dir, trial_rows)
     return result, winners
 
 
@@ -592,23 +631,26 @@ def run_seed_sensitivity(
     )
     for winner in winners:
         filename = next(name for name in metadata["series"] if Path(name).stem == winner["dataset"])
-        info = metadata["series"][filename]
         source = load_series(hpo_dir / filename)
         clean = validation_slice(source, int(winner["window_samples"]), 0, 1)
+        context_samples = effective_context_samples(
+            production_context_samples,
+            len(clean),
+        )
         mechanism = "MCAR"
         rate = args.rates[len(args.rates) // 2]
         degraded = MECHANISMS[mechanism](clean, rate, seed=args.seed)
         for sd2_seed in args.sd2_seeds:
             started = time.perf_counter()
             try:
-                with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     reconstructed = registry[winner["model"]](
                         degraded,
                         seed=sd2_seed,
                         num_inference_steps=int(winner["num_inference_steps"]),
                         guidance_scale=float(winner["guidance_scale"]),
                         window_samples=int(winner["window_samples"]),
-                        context_samples=production_context_samples,
+                        context_samples=context_samples,
                         image_size=int(winner["image_size"]),
                         prompt=winner["prompt"],
                     )
@@ -620,6 +662,8 @@ def run_seed_sensitivity(
                         "dataset": winner["dataset"],
                         "mechanism": mechanism,
                         "missing_rate": rate,
+                        "effective_window_samples": len(clean),
+                        "context_samples": context_samples,
                         "sd2_seed": sd2_seed,
                         "metric": args.metric,
                         "metric_value": value,
@@ -633,6 +677,8 @@ def run_seed_sensitivity(
                         "model": winner["model"],
                         "encoding": winner["encoding"],
                         "dataset": winner["dataset"],
+                        "effective_window_samples": len(clean),
+                        "context_samples": context_samples,
                         "sd2_seed": sd2_seed,
                         "status": "error",
                         "error": str(exc),

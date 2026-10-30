@@ -7,7 +7,7 @@ Two registry entries share this encoding:
   (``stabilityai/stable-diffusion-2-inpainting``), matching the experiment
   ``*gafunet`` files.
 - ``stable_diffusion_2_gaf_finetuned`` — UNet fine-tuned on GAF/MTF/RP/SPEC
-  (``Daro77/stable-diffusion-2-inpainting-gaf-mtf-rp-spec``), matching
+  (``dariusz-kobiela/stable-diffusion-2-inpainting-gaf-mtf-rp-spec``), matching
   ``*gafsd2all4``.
 """
 

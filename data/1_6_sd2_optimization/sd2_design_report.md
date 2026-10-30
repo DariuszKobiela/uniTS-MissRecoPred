@@ -1,6 +1,6 @@
 # SD2 window, resolution, prompt and parameter analysis
 
-Generated: 2026-10-13T14:28:41.941329+00:00
+Generated: 2026-10-13T16:54:26.305611+00:00
 
 ## Interpretation
 
@@ -21,18 +21,18 @@ Generated: 2026-10-13T14:28:41.941329+00:00
 
 | dataset | window samples | image size | status |
 | --- | ---: | ---: | --- |
-| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
-| pump_sensor_28_univ | 1024 | 2048 | empirical_gpu |
-| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
-| boiler_outlet_temp_univ | 1024 | 512 | empirical_gpu |
-| pump_sensor_28_univ | 1024 | 512 | empirical_gpu |
-| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
-| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
-| pump_sensor_28_univ | 2048 | 2048 | empirical_gpu |
-| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
-| boiler_outlet_temp_univ | 1024 | 2048 | empirical_gpu |
-| pump_sensor_28_univ | 2048 | 1024 | empirical_gpu |
-| vibration_sensor_S1 | 1024 | 512 | empirical_gpu |
+| boiler_outlet_temp_univ | 512 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 512 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 24 | 2048 | empirical_gpu |
+| boiler_outlet_temp_univ | 512 | 1024 | empirical_gpu |
+| pump_sensor_28_univ | 512 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 24 | 2048 | empirical_gpu |
+| boiler_outlet_temp_univ | 512 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 512 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 24 | 2048 | empirical_gpu |
+| boiler_outlet_temp_univ | 512 | 2048 | empirical_gpu |
+| pump_sensor_28_univ | 512 | 2048 | empirical_gpu |
+| vibration_sensor_S1 | 24 | 1024 | empirical_gpu |
 
 ## Existing training dataset audit
 
@@ -94,8 +94,9 @@ Generated: 2026-10-13T14:28:41.941329+00:00
 - Guidance scales: [1.0, 3.0, 5.0, 7.5]
 - Missing rates: [0.02, 0.05, 0.2, 0.5]
 - Explicit SD2 sensitivity seeds: [42, 43, 44, 45, 46]
-- Trials per model/dataset: 12
-- Validation cases per trial: 3
+- Trials per model/dataset: 24
+- Validation cases per trial: 12 
+  (1 repeat(s) of every mechanism x rate condition)
 
 Representation-specific prompt candidates:
 - GAF: high quality gramian angular field mathematical visualization | grayscale gramian angular field of a continuous sensor signal, preserve mathematical structure | scientific time series gramian angular field, coherent diagonal and smooth local texture
@@ -105,5 +106,5 @@ Representation-specific prompt candidates:
 
 ## GPU validation
 
-Successful validation cases: 234
+Successful validation cases: 3456
 Detailed results: sd2_inference_trials.csv
