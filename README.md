@@ -66,3 +66,16 @@ make visualize-prediction-error      # opcjonalny dashboard prognoz
 ```
 
 Szczegóły metodologiczne znajdują się w [REBUTTAL_README.md](REBUTTAL_README.md).
+
+## Licencje danych
+
+Kod frameworka i dane mają odrębne licencje. W publikowanym zbiorze
+[Hugging Face](https://huggingface.co/datasets/dariusz-kobiela/univariate-time-series-with-missingness-and-reconstructed)
+Boiler zachowuje **CC BY 4.0**, a Vibration — **CC0 1.0 Universal**.
+Źródła, atrybucja i opis przekształceń znajdują się w
+[informacji licencyjnej](docs/experiment_dataset_release/LICENSE.md).
+
+Pump nie jest redystrybuowany z powodu braku określonej licencji źródłowej.
+Oryginał: [Pump Sensor Data, nphantawee](https://www.kaggle.com/datasets/nphantawee/pump-sensor-data).
+Instrukcję przygotowania i publikacji paczki bez Pump opisuje
+[EXPERIMENT_DATASET_RELEASE.md](docs/EXPERIMENT_DATASET_RELEASE.md).
